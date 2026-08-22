@@ -1,3 +1,23 @@
+# ---- catkin / ROS / Docker (containerized build) ----
+# Build products belong in the Docker volume, never in the repo.
+/build/
+/devel/
+/install/
+.catkin_workspace
+
+# Python bytecode (Gazebo/ROS write these into the source tree at runtime)
+__pycache__/
+*.py[cod]
+
+# ROS logs / bags
+*.log
+*.bag
+
+# editor / OS cruft
+*.swp
+.DS_Store
+
+# ---- original C/C++ artifact ignores (from upstream) ----
 # Prerequisites
 *.d
 
