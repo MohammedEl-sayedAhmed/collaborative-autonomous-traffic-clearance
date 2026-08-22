@@ -9,6 +9,9 @@
 __pycache__/
 *.py[cod]
 
+# RL training run outputs + saved Q-tables (local experiment data, read by the dashboard)
+**/saved_variables/
+
 # ROS logs / bags
 *.log
 *.bag

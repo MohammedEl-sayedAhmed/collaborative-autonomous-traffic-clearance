@@ -8,6 +8,7 @@ from std_msgs.msg import Bool
 from racecar_rl_environments.msg import areWeDone
 from rl_algorithms.single_agent_qlearning import *
 from env_communicators.basic_env_comm import *
+from training_logger import TrainingLogger
 
 # Lock to engage and disengage following the RL model in the test mode
 test_activity_lock = threading.Lock()
@@ -33,6 +34,26 @@ class SAQLMaster:
         rospy.Subscriber('/RL/is_active_or_episode_done', areWeDone, self.isActivatedOrDoneCallback, queue_size = 2)
 
         self.getParams()
+
+        # Metrics logging for the live training dashboard (fail-safe: never breaks training).
+        # Runs are saved per-run under saved_variables/runs/<timestamp>_<label>/ so they can be
+        # browsed and compared later. Label + git SHA come from run.sh via env vars.
+        runs_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 'saved_variables', 'runs')
+        try:
+            q_params = rospy.get_param('q_learning_params') if rospy.has_param('q_learning_params') else {}
+        except Exception:
+            q_params = {}
+        self.LOGGER = TrainingLogger(
+            runs_root,
+            label=os.environ.get('RL_RUN_LABEL', 'run'),
+            git_sha=os.environ.get('RL_GIT_SHA', 'unknown'),
+            config={'max_num_episodes': self.max_num_episodes,
+                    'test_mode_on': self.test_mode_on,
+                    'q_learning_params': q_params},
+            mode=('test' if self.test_mode_on else 'train'),
+        )
+
         rospy.loginfo("Finished initializing Single Agent Q-Learning Master.")
         
     def getParams(self):
@@ -155,6 +176,8 @@ class SAQLMaster:
             # Save Q-table after episodes ended:
             rospy.loginfo("Saving Final Q-table.")
             self.RL_ALGO.save_q_table() #TODO TODO: see when to call so that we have a constantly updated qtable saved
+
+            self.LOGGER.finalize("completed")
 
             rospy.loginfo("Closing Simulation.")
             self.ENV_COMM.closeSim()
@@ -324,8 +347,8 @@ class SAQLMaster:
             
             rospy.loginfo("\nAgent Velocity: %f, \nAgent Lane: %d, \nAmbulance Velocity: %f, \nAmbulance Lane: %d, \nRelative Position: %f\n", agent_state_after.agent_vel, agent_state_after.agent_lane, agent_state_after.amb_vel, agent_state_after.amb_lane, agent_state_after.rel_amb_y)
 
-
-            
+            # live heartbeat for the dashboard (current episode/step/reward)
+            self.LOGGER.heartbeat(self.episode_num, step, episode_reward, self.RL_ALGO.epsilon)
 
             ############### Check if episode is done ###############
             if (self.is_episode_done): # DO NOT REMOVE THIS (IT BREAKS IF WE ARE DONE)
@@ -361,8 +384,10 @@ class SAQLMaster:
         if(self.print_reward_every_episode and self.episode_num % self.every_n_episodes):
             rospy.loginfo("Episode: %d. FinalCumReward: %f.", self.episode_num, episode_reward)
 
+        # record this episode's summary for the dashboard (learning curve point)
+        self.LOGGER.log_episode(self.episode_num, episode_reward, step, old_epsilon, self.is_episode_done)
 
-        return episode_reward, episode_reward_list  
+        return episode_reward, episode_reward_list
 
 
 if __name__ == "__main__":
