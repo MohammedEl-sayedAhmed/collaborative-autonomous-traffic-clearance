@@ -1,0 +1,22 @@
+name: catc
+
+services:
+  ros:
+    build: ./docker
+    image: catc-kinetic:latest
+    network_mode: host          # share the host network so ROS master/topics are reachable
+    ipc: host                   # Gazebo <-> GUI shared memory
+    stdin_open: true
+    tty: true
+    devices:
+      - /dev/dri:/dev/dri       # GPU for hardware-accelerated GL in Gazebo/RViz (optional)
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      LIBGL_ALWAYS_SOFTWARE: ${LIBGL_ALWAYS_SOFTWARE:-0}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw                          # X11 socket for GUIs (XWayland OK)
+      - catc_ws:/ws                                               # build/ + devel/ live here, off the host
+      - .:/ws/src/collaborative-autonomous-traffic-clearance     # the repo itself as the catkin source
+
+volumes:
+  catc_ws:
