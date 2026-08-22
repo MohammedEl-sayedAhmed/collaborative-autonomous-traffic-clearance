@@ -7,57 +7,60 @@
 <style>
   :root{
     --bg:#0f1420; --panel:#161d2e; --panel2:#1d2740; --line:#2a3550;
-    --fg:#e6ecf5; --muted:#8b97ad; --accent:#4fd1c5; --good:#46c37b; --warn:#e0b64a; --bad:#e06c6c;
-    --grid:#232e47;
+    --fg:#e6ecf5; --muted:#9aa7bd; --accent:#4fd1c5; --good:#46c37b; --warn:#e0b64a; --bad:#e06c6c;
   }
   *{box-sizing:border-box}
-  body{margin:0;font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
-  header{display:flex;align-items:center;gap:14px;padding:12px 18px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-  header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.2px}
-  header .sub{color:var(--muted);font-size:12px}
+  html,body{overflow-x:hidden;max-width:100%}
+  /* Whole-UI scale is set continuously in JS (applyZoom) from the viewport width, so it
+     reads comfortably on a 2K/4K monitor and on a laptop alike. Tune ZOOM_* in the script. */
+  body{margin:0;font:15.5px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
+  header{display:flex;align-items:center;gap:16px;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+  header h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.2px}
+  header .sub{color:var(--muted);font-size:13px}
   header .spacer{flex:1}
-  .ctl{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
-  .ctl input[type=range]{width:90px}
-  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
-  .pulse{background:var(--good);box-shadow:0 0 0 0 rgba(70,195,123,.7);animation:p 1.6s infinite}
-  @keyframes p{0%{box-shadow:0 0 0 0 rgba(70,195,123,.6)}70%{box-shadow:0 0 0 7px rgba(70,195,123,0)}100%{box-shadow:0 0 0 0 rgba(70,195,123,0)}}
-  .wrap{display:grid;grid-template-columns:290px 1fr;gap:0;min-height:calc(100vh - 53px)}
-  aside{background:var(--panel);border-right:1px solid var(--line);padding:12px;overflow:auto}
-  aside h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:4px 2px 10px}
-  .runrow{display:flex;align-items:center;gap:9px;padding:8px;border-radius:8px;cursor:pointer;margin-bottom:5px;border:1px solid transparent}
+  .ctl{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:13.5px}
+  .ctl input[type=range]{width:100px}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .pulse{background:var(--good);animation:p 1.6s infinite}
+  @keyframes p{0%{box-shadow:0 0 0 0 rgba(70,195,123,.6)}70%{box-shadow:0 0 0 8px rgba(70,195,123,0)}100%{box-shadow:0 0 0 0 rgba(70,195,123,0)}}
+  .wrap{display:grid;grid-template-columns:320px 1fr;min-height:calc(100vh - 57px)}
+  aside{background:var(--panel);border-right:1px solid var(--line);padding:14px;overflow:auto}
+  aside h2{font-size:12.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:4px 2px 12px}
+  .runrow{display:flex;align-items:center;gap:11px;padding:10px;border-radius:9px;cursor:pointer;margin-bottom:6px;border:1px solid transparent;user-select:none}
   .runrow:hover{background:var(--panel2)}
-  .runrow.focused{border-color:var(--accent);background:var(--panel2)}
-  .runrow .sw{width:11px;height:11px;border-radius:3px;flex:none}
+  .runrow.sel{border-color:var(--accent);background:var(--panel2)}
+  .runrow input.chk{width:17px;height:17px;pointer-events:none;flex:none;accent-color:var(--accent)}
+  .runrow .sw{width:12px;height:12px;border-radius:3px;flex:none}
   .runrow .meta{min-width:0;flex:1}
-  .runrow .lbl{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .runrow .sub{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .badge{font-size:10px;padding:1px 6px;border-radius:10px;font-weight:600}
+  .runrow .lbl{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .runrow .sub{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge{font-size:11px;padding:2px 7px;border-radius:10px;font-weight:600;margin-left:4px}
   .b-live{background:rgba(70,195,123,.18);color:var(--good)}
   .b-done{background:rgba(79,209,197,.16);color:var(--accent)}
   .b-stale{background:rgba(224,182,74,.16);color:var(--warn)}
-  .b-test{background:rgba(139,151,173,.18);color:var(--muted)}
-  main{padding:16px 18px;overflow:auto}
-  .tiles{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-  .tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:130px}
-  .tile .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
-  .tile .v{font-size:22px;font-weight:700;margin-top:3px}
-  .tile .v small{font-size:12px;color:var(--muted);font-weight:500}
-  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
-  .card h3{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--fg)}
-  .card .hint{color:var(--muted);font-size:11px;font-weight:400}
-  svg{width:100%;height:230px;display:block}
-  table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
-  th,td{text-align:right;padding:7px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .b-test{background:rgba(154,167,189,.18);color:var(--muted)}
+  main{padding:18px 20px;overflow:auto}
+  .tiles{display:flex;gap:13px;flex-wrap:wrap;margin-bottom:16px}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:13px 16px;min-width:140px}
+  .tile .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+  .tile .v{font-size:26px;font-weight:700;margin-top:4px}
+  .tile .v small{font-size:13px;color:var(--muted);font-weight:500}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px}
+  .card h3{margin:0 0 8px;font-size:15.5px;font-weight:650}
+  .card .hint{color:var(--muted);font-size:12.5px;font-weight:400}
+  svg{width:100%;height:250px;display:block}
+  #cmpTable{overflow-x:auto}   /* a very wide comparison table scrolls inside its card, never the page */
+  table{border-collapse:collapse;width:100%;font-size:14px;margin-top:6px}
+  th,td{text-align:right;padding:9px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
   th:first-child,td:first-child{text-align:left}
-  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
-  .swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:middle}
-  .empty{color:var(--muted);text-align:center;padding:60px 20px}
-  code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--accent);font-size:12px}
-  a{color:var(--accent)}
-  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-bottom:4px}
-  .legend span{display:inline-flex;align-items:center;gap:5px}
-  button.mini{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .swatch{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:7px;vertical-align:middle}
+  .empty{color:var(--muted);text-align:center;padding:60px 20px;font-size:14.5px}
+  code{background:var(--panel2);padding:2px 6px;border-radius:5px;color:var(--accent);font-size:13.5px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:6px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  button.mini{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:13px}
   button.mini:hover{border-color:var(--accent)}
 </style>
 </head>
@@ -75,7 +78,7 @@
 <div class="wrap">
   <aside>
     <h2>Runs <span id="runCount" style="color:var(--muted)"></span></h2>
-    <div style="margin-bottom:10px;display:flex;gap:6px">
+    <div style="margin-bottom:12px;display:flex;gap:7px">
       <button class="mini" id="selAll">all</button>
       <button class="mini" id="selNone">none</button>
       <button class="mini" id="selLive">live</button>
@@ -103,7 +106,7 @@
         <svg id="chartOutcomes"></svg>
       </div>
     </div>
-    <div class="card" style="margin-top:14px">
+    <div class="card" style="margin-top:16px">
       <h3>Run comparison</h3>
       <div id="cmpTable"></div>
     </div>
@@ -113,18 +116,18 @@
 <script>
 const PALETTE = ["#4fd1c5","#e0b64a","#e06c6c","#7aa2f7","#9ece6a","#bb9af7","#ff9e64","#2ac3de","#f7768e","#73daca"];
 const OUTCOME = {0:"in progress",1:"max time",2:"ambulance goal",3:"agent goal",4:"sim died"};
-const OUTCOME_COLOR = {1:"#e0b64a",2:"#46c37b",3:"#4fd1c5",4:"#e06c6c",0:"#8b97ad"};
-const state = {runs:[], data:{}, selected:new Set(), focus:null, colors:{}, first:true};
+const OUTCOME_COLOR = {1:"#e0b64a",2:"#46c37b",3:"#4fd1c5",4:"#e06c6c",0:"#9aa7bd"};
+
+// Single source of truth: `selected` decides what is shown. No competing "focus".
+const state = {runs:[], data:{}, selected:new Set(), colors:{}, first:true};
 
 const $ = s => document.querySelector(s);
 const fmt = (v,d=2) => (v==null||isNaN(v)) ? "—" : (+v).toFixed(d);
 const shortSha = s => (s&&s!=="unknown") ? s.slice(0,7) : "—";
+function escapeHtml(s){ return (s||"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function colorFor(id){
-  if(!(id in state.colors)){
-    const idx = Object.keys(state.colors).length % PALETTE.length;
-    state.colors[id] = PALETTE[idx];
-  }
+  if(!(id in state.colors)) state.colors[id] = PALETTE[Object.keys(state.colors).length % PALETTE.length];
   return state.colors[id];
 }
 function ageSecs(t){ return t? (Date.now()/1000 - t) : null; }
@@ -135,18 +138,21 @@ function statusBadge(r){
   if(r.status==="running") return `<span class="badge b-stale">stalled</span>`;
   return `<span class="badge b-done">done</span>`;
 }
-
 async function jget(u){ const r = await fetch(u,{cache:"no-store"}); return r.json(); }
+
+// central refresh after any selection change
+function refresh(){ renderRunList(); renderTiles(); renderTable(); drawAll(); pollSelected(); }
+function setSelected(id, on){ if(on) state.selected.add(id); else state.selected.delete(id); refresh(); }
+function toggleSelected(id){ setSelected(id, !state.selected.has(id)); }
 
 async function pollRuns(){
   if($("#pauseChk").checked) return;
   let payload;
-  try{ payload = await jget("/api/runs"); }catch(e){ $("#pollDot").style.background="var(--bad)"; return; }
+  try{ payload = await jget("/api/runs"); }catch(e){ $("#pollDot").style.background="var(--bad)"; $("#pollDot").className="dot"; return; }
   $("#pollDot").style.background=""; $("#pollDot").className="dot pulse";
   state.runs = payload.runs || [];
   $("#runsDir").textContent = payload.runs_dir || "";
   $("#runCount").textContent = "("+state.runs.length+")";
-  // first load: auto-select live runs, else the most recent
   if(state.first && state.runs.length){
     const live = state.runs.filter(r=>r.live);
     (live.length?live:[state.runs[state.runs.length-1]]).forEach(r=>state.selected.add(r.run_id));
@@ -160,145 +166,124 @@ async function pollRuns(){
 
 async function pollSelected(){
   const ids = [...state.selected];
-  await Promise.all(ids.map(async id=>{
-    try{ state.data[id] = await jget("/api/run?id="+encodeURIComponent(id)); }catch(e){}
-  }));
+  await Promise.all(ids.map(async id=>{ try{ state.data[id] = await jget("/api/run?id="+encodeURIComponent(id)); }catch(e){} }));
   drawAll();
 }
 
 function renderRunList(){
   const el = $("#runlist");
-  if(!state.runs.length){ el.innerHTML = `<div class="empty">No runs yet.<br/>Start training with <code>./run.sh rl</code>.</div>`; return; }
+  if(!state.runs.length){ el.innerHTML = `<div class="empty">No runs yet.<br/>Start training with <code>./run.sh rl</code><br/>or seed demos with <code>./run.sh dashboard-demo</code>.</div>`; return; }
   el.innerHTML = "";
   state.runs.forEach(r=>{
     const sel = state.selected.has(r.run_id);
     const row = document.createElement("div");
-    row.className = "runrow"+(state.focus===r.run_id?" focused":"");
+    row.className = "runrow"+(sel?" sel":"");
+    row.setAttribute("data-run", r.run_id);
+    // checkbox has pointer-events:none (CSS) -> the whole row is one click target.
     row.innerHTML = `
-      <input type="checkbox" ${sel?"checked":""} data-id="${r.run_id}" class="chk"/>
-      <span class="sw" style="background:${sel?colorFor(r.run_id):'#3a4straight'};${sel?'':'opacity:.25'}"></span>
+      <input type="checkbox" class="chk" tabindex="-1" ${sel?"checked":""}/>
+      <span class="sw" style="background:${colorFor(r.run_id)};${sel?'':'opacity:.28'}"></span>
       <span class="meta">
-        <div class="lbl">${escapeHtml(r.label)} ${statusBadge(r)}</div>
+        <div class="lbl">${escapeHtml(r.label)}${statusBadge(r)}</div>
         <div class="sub">${shortSha(r.git_sha)} · ${r.num_episodes} ep · final ${fmt(r.final_reward)}</div>
       </span>`;
-    row.querySelector(".chk").addEventListener("change",e=>{
-      e.stopPropagation();
-      if(e.target.checked) state.selected.add(r.run_id); else state.selected.delete(r.run_id);
-      renderRunList(); pollSelected(); renderTiles(); renderTable();
-    });
-    row.addEventListener("click",e=>{
-      if(e.target.classList.contains("chk")) return;
-      state.focus = (state.focus===r.run_id)?null:r.run_id;
-      if(state.focus){ state.selected.add(r.run_id); }
-      renderRunList(); pollSelected(); renderTiles(); renderTable();
-    });
+    row.addEventListener("click", ()=> toggleSelected(r.run_id));
     el.appendChild(row);
   });
 }
-function escapeHtml(s){ return (s||"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function selectedRuns(){
-  // if a run is focused, show only it; else all checked
-  const ids = state.focus ? [state.focus] : [...state.selected];
-  return ids.map(id=>({id, summary:state.runs.find(r=>r.run_id===id), detail:state.data[id]}))
-            .filter(x=>x.detail && x.summary);
+  return [...state.selected]
+    .map(id=>({id, summary:state.runs.find(r=>r.run_id===id), detail:state.data[id]}))
+    .filter(x=>x.summary && x.detail && x.detail.episodes);
 }
 
 function renderTiles(){
   const runs = selectedRuns();
   const el = $("#tiles"); el.innerHTML="";
-  // live tile from any running selected run
-  const liveRun = runs.map(r=>r).find(r=>r.detail.status && r.detail.status.state==="running");
+  const liveRun = runs.find(r=>r.detail.status && r.detail.status.state==="running");
   if(liveRun){
     const s = liveRun.detail.status, age = ageSecs(s.time);
     el.appendChild(tile("● Live: "+escapeHtml(liveRun.summary.label),
-      `ep ${s.episode} · step ${s.step}`, `cum ${fmt(s.cum_reward)} · ε ${fmt(s.epsilon,3)} · ${age!=null?Math.round(age)+"s ago":""}`));
+      `ep ${s.episode} · step ${s.step}`, `cum ${fmt(s.cum_reward)} · ε ${fmt(s.epsilon,3)}${age!=null?" · "+Math.round(age)+"s ago":""}`));
   }
   if(runs.length===1){
-    const eps = runs[0].detail.episodes;
-    const rw = eps.map(e=>e.cum_reward);
-    el.appendChild(tile("Episodes", eps.length, ""));
+    const rw = runs[0].detail.episodes.map(e=>e.cum_reward);
+    el.appendChild(tile("Episodes", runs[0].detail.episodes.length, ""));
     el.appendChild(tile("Final reward", fmt(rw[rw.length-1]), ""));
     el.appendChild(tile("Best reward", fmt(rw.length?Math.max(...rw):null), ""));
     el.appendChild(tile("Mean reward", fmt(rw.length?rw.reduce((a,b)=>a+b,0)/rw.length:null), ""));
-    el.appendChild(tile("Success rate", fmt(100*successRate(eps),0)+"%", "amb. reached goal"));
-  } else {
+    el.appendChild(tile("Success", fmt(100*successRate(runs[0].detail.episodes),0)+"%", "amb. reached goal"));
+  } else if(runs.length>1){
     el.appendChild(tile("Runs compared", runs.length, ""));
     el.appendChild(tile("Total episodes", runs.reduce((a,r)=>a+r.detail.episodes.length,0), ""));
   }
 }
 function tile(k,v,sub){ const d=document.createElement("div"); d.className="tile";
   d.innerHTML=`<div class="k">${k}</div><div class="v">${v} ${sub?`<small>${sub}</small>`:""}</div>`; return d; }
-function successRate(eps){ if(!eps.length) return 0; return eps.filter(e=>e.outcome===2).length/eps.length; }
+function successRate(eps){ return eps.length? eps.filter(e=>e.outcome===2).length/eps.length : 0; }
 
 function movingAvg(vals,w){
   if(w<=1) return vals.slice();
-  const out=[]; for(let i=0;i<vals.length;i++){
-    let s=0,c=0; for(let j=Math.max(0,i-Math.floor(w/2));j<=Math.min(vals.length-1,i+Math.floor(w/2));j++){s+=vals[j];c++;}
-    out.push(s/c);
-  } return out;
+  const out=[]; const h=Math.floor(w/2);
+  for(let i=0;i<vals.length;i++){ let s=0,c=0;
+    for(let j=Math.max(0,i-h);j<=Math.min(vals.length-1,i+h);j++){s+=vals[j];c++;} out.push(s/c); }
+  return out;
 }
 
 function drawAll(){
   const runs = selectedRuns();
   const smooth = $("#smoothChk").checked ? +$("#smoothWin").value : 1;
-  // reward
-  let series = runs.map(r=>{
+  const rewardSeries = runs.map(r=>{
     const eps=r.detail.episodes; const ys=movingAvg(eps.map(e=>e.cum_reward),smooth);
     return {label:r.summary.label, color:colorFor(r.id), points:eps.map((e,i)=>[e.episode, ys[i]])};
   });
-  lineChart($("#chartReward"), series, {ylab:"cum reward", xlab:"episode"});
-  legend($("#legReward"), series);
-  // epsilon
+  lineChart($("#chartReward"), rewardSeries, {});
+  legend($("#legReward"), rewardSeries);
   lineChart($("#chartEps"), runs.map(r=>({label:r.summary.label,color:colorFor(r.id),
-    points:r.detail.episodes.map(e=>[e.episode,e.epsilon])})), {ylab:"epsilon", xlab:"episode", ymin:0});
-  // steps
+    points:r.detail.episodes.map(e=>[e.episode,e.epsilon])})), {ymin:0});
   lineChart($("#chartSteps"), runs.map(r=>({label:r.summary.label,color:colorFor(r.id),
-    points:r.detail.episodes.map(e=>[e.episode,e.num_steps])})), {ylab:"steps", xlab:"episode", ymin:0});
-  // outcomes
+    points:r.detail.episodes.map(e=>[e.episode,e.num_steps])})), {ymin:0});
   outcomeChart($("#chartOutcomes"), runs);
 }
-
 function legend(el, series){ el.innerHTML = series.map(s=>`<span><span class="swatch" style="background:${s.color}"></span>${escapeHtml(s.label)}</span>`).join(""); }
 
 function lineChart(svg, series, opts={}){
-  const W=svg.clientWidth||560, H=svg.clientHeight||230, P={l:46,r:14,t:12,b:28};
+  const W=svg.clientWidth||560, H=svg.clientHeight||250, P={l:52,r:16,t:12,b:30};
   const pts = series.flatMap(s=>s.points).filter(p=>p[1]!=null && !isNaN(p[1]));
-  svg.innerHTML="";
-  if(!pts.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#8b97ad" text-anchor="middle" font-size="12">no data yet</text>`; return; }
+  if(!pts.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="13">no data yet</text>`; return; }
   let xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
   let xmin=Math.min(...xs), xmax=Math.max(...xs), ymin=(opts.ymin!=null?opts.ymin:Math.min(...ys)), ymax=Math.max(...ys);
   if(xmax===xmin) xmax=xmin+1; if(ymax===ymin) ymax=ymin+1;
   const pad=(ymax-ymin)*0.08; ymin-=(opts.ymin!=null?0:pad); ymax+=pad;
   const X=x=>P.l+(x-xmin)/(xmax-xmin)*(W-P.l-P.r);
   const Y=y=>H-P.b-(y-ymin)/(ymax-ymin)*(H-P.t-P.b);
-  let g=`<g font-size="10" fill="#8b97ad">`;
+  let g=`<g font-size="12" fill="#9aa7bd">`;
   for(let i=0;i<=4;i++){ const yv=ymin+(ymax-ymin)*i/4, y=Y(yv);
     g+=`<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="#232e47"/>`;
-    g+=`<text x="${P.l-6}" y="${y+3}" text-anchor="end">${fmtAxis(yv)}</text>`; }
+    g+=`<text x="${P.l-8}" y="${y+4}" text-anchor="end">${fmtAxis(yv)}</text>`; }
   const nT=Math.min(6,Math.round(xmax-xmin)||1);
   for(let i=0;i<=nT;i++){ const xv=xmin+(xmax-xmin)*i/nT, x=X(xv);
-    g+=`<text x="${x}" y="${H-8}" text-anchor="middle">${Math.round(xv)}</text>`; }
+    g+=`<text x="${x}" y="${H-9}" text-anchor="middle">${Math.round(xv)}</text>`; }
   g+=`</g>`;
   let paths="";
   series.forEach(s=>{
     const P2=s.points.filter(p=>p[1]!=null&&!isNaN(p[1]));
     if(!P2.length) return;
     const d=P2.map((p,i)=>(i?"L":"M")+X(p[0]).toFixed(1)+" "+Y(p[1]).toFixed(1)).join(" ");
-    paths+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2"/>`;
+    paths+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.2"/>`;
     const last=P2[P2.length-1];
-    paths+=`<circle cx="${X(last[0])}" cy="${Y(last[1])}" r="3" fill="${s.color}"/>`;
+    paths+=`<circle cx="${X(last[0])}" cy="${Y(last[1])}" r="3.4" fill="${s.color}"/>`;
   });
   svg.innerHTML=g+paths;
 }
 function fmtAxis(v){ const a=Math.abs(v); if(a>=1000) return (v/1000).toFixed(1)+"k"; if(a<1&&a>0) return v.toFixed(2); return v.toFixed(a<10?1:0); }
 
 function outcomeChart(svg, runs){
-  const W=svg.clientWidth||560,H=svg.clientHeight||230,P={l:14,r:14,t:12,b:44};
-  svg.innerHTML="";
-  if(!runs.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#8b97ad" text-anchor="middle" font-size="12">no data yet</text>`; return; }
+  const W=svg.clientWidth||560,H=svg.clientHeight||250,P={l:16,r:16,t:12,b:46};
+  if(!runs.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="13">no data yet</text>`; return; }
   const keys=[1,2,3,4,0];
-  const bw=Math.min(70,(W-P.l-P.r)/runs.length-14);
+  const bw=Math.min(74,(W-P.l-P.r)/runs.length-16);
   const maxN=Math.max(1,...runs.map(r=>r.detail.episodes.length));
   let g="";
   runs.forEach((r,ri)=>{
@@ -306,24 +291,19 @@ function outcomeChart(svg, runs){
     r.detail.episodes.forEach(e=>{counts[e.outcome]=(counts[e.outcome]||0)+1;});
     const cx=P.l+(ri+0.5)*((W-P.l-P.r)/runs.length);
     let y=H-P.b;
-    keys.forEach(k=>{
-      const h=(counts[k]/maxN)*(H-P.t-P.b);
-      if(h>0){ g+=`<rect x="${cx-bw/2}" y="${y-h}" width="${bw}" height="${h}" fill="${OUTCOME_COLOR[k]}"/>`; y-=h; }
-    });
-    g+=`<text x="${cx}" y="${H-26}" fill="#e6ecf5" font-size="11" text-anchor="middle">${escapeHtml(r.summary.label).slice(0,12)}</text>`;
-    g+=`<text x="${cx}" y="${H-13}" fill="#8b97ad" font-size="10" text-anchor="middle">${r.detail.episodes.length} ep</text>`;
+    keys.forEach(k=>{ const h=(counts[k]/maxN)*(H-P.t-P.b);
+      if(h>0){ g+=`<rect x="${cx-bw/2}" y="${y-h}" width="${bw}" height="${h}" fill="${OUTCOME_COLOR[k]}"/>`; y-=h; } });
+    g+=`<text x="${cx}" y="${H-28}" fill="#e6ecf5" font-size="12.5" text-anchor="middle">${escapeHtml(r.summary.label).slice(0,14)}</text>`;
+    g+=`<text x="${cx}" y="${H-13}" fill="#9aa7bd" font-size="11.5" text-anchor="middle">${r.detail.episodes.length} ep</text>`;
   });
-  // legend
-  let lx=P.l;
-  g+=`<g font-size="10" fill="#8b97ad">`;
-  [2,3,1,4].forEach(k=>{ g+=`<rect x="${lx}" y="2" width="9" height="9" fill="${OUTCOME_COLOR[k]}"/><text x="${lx+13}" y="10">${OUTCOME[k]}</text>`; lx+=Math.min(130,(W)/4); });
+  let lx=P.l; g+=`<g font-size="11.5" fill="#9aa7bd">`;
+  [2,3,1,4].forEach(k=>{ g+=`<rect x="${lx}" y="1" width="10" height="10" fill="${OUTCOME_COLOR[k]}"/><text x="${lx+15}" y="10">${OUTCOME[k]}</text>`; lx+=Math.min(140,W/4); });
   g+=`</g>`;
   svg.innerHTML=g;
 }
 
 function renderTable(){
-  const runs = state.focus ? [state.focus] : [...state.selected];
-  const rows = runs.map(id=>state.runs.find(r=>r.run_id===id)).filter(Boolean);
+  const rows = [...state.selected].map(id=>state.runs.find(r=>r.run_id===id)).filter(Boolean);
   const el=$("#cmpTable");
   if(!rows.length){ el.innerHTML=`<div class="empty">Select one or more runs to compare.</div>`; return; }
   el.innerHTML = `<table><thead><tr>
@@ -342,12 +322,24 @@ function renderTable(){
     </tr>`).join("")}</tbody></table>`;
 }
 
+// Responsive whole-UI scale: continuous, tuned by viewport width. Lower REF => larger UI.
+// At ~1322px (laptop) this yields a slightly compact view; at 2560px (2K) a modestly
+// zoomed-in but not oversized view. Adjust ZOOM_MIN / ZOOM_MAX / ZOOM_REF to taste.
+const ZOOM_MIN = 0.9, ZOOM_MAX = 1.3, ZOOM_REF = 1500;
+function applyZoom(){
+  const vw = document.documentElement.clientWidth || window.innerWidth;
+  const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, vw / ZOOM_REF));
+  document.body.style.zoom = z.toFixed(3);
+}
+applyZoom();
+window.addEventListener("resize", ()=>{ applyZoom(); drawAll(); });
+
 // controls
 $("#smoothChk").addEventListener("change",drawAll);
 $("#smoothWin").addEventListener("input",()=>{$("#smoothVal").textContent=$("#smoothWin").value; drawAll();});
-$("#selAll").addEventListener("click",()=>{state.focus=null;state.runs.forEach(r=>state.selected.add(r.run_id));renderRunList();pollSelected();renderTiles();renderTable();});
-$("#selNone").addEventListener("click",()=>{state.focus=null;state.selected.clear();renderRunList();drawAll();renderTiles();renderTable();});
-$("#selLive").addEventListener("click",()=>{state.focus=null;state.selected.clear();state.runs.filter(r=>r.live).forEach(r=>state.selected.add(r.run_id));renderRunList();pollSelected();renderTiles();renderTable();});
+$("#selAll").addEventListener("click",()=>{ state.runs.forEach(r=>state.selected.add(r.run_id)); refresh(); });
+$("#selNone").addEventListener("click",()=>{ state.selected.clear(); refresh(); });
+$("#selLive").addEventListener("click",()=>{ state.selected.clear(); state.runs.filter(r=>r.live).forEach(r=>state.selected.add(r.run_id)); refresh(); });
 window.addEventListener("resize",drawAll);
 
 pollRuns();
