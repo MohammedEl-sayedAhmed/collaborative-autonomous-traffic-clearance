@@ -69,6 +69,22 @@ const consoleErrors = [];
 
   await click(A.run); await click(B.run); await page.waitForTimeout(600);
   ok((await legendCount(page)) === 2, 'reward legend shows 2 series');
+
+  // in-dashboard guide panel
+  await page.click('#guideBtn'); await page.waitForTimeout(150);
+  ok(await page.isVisible('#guide .sheet'), 'guide opens');
+  const gtext = await page.$eval('#guide .sheet', el => el.textContent);
+  ok(gtext.includes('Q-table') && gtext.includes('Episode') && gtext.includes('Epsilon'), 'guide explains RL/Q-table/episode/epsilon');
+  await page.click('#guideClose'); await page.waitForTimeout(150);
+  ok(!(await page.isVisible('#guide .sheet')), 'guide closes');
+
+  // responsive layout: 4 charts in one row at 2K, no horizontal page scroll
+  await page.setViewportSize({ width: 2560, height: 1440 }); await page.waitForTimeout(250);
+  const tops = await page.$$eval('.grid2 .card', els => els.map(e => Math.round(e.getBoundingClientRect().top)));
+  ok(new Set(tops).size === 1, `4 charts share one row at 2560px (rows=${new Set(tops).size})`);
+  const hScroll = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+  ok(!hScroll, 'no horizontal page scroll at 2560px');
+
   ok(consoleErrors.length === 0, `no console errors${consoleErrors.length ? ':\n   - ' + consoleErrors.join('\n   - ') : ''}`);
 
   await browser.close();
