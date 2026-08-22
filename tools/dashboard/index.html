@@ -45,11 +45,14 @@
   .tile .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
   .tile .v{font-size:26px;font-weight:700;margin-top:4px}
   .tile .v small{font-size:13px;color:var(--muted);font-weight:500}
-  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:16px}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px}
   .card h3{margin:0 0 8px;font-size:15.5px;font-weight:650}
   .card .hint{color:var(--muted);font-size:12.5px;font-weight:400}
-  svg{width:100%;height:250px;display:block}
+  svg{width:100%;height:220px;display:block}
+  /* shorter charts on short screens (e.g. laptops) so more fits without scrolling */
+  @media (max-height:850px){ svg{height:190px} .card{padding:11px 13px} .tile{padding:10px 13px} }
+  @media (max-height:700px){ svg{height:172px} }
   #cmpTable{overflow-x:auto}   /* a very wide comparison table scrolls inside its card, never the page */
   table{border-collapse:collapse;width:100%;font-size:14px;margin-top:6px}
   th,td{text-align:right;padding:9px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -62,6 +65,21 @@
   .legend span{display:inline-flex;align-items:center;gap:6px}
   button.mini{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:13px}
   button.mini:hover{border-color:var(--accent)}
+  .gbtn{background:var(--accent);color:#08131a;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:14px;font-weight:650}
+  .gbtn:hover{filter:brightness(1.08)}
+  .modal{position:fixed;inset:0;background:rgba(6,10,18,.74);display:none;z-index:50;padding:34px}
+  .modal.open{display:flex;align-items:flex-start;justify-content:center}
+  .sheet{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:920px;width:100%;max-height:88vh;overflow:auto;padding:24px 30px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+  .sheet h2{margin:0 0 6px;font-size:23px}
+  .sheet h3{margin:24px 0 8px;font-size:17px;color:var(--accent)}
+  .sheet p{margin:8px 0}
+  .sheet .lead{color:var(--muted);font-size:15px}
+  .sheet table{border-collapse:collapse;width:100%;font-size:14.5px;margin:8px 0}
+  .sheet td,.sheet th{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;white-space:normal;vertical-align:top}
+  .sheet td:first-child{font-weight:650;white-space:nowrap;color:var(--fg)}
+  .sheet .x{position:sticky;top:-2px;float:right;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:8px;width:34px;height:34px;cursor:pointer;font-size:19px;line-height:30px;text-align:center}
+  .sheet .good{color:var(--good)} .sheet .warn{color:var(--warn)} .sheet .bad{color:var(--bad)}
+  .sheet .pill{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle;margin-right:6px}
 </style>
 </head>
 <body>
@@ -70,6 +88,7 @@
   <h1>RL Training Dashboard</h1>
   <span class="sub" id="runsDir"></span>
   <span class="spacer"></span>
+  <button class="gbtn" id="guideBtn" title="What am I looking at?">📖 Guide</button>
   <label class="ctl"><input type="checkbox" id="smoothChk"/> smooth</label>
   <label class="ctl">avg <input type="range" id="smoothWin" min="1" max="21" step="2" value="5"/> <span id="smoothVal">5</span></label>
   <label class="ctl"><input type="checkbox" id="pauseChk"/> pause</label>
@@ -111,6 +130,53 @@
       <div id="cmpTable"></div>
     </div>
   </main>
+</div>
+
+<div class="modal" id="guide">
+  <div class="sheet">
+    <div class="x" id="guideClose" title="close">×</div>
+    <h2>Reading this dashboard</h2>
+    <p class="lead">One car (the <b>agent</b>) is learning a habit: when an <b>ambulance</b> comes up behind it,
+      what should it do — speed up, slow down, or change lane — so the ambulance can get past quickly? It learns
+      by <b>trial and error</b> over many attempts. This dashboard shows that learning happen, and lets you
+      compare runs as you improve the code.</p>
+
+    <h3>The words on the screen</h3>
+    <table>
+      <tr><td>RL</td><td>Reinforcement learning — learning by trial and error: try something, see the reward, do more of what worked.</td></tr>
+      <tr><td>Agent</td><td>The learner — the racecar that decides how to move aside.</td></tr>
+      <tr><td>Environment</td><td>The world it acts in — the Gazebo simulation with the road, the agent car, and the ambulance.</td></tr>
+      <tr><td>Episode</td><td>One complete attempt, from the start of a scenario until it ends. Learning happens across many episodes.</td></tr>
+      <tr><td>Step</td><td>One decision inside an episode. An episode is many steps.</td></tr>
+      <tr><td>State</td><td>What the agent “sees” when deciding: its own speed &amp; lane, the ambulance’s speed &amp; lane, and the gap between them.</td></tr>
+      <tr><td>Action</td><td>What it can do at a step: speed up, keep speed, slow down, or change lane.</td></tr>
+      <tr><td>Reward</td><td>The score for an action. Shaped so the agent is rewarded when the ambulance keeps <b>accelerating</b> (path clearing) and penalized when it must slow down. Rewards are ≤ 0, so <b>closer to 0 is better</b>.</td></tr>
+      <tr><td>Policy</td><td>The learned strategy: “in this state, do that action.”</td></tr>
+      <tr><td>Q-learning</td><td>The method used: keep a big table of “how good is each action in each state.”</td></tr>
+      <tr><td>Q-table</td><td>That table (saved as <code>Q_TABLE.npy</code>). Training fills it in and sharpens the numbers.</td></tr>
+      <tr><td>Epsilon (ε)</td><td>How much the agent <b>explores</b> (tries random things) vs <b>exploits</b> (uses what it learned). Starts high, decays low.</td></tr>
+      <tr><td>Outcome</td><td>Why an episode ended (see the outcomes chart).</td></tr>
+    </table>
+
+    <h3>How to read each panel</h3>
+    <p><b>Cumulative reward per episode</b> — the learning curve. Rewards are negative, so <b>higher / closer to 0 is better</b>. A rising line means it’s learning. Use <b>smooth</b> to see the trend through the noise.</p>
+    <p><b>Epsilon per episode</b> — explore-vs-exploit, decaying over time. If it stays high and flat, the agent never settles (train longer / decay faster).</p>
+    <p><b>Steps per episode</b> — how long each attempt took. Usually <b>drops</b> as the policy improves.</p>
+    <p><b>Episode outcomes</b> — why episodes ended:
+      <span class="pill" style="background:#46c37b"></span>ambulance reached goal (success),
+      <span class="pill" style="background:#4fd1c5"></span>agent reached goal,
+      <span class="pill" style="background:#e0b64a"></span>max time,
+      <span class="pill" style="background:#e06c6c"></span>sim died. More green = better.</p>
+    <p><b>Run comparison (table)</b> — per run: git <b>commit</b>, episodes, mean / final / best reward, and <b>success rate</b> (% of episodes the ambulance got through). This is where you read off “did my change help?”</p>
+    <p><b>Live tile</b> — while training, shows the current episode/step/reward/ε in real time; a <span class="good">LIVE</span> badge marks a run whose heartbeat is fresh.</p>
+
+    <h3>How to navigate</h3>
+    <p>Click a run (or its checkbox) to show/hide it. Select two or more to <b>overlay</b> and compare. Use <b>all / none / live</b> to select quickly, <b>smooth</b> + the slider to average the curves, and <b>pause</b> to stop the 2-second auto-refresh. Every run is saved and stays available to compare later.</p>
+
+    <h3>What “good” looks like</h3>
+    <p>Reward curve <span class="good">rising toward 0</span>, epsilon decaying, steps decreasing, and the outcomes bar turning greener — and, when comparing, your improved run sits <b>above</b> the baseline with a <b>higher success rate</b>.</p>
+    <p class="lead">Note: the shipped RL is a proof-of-concept (few episodes, lane-changes disabled in code, fixed start). The dashboard is built to make those limits visible and measure the effect as you improve the RL and the environment.</p>
+  </div>
 </div>
 
 <script>
@@ -325,7 +391,7 @@ function renderTable(){
 // Responsive whole-UI scale: continuous, tuned by viewport width. Lower REF => larger UI.
 // At ~1322px (laptop) this yields a slightly compact view; at 2560px (2K) a modestly
 // zoomed-in but not oversized view. Adjust ZOOM_MIN / ZOOM_MAX / ZOOM_REF to taste.
-const ZOOM_MIN = 0.9, ZOOM_MAX = 1.3, ZOOM_REF = 1500;
+const ZOOM_MIN = 0.9, ZOOM_MAX = 1.15, ZOOM_REF = 1500;
 function applyZoom(){
   const vw = document.documentElement.clientWidth || window.innerWidth;
   const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, vw / ZOOM_REF));
@@ -333,6 +399,12 @@ function applyZoom(){
 }
 applyZoom();
 window.addEventListener("resize", ()=>{ applyZoom(); drawAll(); });
+
+// guide panel
+$("#guideBtn").addEventListener("click",()=>$("#guide").classList.add("open"));
+$("#guideClose").addEventListener("click",()=>$("#guide").classList.remove("open"));
+$("#guide").addEventListener("click",e=>{ if(e.target.id==="guide") $("#guide").classList.remove("open"); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") $("#guide").classList.remove("open"); });
 
 // controls
 $("#smoothChk").addEventListener("change",drawAll);
