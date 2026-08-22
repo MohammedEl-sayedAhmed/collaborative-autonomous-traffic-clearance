@@ -32,6 +32,9 @@ logging error can never interrupt training).
 
 You'll see two learning curves overlaid, the epsilon/steps/outcome charts, and a comparison table.
 
+> New to the terms (RL, Q-table, episode, epsilon)? See the plain-language
+> **[dashboard reading guide](DASHBOARD_GUIDE.md)**.
+
 ## Real training
 
 Two terminals:
@@ -80,6 +83,17 @@ curves and see exactly how the change moved the needle.
 | Steps per episode | episode length; typically drops as the policy improves |
 | Episode outcomes | why episodes ended (ambulance reached goal = success, in green) |
 | Comparison table | mean / final / best reward and success rate per run |
+
+## Testing (optional)
+
+The run-selection UI has a Playwright regression test that clicks checkboxes in many sequences and
+asserts the checkbox state, row highlight, and comparison table always agree:
+
+```bash
+./run.sh dashboard-demo && ./run.sh dashboard &     # serve with demo data
+npm i playwright && npx playwright install chromium
+DASH_URL=http://127.0.0.1:8770 node tools/dashboard/test_dashboard.mjs
+```
 
 ## Notes
 
