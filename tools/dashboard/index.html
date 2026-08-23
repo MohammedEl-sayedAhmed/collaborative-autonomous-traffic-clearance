@@ -4,82 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>RL Training Dashboard</title>
-<style>
-  /* Fluid root font: scales smoothly with viewport width (no zoom hacks), so text is
-     readable on a laptop and a 2K/4K monitor alike. Everything below is sized in rem. */
-  :root{ font-size: clamp(14px, calc(11.8px + 0.24vw), 20px);
-    --bg:#0f1420; --panel:#161d2e; --panel2:#1d2740; --line:#2a3550;
-    --fg:#e6ecf5; --muted:#9aa7bd; --accent:#4fd1c5; --good:#46c37b; --warn:#e0b64a; --bad:#e06c6c;
-  }
-  *{box-sizing:border-box}
-  html,body{overflow-x:hidden;max-width:100%}
-  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:1rem;line-height:1.5;background:var(--bg);color:var(--fg)}
-  header{display:flex;align-items:center;gap:.9rem;padding:.7rem 1.1rem;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
-  header h1{font-size:1.2rem;margin:0;font-weight:650;letter-spacing:.2px;white-space:nowrap}
-  header .sub{color:var(--muted);font-size:.8rem;min-width:0;overflow:hidden;text-overflow:ellipsis}
-  header .spacer{flex:1}
-  .ctl{display:flex;align-items:center;gap:.4rem;color:var(--muted);font-size:.85rem;white-space:nowrap}
-  .ctl input[type=range]{width:6rem}
-  .dot{width:.62rem;height:.62rem;border-radius:50%;display:inline-block;flex:none}
-  .pulse{background:var(--good);animation:p 1.6s infinite}
-  @keyframes p{0%{box-shadow:0 0 0 0 rgba(70,195,123,.6)}70%{box-shadow:0 0 0 .5rem rgba(70,195,123,0)}100%{box-shadow:0 0 0 0 rgba(70,195,123,0)}}
-  .wrap{display:grid;grid-template-columns:clamp(230px,22vw,330px) 1fr;min-height:calc(100vh - 3.4rem)}
-  aside{background:var(--panel);border-right:1px solid var(--line);padding:.9rem;overflow:auto}
-  aside h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.2rem .1rem .8rem}
-  .runrow{display:flex;align-items:center;gap:.7rem;padding:.62rem;border-radius:.55rem;cursor:pointer;margin-bottom:.4rem;border:1px solid transparent;user-select:none}
-  .runrow:hover{background:var(--panel2)}
-  .runrow.sel{border-color:var(--accent);background:var(--panel2)}
-  .runrow input.chk{width:1.05rem;height:1.05rem;pointer-events:none;flex:none;accent-color:var(--accent)}
-  .runrow .sw{width:.75rem;height:.75rem;border-radius:.2rem;flex:none}
-  .runrow .meta{min-width:0;flex:1}
-  .runrow .lbl{font-weight:600;font-size:.96rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .runrow .sub{color:var(--muted);font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .badge{font-size:.68rem;padding:.1rem .45rem;border-radius:.6rem;font-weight:600;margin-left:.3rem}
-  .b-live{background:rgba(70,195,123,.18);color:var(--good)}
-  .b-done{background:rgba(79,209,197,.16);color:var(--accent)}
-  .b-stale{background:rgba(224,182,74,.16);color:var(--warn)}
-  .b-test{background:rgba(154,167,189,.18);color:var(--muted)}
-  main{padding:1.1rem 1.2rem;overflow:auto}
-  .tiles{display:flex;gap:.8rem;flex-wrap:wrap;margin-bottom:1rem}
-  .tile{background:var(--panel);border:1px solid var(--line);border-radius:.7rem;padding:.7rem .95rem;min-width:8.5rem;flex:1 1 8.5rem}
-  .tile .k{color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}
-  .tile .v{font-size:1.65rem;font-weight:700;margin-top:.15rem}
-  .tile .v small{font-size:.82rem;color:var(--muted);font-weight:500}
-  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:.9rem}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:.7rem;padding:.85rem 1rem}
-  .card h3{margin:0 0 .5rem;font-size:1.02rem;font-weight:650}
-  .card .hint{color:var(--muted);font-size:.8rem;font-weight:400}
-  svg{width:100%;height:min(30vh,230px);display:block}
-  #cmpTable{overflow-x:auto}
-  table{border-collapse:collapse;width:100%;font-size:.9rem;margin-top:.4rem}
-  th,td{text-align:right;padding:.55rem .7rem;border-bottom:1px solid var(--line);white-space:nowrap}
-  th:first-child,td:first-child{text-align:left}
-  th{color:var(--muted);font-weight:600;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}
-  .swatch{display:inline-block;width:.7rem;height:.7rem;border-radius:.18rem;margin-right:.45rem;vertical-align:middle}
-  .empty{color:var(--muted);text-align:center;padding:3rem 1rem;font-size:.92rem}
-  code{background:var(--panel2);padding:.1rem .35rem;border-radius:.3rem;color:var(--accent);font-size:.86rem}
-  .legend{display:flex;gap:1rem;flex-wrap:wrap;font-size:.82rem;color:var(--muted);margin-bottom:.35rem}
-  .legend span{display:inline-flex;align-items:center;gap:.35rem}
-  button.mini{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:.45rem;padding:.3rem .75rem;cursor:pointer;font-size:.82rem}
-  button.mini:hover{border-color:var(--accent)}
-  .gbtn{background:var(--accent);color:#08131a;border:none;border-radius:.5rem;padding:.35rem .9rem;cursor:pointer;font-size:.9rem;font-weight:650;white-space:nowrap}
-  .gbtn:hover{filter:brightness(1.08)}
-  /* modal: viewport units, unaffected by any content scaling */
-  .modal{position:fixed;inset:0;background:rgba(6,10,18,.74);display:none;z-index:50;padding:clamp(10px,3vh,34px)}
-  .modal.open{display:flex;align-items:flex-start;justify-content:center}
-  .sheet{background:var(--panel);border:1px solid var(--line);border-radius:.9rem;width:min(60rem,100%);max-height:92vh;overflow:auto;padding:1.4rem 1.7rem;box-shadow:0 1.4rem 4rem rgba(0,0,0,.55)}
-  .sheet h2{margin:0 0 .3rem;font-size:1.45rem}
-  .sheet h3{margin:1.3rem 0 .5rem;font-size:1.1rem;color:var(--accent)}
-  .sheet p{margin:.5rem 0}
-  .sheet .lead{color:var(--muted);font-size:.98rem}
-  .sheet table{border-collapse:collapse;width:100%;font-size:.92rem;margin:.5rem 0}
-  .sheet td,.sheet th{border-bottom:1px solid var(--line);padding:.5rem .6rem;text-align:left;white-space:normal;vertical-align:top}
-  .sheet td:first-child{font-weight:650;white-space:nowrap;color:var(--fg)}
-  .sheet .x{position:sticky;top:-.2rem;float:right;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:.5rem;width:2.1rem;height:2.1rem;cursor:pointer;font-size:1.2rem;line-height:1.9rem;text-align:center}
-  .sheet .good{color:var(--good)} .sheet .warn{color:var(--warn)} .sheet .bad{color:var(--bad)}
-  .sheet .pill{display:inline-block;width:.7rem;height:.7rem;border-radius:.2rem;vertical-align:middle;margin-right:.35rem}
-  @media (max-width:760px){ .wrap{grid-template-columns:1fr} aside{border-right:none;border-bottom:1px solid var(--line)} }
-</style>
+<link rel="stylesheet" href="app.css"/>
 </head>
 <body>
 <header>
@@ -105,6 +30,7 @@
   </aside>
   <main>
     <div class="tiles" id="tiles"></div>
+    <div class="charthint">Charts: hover for values · scroll to zoom · drag to box-zoom · double-click to reset</div>
     <div class="grid2">
       <div class="card">
         <h3>Cumulative reward per episode <span class="hint">— the learning curve</span></h3>
@@ -178,232 +104,21 @@
   </div>
 </div>
 
-<script>
-const PALETTE = ["#4fd1c5","#e0b64a","#e06c6c","#7aa2f7","#9ece6a","#bb9af7","#ff9e64","#2ac3de","#f7768e","#73daca"];
-const OUTCOME = {0:"in progress",1:"max time",2:"ambulance goal",3:"agent goal",4:"sim died"};
-const OUTCOME_COLOR = {1:"#e0b64a",2:"#46c37b",3:"#4fd1c5",4:"#e06c6c",0:"#9aa7bd"};
+<div class="modal" id="chartModal">
+  <div class="sheet" style="width:min(94vw,1500px)">
+    <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem">
+      <button class="maxbtn" id="bigBack" data-back="chartBig" title="back (previous view)">←</button>
+      <button class="maxbtn" id="bigHome" title="reset zoom (home)">⟲</button>
+      <h3 id="chartBigTitle" style="margin:0;font-size:1.15rem;flex:1"></h3>
+      <div class="x" id="chartClose" title="close" style="position:static;float:none">×</div>
+    </div>
+    <div class="legend" id="legBig"></div>
+    <svg id="chartBig" style="height:70vh"></svg>
+    <div class="charthint" style="margin:.5rem 0 0">hover for values · scroll to zoom · drag to box-zoom · double-click to reset</div>
+  </div>
+</div>
+<div id="tt" class="tt"></div>
 
-// Single source of truth: `selected` decides what is shown. No competing "focus".
-const state = {runs:[], data:{}, selected:new Set(), colors:{}, first:true};
-
-const $ = s => document.querySelector(s);
-const fmt = (v,d=2) => (v==null||isNaN(v)) ? "—" : (+v).toFixed(d);
-const shortSha = s => (s&&s!=="unknown") ? s.slice(0,7) : "—";
-function escapeHtml(s){ return (s||"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function rem(){ return parseFloat(getComputedStyle(document.documentElement).fontSize) || 15; }  // px per rem (fluid)
-
-function colorFor(id){
-  if(!(id in state.colors)) state.colors[id] = PALETTE[Object.keys(state.colors).length % PALETTE.length];
-  return state.colors[id];
-}
-function ageSecs(t){ return t? (Date.now()/1000 - t) : null; }
-function statusBadge(r){
-  if(r.mode==="test") return `<span class="badge b-test">test</span>`;
-  const age = ageSecs(r.heartbeat);
-  if(r.status==="running" && age!=null && age<15) return `<span class="badge b-live">LIVE</span>`;
-  if(r.status==="running") return `<span class="badge b-stale">stalled</span>`;
-  return `<span class="badge b-done">done</span>`;
-}
-async function jget(u){ const r = await fetch(u,{cache:"no-store"}); return r.json(); }
-
-function refresh(){ renderRunList(); renderTiles(); renderTable(); drawAll(); pollSelected(); }
-function setSelected(id, on){ if(on) state.selected.add(id); else state.selected.delete(id); refresh(); }
-function toggleSelected(id){ setSelected(id, !state.selected.has(id)); }
-
-async function pollRuns(){
-  if($("#pauseChk").checked) return;
-  let payload;
-  try{ payload = await jget("/api/runs"); }catch(e){ $("#pollDot").style.background="var(--bad)"; $("#pollDot").className="dot"; return; }
-  $("#pollDot").style.background=""; $("#pollDot").className="dot pulse";
-  state.runs = payload.runs || [];
-  $("#runsDir").textContent = payload.runs_dir || "";
-  $("#runCount").textContent = "("+state.runs.length+")";
-  if(state.first && state.runs.length){
-    const live = state.runs.filter(r=>r.live);
-    (live.length?live:[state.runs[state.runs.length-1]]).forEach(r=>state.selected.add(r.run_id));
-    state.first=false;
-  }
-  renderRunList();
-  await pollSelected();
-  renderTiles(); renderTable();
-  $("#pollInfo").textContent = "updated "+new Date().toLocaleTimeString();
-}
-
-async function pollSelected(){
-  const ids = [...state.selected];
-  await Promise.all(ids.map(async id=>{ try{ state.data[id] = await jget("/api/run?id="+encodeURIComponent(id)); }catch(e){} }));
-  // re-render everything that depends on the fetched per-run data, so tiles/table
-  // don't lag the charts when a newly-selected run's data arrives.
-  drawAll(); renderTiles(); renderTable();
-}
-
-function renderRunList(){
-  const el = $("#runlist");
-  if(!state.runs.length){ el.innerHTML = `<div class="empty">No runs yet.<br/>Start training with <code>./run.sh rl</code><br/>or seed demos with <code>./run.sh dashboard-demo</code>.</div>`; return; }
-  el.innerHTML = "";
-  state.runs.forEach(r=>{
-    const sel = state.selected.has(r.run_id);
-    const row = document.createElement("div");
-    row.className = "runrow"+(sel?" sel":"");
-    row.setAttribute("data-run", r.run_id);
-    row.innerHTML = `
-      <input type="checkbox" class="chk" tabindex="-1" ${sel?"checked":""}/>
-      <span class="sw" style="background:${colorFor(r.run_id)};${sel?'':'opacity:.28'}"></span>
-      <span class="meta">
-        <div class="lbl">${escapeHtml(r.label)}${statusBadge(r)}</div>
-        <div class="sub">${shortSha(r.git_sha)} · ${r.num_episodes} ep · final ${fmt(r.final_reward)}</div>
-      </span>`;
-    row.addEventListener("click", ()=> toggleSelected(r.run_id));
-    el.appendChild(row);
-  });
-}
-
-function selectedRuns(){
-  return [...state.selected]
-    .map(id=>({id, summary:state.runs.find(r=>r.run_id===id), detail:state.data[id]}))
-    .filter(x=>x.summary && x.detail && x.detail.episodes);
-}
-
-function renderTiles(){
-  const runs = selectedRuns();
-  const el = $("#tiles"); el.innerHTML="";
-  const liveRun = runs.find(r=>r.detail.status && r.detail.status.state==="running");
-  if(liveRun){
-    const s = liveRun.detail.status, age = ageSecs(s.time);
-    el.appendChild(tile("● Live: "+escapeHtml(liveRun.summary.label),
-      `ep ${s.episode} · step ${s.step}`, `cum ${fmt(s.cum_reward)} · ε ${fmt(s.epsilon,3)}${age!=null?" · "+Math.round(age)+"s ago":""}`));
-  }
-  if(runs.length===1){
-    const rw = runs[0].detail.episodes.map(e=>e.cum_reward);
-    el.appendChild(tile("Episodes", runs[0].detail.episodes.length, ""));
-    el.appendChild(tile("Final reward", fmt(rw[rw.length-1]), ""));
-    el.appendChild(tile("Best reward", fmt(rw.length?Math.max(...rw):null), ""));
-    el.appendChild(tile("Mean reward", fmt(rw.length?rw.reduce((a,b)=>a+b,0)/rw.length:null), ""));
-    el.appendChild(tile("Success", fmt(100*successRate(runs[0].detail.episodes),0)+"%", "amb. reached goal"));
-  } else if(runs.length>1){
-    el.appendChild(tile("Runs compared", runs.length, ""));
-    el.appendChild(tile("Total episodes", runs.reduce((a,r)=>a+r.detail.episodes.length,0), ""));
-  }
-}
-function tile(k,v,sub){ const d=document.createElement("div"); d.className="tile";
-  d.innerHTML=`<div class="k">${k}</div><div class="v">${v} ${sub?`<small>${sub}</small>`:""}</div>`; return d; }
-function successRate(eps){ return eps.length? eps.filter(e=>e.outcome===2).length/eps.length : 0; }
-
-function movingAvg(vals,w){
-  if(w<=1) return vals.slice();
-  const out=[]; const h=Math.floor(w/2);
-  for(let i=0;i<vals.length;i++){ let s=0,c=0;
-    for(let j=Math.max(0,i-h);j<=Math.min(vals.length-1,i+h);j++){s+=vals[j];c++;} out.push(s/c); }
-  return out;
-}
-
-function drawAll(){
-  const runs = selectedRuns();
-  const smooth = $("#smoothChk").checked ? +$("#smoothWin").value : 1;
-  const rewardSeries = runs.map(r=>{
-    const eps=r.detail.episodes; const ys=movingAvg(eps.map(e=>e.cum_reward),smooth);
-    return {label:r.summary.label, color:colorFor(r.id), points:eps.map((e,i)=>[e.episode, ys[i]])};
-  });
-  lineChart($("#chartReward"), rewardSeries, {});
-  legend($("#legReward"), rewardSeries);
-  lineChart($("#chartEps"), runs.map(r=>({label:r.summary.label,color:colorFor(r.id),
-    points:r.detail.episodes.map(e=>[e.episode,e.epsilon])})), {ymin:0});
-  lineChart($("#chartSteps"), runs.map(r=>({label:r.summary.label,color:colorFor(r.id),
-    points:r.detail.episodes.map(e=>[e.episode,e.num_steps])})), {ymin:0});
-  outcomeChart($("#chartOutcomes"), runs);
-}
-function legend(el, series){ el.innerHTML = series.map(s=>`<span><span class="swatch" style="background:${s.color}"></span>${escapeHtml(s.label)}</span>`).join(""); }
-
-function lineChart(svg, series, opts={}){
-  const W=svg.clientWidth||560, H=svg.clientHeight||220, FS=(rem()*0.74), P={l:rem()*3.2,r:rem()*1,t:rem()*.8,b:rem()*1.9};
-  const pts = series.flatMap(s=>s.points).filter(p=>p[1]!=null && !isNaN(p[1]));
-  if(!pts.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="${rem()*.85}">no data yet</text>`; return; }
-  let xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
-  let xmin=Math.min(...xs), xmax=Math.max(...xs), ymin=(opts.ymin!=null?opts.ymin:Math.min(...ys)), ymax=Math.max(...ys);
-  if(xmax===xmin) xmax=xmin+1; if(ymax===ymin) ymax=ymin+1;
-  const pad=(ymax-ymin)*0.08; ymin-=(opts.ymin!=null?0:pad); ymax+=pad;
-  const X=x=>P.l+(x-xmin)/(xmax-xmin)*(W-P.l-P.r);
-  const Y=y=>H-P.b-(y-ymin)/(ymax-ymin)*(H-P.t-P.b);
-  let g=`<g font-size="${FS.toFixed(1)}" fill="#9aa7bd">`;
-  for(let i=0;i<=4;i++){ const yv=ymin+(ymax-ymin)*i/4, y=Y(yv);
-    g+=`<line x1="${P.l}" y1="${y.toFixed(1)}" x2="${W-P.r}" y2="${y.toFixed(1)}" stroke="#232e47"/>`;
-    g+=`<text x="${P.l-FS*.5}" y="${(y+FS*.34).toFixed(1)}" text-anchor="end">${fmtAxis(yv)}</text>`; }
-  const nT=Math.min(6,Math.round(xmax-xmin)||1);
-  for(let i=0;i<=nT;i++){ const xv=xmin+(xmax-xmin)*i/nT, x=X(xv);
-    g+=`<text x="${x.toFixed(1)}" y="${(H-FS*.6).toFixed(1)}" text-anchor="middle">${Math.round(xv)}</text>`; }
-  g+=`</g>`;
-  let paths="";
-  series.forEach(s=>{
-    const P2=s.points.filter(p=>p[1]!=null&&!isNaN(p[1]));
-    if(!P2.length) return;
-    const d=P2.map((p,i)=>(i?"L":"M")+X(p[0]).toFixed(1)+" "+Y(p[1]).toFixed(1)).join(" ");
-    paths+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.2"/>`;
-    const last=P2[P2.length-1];
-    paths+=`<circle cx="${X(last[0]).toFixed(1)}" cy="${Y(last[1]).toFixed(1)}" r="3.4" fill="${s.color}"/>`;
-  });
-  svg.innerHTML=g+paths;
-}
-function fmtAxis(v){ const a=Math.abs(v); if(a>=1000) return (v/1000).toFixed(1)+"k"; if(a<1&&a>0) return v.toFixed(2); return v.toFixed(a<10?1:0); }
-
-function outcomeChart(svg, runs){
-  const W=svg.clientWidth||560,H=svg.clientHeight||220,FS=rem()*0.74,P={l:rem()*1,r:rem()*1,t:rem()*1.7,b:rem()*3};
-  if(!runs.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="${rem()*.85}">no data yet</text>`; return; }
-  const keys=[1,2,3,4,0];
-  const bw=Math.min(rem()*4.6,(W-P.l-P.r)/runs.length-rem());
-  const maxN=Math.max(1,...runs.map(r=>r.detail.episodes.length));
-  let g="";
-  runs.forEach((r,ri)=>{
-    const counts={}; keys.forEach(k=>counts[k]=0);
-    r.detail.episodes.forEach(e=>{counts[e.outcome]=(counts[e.outcome]||0)+1;});
-    const cx=P.l+(ri+0.5)*((W-P.l-P.r)/runs.length);
-    let y=H-P.b;
-    keys.forEach(k=>{ const h=(counts[k]/maxN)*(H-P.t-P.b);
-      if(h>0){ g+=`<rect x="${(cx-bw/2).toFixed(1)}" y="${(y-h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${OUTCOME_COLOR[k]}"/>`; y-=h; } });
-    g+=`<text x="${cx.toFixed(1)}" y="${(H-P.b+FS*1.4).toFixed(1)}" fill="#e6ecf5" font-size="${FS.toFixed(1)}" text-anchor="middle">${escapeHtml(r.summary.label).slice(0,16)}</text>`;
-    g+=`<text x="${cx.toFixed(1)}" y="${(H-P.b+FS*2.7).toFixed(1)}" fill="#9aa7bd" font-size="${(FS*.9).toFixed(1)}" text-anchor="middle">${r.detail.episodes.length} ep</text>`;
-  });
-  let lx=P.l; g+=`<g font-size="${(FS*.92).toFixed(1)}" fill="#9aa7bd">`;
-  [2,3,1,4].forEach(k=>{ g+=`<rect x="${lx.toFixed(1)}" y="1" width="${(FS*.8).toFixed(1)}" height="${(FS*.8).toFixed(1)}" fill="${OUTCOME_COLOR[k]}"/><text x="${(lx+FS).toFixed(1)}" y="${(FS*.85).toFixed(1)}">${OUTCOME[k]}</text>`; lx+=Math.min(W/4,rem()*8.5); });
-  g+=`</g>`;
-  svg.innerHTML=g;
-}
-
-function renderTable(){
-  const rows = [...state.selected].map(id=>state.runs.find(r=>r.run_id===id)).filter(Boolean);
-  const el=$("#cmpTable");
-  if(!rows.length){ el.innerHTML=`<div class="empty">Select one or more runs to compare.</div>`; return; }
-  el.innerHTML = `<table><thead><tr>
-    <th>Run</th><th>commit</th><th>mode</th><th>status</th><th>episodes</th>
-    <th>mean</th><th>final</th><th>best</th><th>success</th></tr></thead><tbody>${
-    rows.map(r=>`<tr>
-      <td><span class="swatch" style="background:${colorFor(r.run_id)}"></span>${escapeHtml(r.label)}</td>
-      <td><code>${shortSha(r.git_sha)}</code></td>
-      <td>${r.mode}</td>
-      <td>${statusBadge(r)}</td>
-      <td>${r.num_episodes}</td>
-      <td>${fmt(r.mean_reward)}</td>
-      <td>${fmt(r.final_reward)}</td>
-      <td>${fmt(r.best_reward)}</td>
-      <td>${r.success_rate==null?"—":Math.round(r.success_rate*100)+"%"}</td>
-    </tr>`).join("")}</tbody></table>`;
-}
-
-// guide panel
-$("#guideBtn").addEventListener("click",()=>$("#guide").classList.add("open"));
-$("#guideClose").addEventListener("click",()=>$("#guide").classList.remove("open"));
-$("#guide").addEventListener("click",e=>{ if(e.target.id==="guide") $("#guide").classList.remove("open"); });
-document.addEventListener("keydown",e=>{ if(e.key==="Escape") $("#guide").classList.remove("open"); });
-
-// controls
-$("#smoothChk").addEventListener("change",drawAll);
-$("#smoothWin").addEventListener("input",()=>{$("#smoothVal").textContent=$("#smoothWin").value; drawAll();});
-$("#selAll").addEventListener("click",()=>{ state.runs.forEach(r=>state.selected.add(r.run_id)); refresh(); });
-$("#selNone").addEventListener("click",()=>{ state.selected.clear(); refresh(); });
-$("#selLive").addEventListener("click",()=>{ state.selected.clear(); state.runs.filter(r=>r.live).forEach(r=>state.selected.add(r.run_id)); refresh(); });
-window.addEventListener("resize", drawAll);
-
-pollRuns();
-setInterval(pollRuns, 2000);
-</script>
+<script src="app.js"></script>
 </body>
 </html>

@@ -81,6 +81,8 @@ def list_runs():
             "success_rate": (outcomes.count(2) / len(outcomes)) if outcomes else None,
             "live": status.get("state") == "running",
             "heartbeat": status.get("time"),
+            # which fixes/toggles distinguish this run (headless harness records these in config.fixes)
+            "fixes": (meta.get("config") or {}).get("fixes"),
         }
         runs.append(summary)
     return runs
@@ -119,6 +121,13 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, fp.read(), "text/html; charset=utf-8")
             except Exception as e:
                 self._send(500, {"error": str(e)})
+        elif route in ("/app.css", "/app.js"):
+            ctype = "text/css" if route.endswith(".css") else "application/javascript"
+            try:
+                with open(os.path.join(HERE, route.lstrip("/")), "rb") as fp:
+                    self._send(200, fp.read(), ctype + "; charset=utf-8")
+            except Exception as e:
+                self._send(404, {"error": str(e)})
         elif route == "/api/runs":
             self._send(200, {"runs_dir": RUNS_DIR, "runs": list_runs()})
         elif route == "/api/run":
