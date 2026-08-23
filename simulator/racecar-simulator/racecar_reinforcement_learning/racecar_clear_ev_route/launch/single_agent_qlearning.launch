@@ -3,8 +3,11 @@
     
     <!--Arguments-->
     <arg name="r_name" default="racecar1"/>
+    <!-- Fix toggle for the real training campaign: enable real lane changes (default off = shipped). -->
+    <arg name="enable_lane_changes" default="false"/>
 
     <param name="/$(arg r_name)/robot_num" value="1"/>
+    <param name="/$(arg r_name)/enable_lane_changes" value="$(arg enable_lane_changes)"/>
 
     <!--Parameters: load the Q-learning hyperparameters (max_num_episodes, alpha, gamma,
         epsilon, ...) and the environment/window params the agent needs to discretize state.

@@ -59,6 +59,12 @@ class SingleAgentQlearning:
         self.max_epsilon = algo_params['max_epsilon']
         self.min_epsilon = algo_params['min_epsilon']
         self.decay_rate = algo_params['decay_rate']
+
+        # Fix toggle (default False = shipped behaviour): when True the agent may actually
+        # perform lane changes instead of the change_left->dec / change_right->no_acc remap
+        # below. Lets a real training campaign compare baseline vs. fixed via a ROS param.
+        self.enable_lane_changes = rospy.get_param('enable_lane_changes', False)
+        rospy.loginfo("enable_lane_changes = %s", self.enable_lane_changes)
         
         #new and last observed states parameters 
         self.new_observed_state_for_this_agent = statesResponse()
@@ -167,11 +173,14 @@ class SingleAgentQlearning:
         action_feasibility = False
         action_taken_time = 0
 
-        #FIXME this is for testing purposes onlyyyyyyyy
-        if self.Action == 'change_left':
-            self.Action = 'dec'
-        if self.Action == 'change_right':
-            self.Action = 'no_acc'
+        # Lane changes were remapped away "for testing purposes only", which disabled the
+        # agent's core move-aside maneuver. Keep that as the default, but allow enabling real
+        # lane changes via the enable_lane_changes param (see __init__).
+        if not self.enable_lane_changes:
+            if self.Action == 'change_left':
+                self.Action = 'dec'
+            if self.Action == 'change_right':
+                self.Action = 'no_acc'
 
         #update request parameters 
         if (self.Action == 'change_left'):
