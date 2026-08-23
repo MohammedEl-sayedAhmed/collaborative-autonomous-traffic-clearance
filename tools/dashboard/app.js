@@ -262,11 +262,12 @@ function outcomeChart(svg, runs){
   const keys=[1,2,3,4,0];
   const bw=Math.min(rem()*4.6,(W-P.l-P.r)/runs.length-rem());
   const maxN=Math.max(1,...runs.map(r=>r.detail.episodes.length));
-  let g="";
+  let g=""; const bars=[];
   runs.forEach((r,ri)=>{
     const counts={}; keys.forEach(k=>counts[k]=0);
     r.detail.episodes.forEach(e=>{counts[e.outcome]=(counts[e.outcome]||0)+1;});
     const cx=P.l+(ri+0.5)*((W-P.l-P.r)/runs.length);
+    bars.push({cx, label:r.summary.label, counts, total:r.detail.episodes.length});
     let y=H-P.b;
     keys.forEach(k=>{ const h=(counts[k]/maxN)*(H-P.t-P.b);
       if(h>0){ g+=`<rect x="${(cx-bw/2).toFixed(1)}" y="${(y-h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${OUTCOME_COLOR[k]}"/>`; y-=h; } });
@@ -277,6 +278,22 @@ function outcomeChart(svg, runs){
   [2,3,1,4].forEach(k=>{ g+=`<rect x="${lx.toFixed(1)}" y="1" width="${(FS*.8).toFixed(1)}" height="${(FS*.8).toFixed(1)}" fill="${OUTCOME_COLOR[k]}"/><text x="${(lx+FS).toFixed(1)}" y="${(FS*.85).toFixed(1)}">${OUTCOME[k]}</text>`; lx+=Math.min(W/4,rem()*8.5); });
   g+=`</g>`;
   svg.innerHTML=g;
+  svg.__bars=bars;
+  if(!svg.__ointeractive) attachOutcomeInteraction(svg);
+}
+
+// the outcomes chart is categorical (bars per run) -> no zoom, but a hover tooltip of the counts
+function attachOutcomeInteraction(svg){
+  svg.__ointeractive=true;
+  const rel=e=>{ const r=svg.getBoundingClientRect(); return (e.clientX-r.left)*(svg.clientWidth/r.width); };
+  svg.addEventListener("mousemove",e=>{
+    const bars=svg.__bars; if(!bars||!bars.length){ hideTip(); return; }
+    const x=rel(e); let b=bars[0]; bars.forEach(bb=>{ if(Math.abs(bb.cx-x)<Math.abs(b.cx-x)) b=bb; });
+    let rows=""; [2,3,1,4,0].forEach(k=>{ if(b.counts[k]) rows+=`<div><span class="ttsw" style="background:${OUTCOME_COLOR[k]}"></span>${OUTCOME[k]}: <b>${b.counts[k]}</b> (${Math.round(100*b.counts[k]/b.total)}%)</div>`; });
+    const tt=$("#tt"); tt.innerHTML=`<div class="tth">${escapeHtml(b.label)} · ${b.total} ep</div>${rows}`;
+    tt.style.display="block"; tt.style.left=(e.clientX+14)+"px"; tt.style.top=(e.clientY+14)+"px";
+  });
+  svg.addEventListener("mouseleave",()=>hideTip());
 }
 
 function renderTable(){

@@ -1,5 +1,5 @@
 // Playwright regression test for the dashboard: run selection, guide, interactive charts
-// (hover/zoom/box-zoom/back/reset), maximize, and responsive layout.
+// (hover/zoom/box-zoom/back/reset), maximize, outcomes hover, and responsive layout.
 //   ./run.sh dashboard-demo && ./run.sh dashboard &     # serve with demo data
 //   npm i playwright && npx playwright install chromium
 //   DASH_URL=http://127.0.0.1:8770 node tools/dashboard/test_dashboard.mjs
@@ -142,6 +142,11 @@ const consoleErrors = [];
   ok((await page.$eval('#chartBig', el => el.querySelectorAll('path').length)) > 0, 'maximized chart renders its series');
   await page.click('#chartClose'); await page.waitForTimeout(150);
   ok(!(await page.isVisible('#chartModal .sheet')), 'maximized chart closes');
+
+  console.log('\n[O] outcomes (bar) chart has a hover tooltip');
+  const ob = await page.$eval('#chartOutcomes', el => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+  await page.mouse.move(ob.x + ob.w*0.5, ob.y + ob.h*0.5); await page.waitForTimeout(120);
+  ok((await page.$eval('#tt', el => getComputedStyle(el).display)) !== 'none', 'outcomes chart shows a hover tooltip');
 
   console.log('\n[12] no JS console/page errors');
   ok(consoleErrors.length === 0, `console errors: ${consoleErrors.length ? '\n   - ' + consoleErrors.join('\n   - ') : 'none'}`);
