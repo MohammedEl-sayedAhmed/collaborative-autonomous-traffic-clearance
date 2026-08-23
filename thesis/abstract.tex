@@ -1,0 +1,32 @@
+
+
+
+
+\thispagestyle{plain}
+\begin{center}
+
+    \Large
+    \textbf{Autonomous Traffic Clearance for Emergency Vehicles}
+    
+    \vspace{0.4cm}
+    \large
+    A Cooperative Reinforcement Learning Approach
+    
+    \vspace{0.4cm}
+    
+    \vspace{0.9cm}
+    \textbf{Abstract}
+\end{center}
+
+Healthcare studies suggest serious effects of longer wait times on patients' mortality rates\cite{waitTimeMortality}, specially on those with fatal and rapidly deteriorating conditions. Reducing response times is also an essential part of any firefighters or policemen training\cite{policeResponseTime}. Despite such data being not present (or at least not easily accessible) for Egypt, congestion is a very-well-researched and undeniably present problem in Egypt\cite{EgyptCongestion}, specially in the main cities.\\
+The mentioned points, along with the realization of the time-critical nature of emergency situations, stress on the need for emergency vehicles to reach their destinations in the shortest possible times.
+\\
+In our project, we propose a solution through allowing cooperation between vehicles via communication such that an emergency vehicle can broadcast its location, arriving lane number, and velocity; ahead of time. Consequently, preceding vehicles, each using a trained reinforcement learning model, have enough time to determine and perform appropriate timed maneuvering actions to immediately clear the emergency vehicle's path. 
+\\
+In order to demonstrate our solution, a platform for training reinforcement learning models on autonomous vehicles was implemented. Results are evaluated on two main fronts: effect on an emergency vehicle's (EV's) travel time, and practicality of the model from a mechanics points of view. For the first goal, several vehicles with the introduced reinforcement learned model are deployed and tested in a traffic system simulator called SUMO\cite{sumomain}, observing the resulting EV travel time. For the second goal,  necessary autonomous vehicle functions such as mapping, localization, global and local path planning, keeping and changing lanes, as well as communication mechanisms were implemented alongside with our model and put in a mechanical simulator. 
+\\
+Our simple q-learning based model demonstrated great improvement on the vehicle's travel time, and was successfully implemented (along with the mentioned autonomous functionalities) in a mechanical simulator. Our main contributions are the implemented autonomous vehicle on the Gazebo \cite{Koenig04designand} simulator using ROS \cite{ROSBookMorgan}, the learned q-learning model with the demonstrated results, using V2V for tasks otherwise performed using sensors, and two Reinforcement Learning platforms on both of the used simulators (SUMO and Gazebo); introducing all of this in a modular and easily accessible manner that we hope later efforts can build on.
+
+
+\vspace{.9em}
+{\bf |  Keywords:} Traffic Clearance, Cooperative Agents, Reinforcement Learning, Autonomous Vehicles, V2V

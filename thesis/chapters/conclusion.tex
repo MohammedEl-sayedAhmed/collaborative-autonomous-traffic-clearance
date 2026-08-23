@@ -1,0 +1,28 @@
+This chapter concludes by commenting on our results, illustrates our main contributions, and mentions our future plans.
+\label{chapter_conclusion_and_future_work}
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+Our work throughout the past year, as illustrated in this document, demonstrates the benefits of using reinforcement learning alongside autonomous functionalities to reduce the travel time delay of approaching emergency vehicles in a multi-agent environment where vehicles are allowed to communicate. Autonomous functionalities were implemented on ROS, traffic simulations were implemented on SUMO. From our experiments on both platforms, we conclude that using RL on top of autonomous functionalities\footnote{(as opposed to: using RL for autonomous functionalities)} is a practically-feasible and safe approach that can be used to solve our problem. Further (more complex) solutions could be implemented, however, in this work, the problem was dragged  from the ideas realm to the practically quantifiable realm, with demonstrated benefits. We hope that building on this work, other researchers will be able to apply the same idea to more complex tasks through our developed modular environments and simplified interfaces.
+
+\section{Main Contributions}
+\label{sec:main_contribs}
+Our main contributions to the Zewail City and scientific communities are:
+\begin{enumerate}
+    \item A modular playground for developing Communicating Autonomous Vehicles on Gazebo, ROS, with a fairly accessible interface.
+    \item A practical implementation and problem formulation of the Emergency Vehicle delay problem. 
+    \item A Multi-Agent Reinforcement Learning environment on SUMO, and a benchmark problem for MARL algorithms.
+    \item An extendable Realistic Platform for Training and Testing RL Models on Autonomous Vehicles in Gazebo, ROS
+\end{enumerate}
+
+\section{Future Work}
+\label{sec:future_work}
+Our goals for the future of this project are:
+\begin{enumerate}
+    \item Despite not taking a great space inside this document, big part of our work pre-COVID-19 was dedicated to implementing the project on actual hardware. We had all the hardware delivered from USA, the body 3D-printed, and everything ready for work. We hope that (as soon as we are able to get back to our labs) we can either work on the hardware ourselves or help younger students implement the project on it. We believe it will be of great benefit to have a toy autonomous car in the lab, as it will facilitate participating in future competitions for students from Zewail City (including F1/10 \cite{okelly2019f110} itself).
+    
+    \item Continue RL research with Dr. Elshenawy on the same problem, implementing a more complex Multi-Agent model, capable of detecting its surrounding vehicles.
+    
+    \item Work with students from younger batches on enhancing the autonomous functionalities, module by module. We believe the currently present infrastructure will provide a good educational playground for students willing to contribute.
+\end{enumerate}

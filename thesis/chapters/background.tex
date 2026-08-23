@@ -1,0 +1,63 @@
+\label{chapter_background}
+This section provides a very brief background on Reinforcement Learning in general and Q-Learning in particular. If you are familiar with these concepts, please feel free to skip this section.
+
+\section{Reinforcement learning} 
+\label{sec:RL_BG}
+Reinforcement learning is a learning paradigm where an agent sequentially interacts with the environment by receiving observations and performing actions that maximize a reward signal in the long run. \cite {rl_state_of_the_art} This could be modeled as a Markov decision process, MDP, defined by a tuple \(\langle S, A, T, R \rangle\). Thus the problem consists of:
+\begin{itemize}
+    \item \textbf {S}, a finite state space \(\{s_1,...,s_N\}\) which comprises all the observations retrieved from the environment with length N.
+    \item \textbf {A}, a finite action set \(\{a_1,...,a_K\}\) which consists of all the actions feasible to be performed by the agent in a time step t with length K.
+    \item \textbf {T}, a transition function that defines the probability of transition to a state \(s+1\) by applying action \(a\) in a state \(s\). Where \(a \in A\) and \(s,s+1 \in S\) and the transition function is defined as  \(T \vdots S \times A \rightarrow P(S)\)
+    \item \textbf {R}, a reward function which specifies the reward of transitioning between a state s to state \(s+1\) by doing an action a in the form: \(R \vdots S \times A \times S \rightarrow R\).
+\end{itemize}
+The agent sequentially pops an action \(a\) out of the set of finite actions \(A\) via either exploration or exploitation. Initially, the agent has no knowledge of the optimal action to choose. Hence, it has to randomly explore the available actions and receive a reward that evaluates the consequences of this action. As the agent learns, choosing random actions becomes problematic as it might end up in a sequence of undesirable actions. So it’s also important for the agent to exploit by choosing an action with a higher expected reward rather than relying solely on random trial and error. Balancing these two approaches is what’s defined as an exploration-exploitation problem. 
+\\ \\ 
+In the context of an MDP \(\langle S, A, T, R \rangle\), a policy, \(\pi\), is a computable function that maps the current state \(s \in S\) to a feasible action \(a \in A(s)\). Application of a policy in an MDP happens in the following manner:
+\begin{itemize}
+    \item A start state s0 is drawn from the initial state distribution I
+    \item An action is chosen using the policy \(\pi\) as \(a_0 = \pi(s_0)\)
+    \item Using the transition function \(T\), a transition is made to state \(s_1\), and a reward is  assigned to this action using the reward function \(R\) as:  \(r_0 = R(s_0,a_0,s_1)\)
+    \item The same process of action picking and transitioning repeats generating the sequence: 
+    \begin{equation}
+       % \[s_0, a_0, r_0, s_1, a_1, r_1, s_2, a_2, ...., s_g\] 
+        s_0, a_0, r_0, s_1, a_1, r_1, s_2, a_2, ...., s_g
+    \end{equation} 
+    \item An episode ends if the environment returns goal state \(s_g\), and a new episode is started by generating a state from the initial state distribution \(I\).
+\end{itemize}
+Another important definition is the value function \(V(s)\). Value function, defined for a particular policy \(\pi\), is the expected return when starting in a state \(s\) and following the policy \(\pi\) as expressed in the formula:\begin{equation}
+    v^{\pi}(s)=E_{\pi}\Big\{{\sum_{k=0}^{\infty}\gamma^{k}r_{t+k}|s_t=s}\Big\} 
+\end{equation} 
+where \(\gamma\) is the discount factor discounting future rewards according to how far in time they are.
+Given the definition of the value function \(V(s)\), we could define the \(Q\) function \(Q(s,a)\) as the expected return starting from state \(s\), taking action \(a\), and following the policy \(\pi\). \(Q\) function is expressed in the following formula: \begin{equation}
+    Q^{\pi}(s)=E_{\pi}\Big\{{\sum_{k=0}^{\infty}\gamma^{k}r_{t+k}|s_t=s,a_t=a}\Big\} 
+\end{equation}
+\(Q\) function is a very useful notion especially in model free approaches as it doesn’t require prior knowledge of \(T\) and \(R\). The optimal action selection policy, denoted as the greedy policy, hence becomes as easy  as maximizing the \(Q\) function as in the following formula:\begin{equation}
+    \pi^*(s)=argmax(Q^*(s,a))
+\end{equation}
+
+
+\section{Q Learning}
+\label{sec:q_learning}
+Q-learning is an off-policy algorithm, which means that it tries to estimate the optimal policy \(\pi^*\) while following an exploration policy \(\pi\).\cite{rl_state_of_the_art} Q-learning gives a greater leverage over other RL algorithms in its simplicity. Unlike other algorithms, Q-learning directly approximates the optimal policy with guaranteed convergence given that all the state-action pairs are visited with a large enough number of times. In its simplest form, one-step Q-learning, it incrementally estimates Q-values for actions based on reward and agent’s Q-value function in the following form:
+\begin{equation}
+    Q_{k+a}(s_t,a_t)=Q_k(s_t,a_t)+\alpha \Big(r_t+\gamma \max{Q_k(s_{t+1},a}-Q_k(s_t,a_t)\Big)
+\end{equation}
+Where \(\alpha\) is the algorithm's learning rate. 
+For problems with a finite state space; Q-learning could be implemented in a tabular manner relating each state-action pair with its corresponding Q-value via the following algorithm.\cite{sutton}
+\\ \\
+\begin{algorithm}[H]
+    \SetAlgoLined
+    Initialize $Q(s, a)$,$ \forall  s \in S,a \in A(s)$, arbitrarily, and $Q(terminal-state, ·) = 0$\;
+    \While{Not last episode}
+    {
+    Initialize \(S\)\;
+    \While{\(S\) is not Terminal}
+    {
+    Choose A from $S$ using policy derived from $Q (e.g., \epsilon-greedy)$\;
+    Take action $A$, observe, $R, S^(dash)$\;
+
+    $S \gets S^(dash)$\
+    }
+    }
+    \caption{Q learning algorithm}
+\end{algorithm}
