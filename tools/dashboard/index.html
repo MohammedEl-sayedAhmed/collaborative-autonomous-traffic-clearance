@@ -5,81 +5,80 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>RL Training Dashboard</title>
 <style>
-  :root{
+  /* Fluid root font: scales smoothly with viewport width (no zoom hacks), so text is
+     readable on a laptop and a 2K/4K monitor alike. Everything below is sized in rem. */
+  :root{ font-size: clamp(14px, calc(11.8px + 0.24vw), 20px);
     --bg:#0f1420; --panel:#161d2e; --panel2:#1d2740; --line:#2a3550;
     --fg:#e6ecf5; --muted:#9aa7bd; --accent:#4fd1c5; --good:#46c37b; --warn:#e0b64a; --bad:#e06c6c;
   }
   *{box-sizing:border-box}
   html,body{overflow-x:hidden;max-width:100%}
-  /* Whole-UI scale is set continuously in JS (applyZoom) from the viewport width, so it
-     reads comfortably on a 2K/4K monitor and on a laptop alike. Tune ZOOM_* in the script. */
-  body{margin:0;font:15.5px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
-  header{display:flex;align-items:center;gap:16px;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
-  header h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.2px}
-  header .sub{color:var(--muted);font-size:13px}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:1rem;line-height:1.5;background:var(--bg);color:var(--fg)}
+  header{display:flex;align-items:center;gap:.9rem;padding:.7rem 1.1rem;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+  header h1{font-size:1.2rem;margin:0;font-weight:650;letter-spacing:.2px;white-space:nowrap}
+  header .sub{color:var(--muted);font-size:.8rem;min-width:0;overflow:hidden;text-overflow:ellipsis}
   header .spacer{flex:1}
-  .ctl{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:13.5px}
-  .ctl input[type=range]{width:100px}
-  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .ctl{display:flex;align-items:center;gap:.4rem;color:var(--muted);font-size:.85rem;white-space:nowrap}
+  .ctl input[type=range]{width:6rem}
+  .dot{width:.62rem;height:.62rem;border-radius:50%;display:inline-block;flex:none}
   .pulse{background:var(--good);animation:p 1.6s infinite}
-  @keyframes p{0%{box-shadow:0 0 0 0 rgba(70,195,123,.6)}70%{box-shadow:0 0 0 8px rgba(70,195,123,0)}100%{box-shadow:0 0 0 0 rgba(70,195,123,0)}}
-  .wrap{display:grid;grid-template-columns:320px 1fr;min-height:calc(100vh - 57px)}
-  aside{background:var(--panel);border-right:1px solid var(--line);padding:14px;overflow:auto}
-  aside h2{font-size:12.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:4px 2px 12px}
-  .runrow{display:flex;align-items:center;gap:11px;padding:10px;border-radius:9px;cursor:pointer;margin-bottom:6px;border:1px solid transparent;user-select:none}
+  @keyframes p{0%{box-shadow:0 0 0 0 rgba(70,195,123,.6)}70%{box-shadow:0 0 0 .5rem rgba(70,195,123,0)}100%{box-shadow:0 0 0 0 rgba(70,195,123,0)}}
+  .wrap{display:grid;grid-template-columns:clamp(230px,22vw,330px) 1fr;min-height:calc(100vh - 3.4rem)}
+  aside{background:var(--panel);border-right:1px solid var(--line);padding:.9rem;overflow:auto}
+  aside h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.2rem .1rem .8rem}
+  .runrow{display:flex;align-items:center;gap:.7rem;padding:.62rem;border-radius:.55rem;cursor:pointer;margin-bottom:.4rem;border:1px solid transparent;user-select:none}
   .runrow:hover{background:var(--panel2)}
   .runrow.sel{border-color:var(--accent);background:var(--panel2)}
-  .runrow input.chk{width:17px;height:17px;pointer-events:none;flex:none;accent-color:var(--accent)}
-  .runrow .sw{width:12px;height:12px;border-radius:3px;flex:none}
+  .runrow input.chk{width:1.05rem;height:1.05rem;pointer-events:none;flex:none;accent-color:var(--accent)}
+  .runrow .sw{width:.75rem;height:.75rem;border-radius:.2rem;flex:none}
   .runrow .meta{min-width:0;flex:1}
-  .runrow .lbl{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .runrow .sub{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .badge{font-size:11px;padding:2px 7px;border-radius:10px;font-weight:600;margin-left:4px}
+  .runrow .lbl{font-weight:600;font-size:.96rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .runrow .sub{color:var(--muted);font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge{font-size:.68rem;padding:.1rem .45rem;border-radius:.6rem;font-weight:600;margin-left:.3rem}
   .b-live{background:rgba(70,195,123,.18);color:var(--good)}
   .b-done{background:rgba(79,209,197,.16);color:var(--accent)}
   .b-stale{background:rgba(224,182,74,.16);color:var(--warn)}
   .b-test{background:rgba(154,167,189,.18);color:var(--muted)}
-  main{padding:18px 20px;overflow:auto}
-  .tiles{display:flex;gap:13px;flex-wrap:wrap;margin-bottom:16px}
-  .tile{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:13px 16px;min-width:140px}
-  .tile .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
-  .tile .v{font-size:26px;font-weight:700;margin-top:4px}
-  .tile .v small{font-size:13px;color:var(--muted);font-weight:500}
-  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px}
-  .card h3{margin:0 0 8px;font-size:15.5px;font-weight:650}
-  .card .hint{color:var(--muted);font-size:12.5px;font-weight:400}
-  svg{width:100%;height:220px;display:block}
-  /* shorter charts on short screens (e.g. laptops) so more fits without scrolling */
-  @media (max-height:850px){ svg{height:190px} .card{padding:11px 13px} .tile{padding:10px 13px} }
-  @media (max-height:700px){ svg{height:172px} }
-  #cmpTable{overflow-x:auto}   /* a very wide comparison table scrolls inside its card, never the page */
-  table{border-collapse:collapse;width:100%;font-size:14px;margin-top:6px}
-  th,td{text-align:right;padding:9px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
+  main{padding:1.1rem 1.2rem;overflow:auto}
+  .tiles{display:flex;gap:.8rem;flex-wrap:wrap;margin-bottom:1rem}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:.7rem;padding:.7rem .95rem;min-width:8.5rem;flex:1 1 8.5rem}
+  .tile .k{color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}
+  .tile .v{font-size:1.65rem;font-weight:700;margin-top:.15rem}
+  .tile .v small{font-size:.82rem;color:var(--muted);font-weight:500}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:.9rem}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:.7rem;padding:.85rem 1rem}
+  .card h3{margin:0 0 .5rem;font-size:1.02rem;font-weight:650}
+  .card .hint{color:var(--muted);font-size:.8rem;font-weight:400}
+  svg{width:100%;height:min(30vh,230px);display:block}
+  #cmpTable{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;margin-top:.4rem}
+  th,td{text-align:right;padding:.55rem .7rem;border-bottom:1px solid var(--line);white-space:nowrap}
   th:first-child,td:first-child{text-align:left}
-  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-  .swatch{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:7px;vertical-align:middle}
-  .empty{color:var(--muted);text-align:center;padding:60px 20px;font-size:14.5px}
-  code{background:var(--panel2);padding:2px 6px;border-radius:5px;color:var(--accent);font-size:13.5px}
-  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:6px}
-  .legend span{display:inline-flex;align-items:center;gap:6px}
-  button.mini{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:13px}
+  th{color:var(--muted);font-weight:600;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}
+  .swatch{display:inline-block;width:.7rem;height:.7rem;border-radius:.18rem;margin-right:.45rem;vertical-align:middle}
+  .empty{color:var(--muted);text-align:center;padding:3rem 1rem;font-size:.92rem}
+  code{background:var(--panel2);padding:.1rem .35rem;border-radius:.3rem;color:var(--accent);font-size:.86rem}
+  .legend{display:flex;gap:1rem;flex-wrap:wrap;font-size:.82rem;color:var(--muted);margin-bottom:.35rem}
+  .legend span{display:inline-flex;align-items:center;gap:.35rem}
+  button.mini{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:.45rem;padding:.3rem .75rem;cursor:pointer;font-size:.82rem}
   button.mini:hover{border-color:var(--accent)}
-  .gbtn{background:var(--accent);color:#08131a;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:14px;font-weight:650}
+  .gbtn{background:var(--accent);color:#08131a;border:none;border-radius:.5rem;padding:.35rem .9rem;cursor:pointer;font-size:.9rem;font-weight:650;white-space:nowrap}
   .gbtn:hover{filter:brightness(1.08)}
-  .modal{position:fixed;inset:0;background:rgba(6,10,18,.74);display:none;z-index:50;padding:34px}
+  /* modal: viewport units, unaffected by any content scaling */
+  .modal{position:fixed;inset:0;background:rgba(6,10,18,.74);display:none;z-index:50;padding:clamp(10px,3vh,34px)}
   .modal.open{display:flex;align-items:flex-start;justify-content:center}
-  .sheet{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:920px;width:100%;max-height:88vh;overflow:auto;padding:24px 30px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
-  .sheet h2{margin:0 0 6px;font-size:23px}
-  .sheet h3{margin:24px 0 8px;font-size:17px;color:var(--accent)}
-  .sheet p{margin:8px 0}
-  .sheet .lead{color:var(--muted);font-size:15px}
-  .sheet table{border-collapse:collapse;width:100%;font-size:14.5px;margin:8px 0}
-  .sheet td,.sheet th{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;white-space:normal;vertical-align:top}
+  .sheet{background:var(--panel);border:1px solid var(--line);border-radius:.9rem;width:min(60rem,100%);max-height:92vh;overflow:auto;padding:1.4rem 1.7rem;box-shadow:0 1.4rem 4rem rgba(0,0,0,.55)}
+  .sheet h2{margin:0 0 .3rem;font-size:1.45rem}
+  .sheet h3{margin:1.3rem 0 .5rem;font-size:1.1rem;color:var(--accent)}
+  .sheet p{margin:.5rem 0}
+  .sheet .lead{color:var(--muted);font-size:.98rem}
+  .sheet table{border-collapse:collapse;width:100%;font-size:.92rem;margin:.5rem 0}
+  .sheet td,.sheet th{border-bottom:1px solid var(--line);padding:.5rem .6rem;text-align:left;white-space:normal;vertical-align:top}
   .sheet td:first-child{font-weight:650;white-space:nowrap;color:var(--fg)}
-  .sheet .x{position:sticky;top:-2px;float:right;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:8px;width:34px;height:34px;cursor:pointer;font-size:19px;line-height:30px;text-align:center}
+  .sheet .x{position:sticky;top:-.2rem;float:right;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:.5rem;width:2.1rem;height:2.1rem;cursor:pointer;font-size:1.2rem;line-height:1.9rem;text-align:center}
   .sheet .good{color:var(--good)} .sheet .warn{color:var(--warn)} .sheet .bad{color:var(--bad)}
-  .sheet .pill{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle;margin-right:6px}
+  .sheet .pill{display:inline-block;width:.7rem;height:.7rem;border-radius:.2rem;vertical-align:middle;margin-right:.35rem}
+  @media (max-width:760px){ .wrap{grid-template-columns:1fr} aside{border-right:none;border-bottom:1px solid var(--line)} }
 </style>
 </head>
 <body>
@@ -97,7 +96,7 @@
 <div class="wrap">
   <aside>
     <h2>Runs <span id="runCount" style="color:var(--muted)"></span></h2>
-    <div style="margin-bottom:12px;display:flex;gap:7px">
+    <div style="margin-bottom:.7rem;display:flex;gap:.4rem">
       <button class="mini" id="selAll">all</button>
       <button class="mini" id="selNone">none</button>
       <button class="mini" id="selLive">live</button>
@@ -125,7 +124,7 @@
         <svg id="chartOutcomes"></svg>
       </div>
     </div>
-    <div class="card" style="margin-top:16px">
+    <div class="card" style="margin-top:.9rem">
       <h3>Run comparison</h3>
       <div id="cmpTable"></div>
     </div>
@@ -191,6 +190,7 @@ const $ = s => document.querySelector(s);
 const fmt = (v,d=2) => (v==null||isNaN(v)) ? "—" : (+v).toFixed(d);
 const shortSha = s => (s&&s!=="unknown") ? s.slice(0,7) : "—";
 function escapeHtml(s){ return (s||"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function rem(){ return parseFloat(getComputedStyle(document.documentElement).fontSize) || 15; }  // px per rem (fluid)
 
 function colorFor(id){
   if(!(id in state.colors)) state.colors[id] = PALETTE[Object.keys(state.colors).length % PALETTE.length];
@@ -206,7 +206,6 @@ function statusBadge(r){
 }
 async function jget(u){ const r = await fetch(u,{cache:"no-store"}); return r.json(); }
 
-// central refresh after any selection change
 function refresh(){ renderRunList(); renderTiles(); renderTable(); drawAll(); pollSelected(); }
 function setSelected(id, on){ if(on) state.selected.add(id); else state.selected.delete(id); refresh(); }
 function toggleSelected(id){ setSelected(id, !state.selected.has(id)); }
@@ -233,7 +232,9 @@ async function pollRuns(){
 async function pollSelected(){
   const ids = [...state.selected];
   await Promise.all(ids.map(async id=>{ try{ state.data[id] = await jget("/api/run?id="+encodeURIComponent(id)); }catch(e){} }));
-  drawAll();
+  // re-render everything that depends on the fetched per-run data, so tiles/table
+  // don't lag the charts when a newly-selected run's data arrives.
+  drawAll(); renderTiles(); renderTable();
 }
 
 function renderRunList(){
@@ -245,7 +246,6 @@ function renderRunList(){
     const row = document.createElement("div");
     row.className = "runrow"+(sel?" sel":"");
     row.setAttribute("data-run", r.run_id);
-    // checkbox has pointer-events:none (CSS) -> the whole row is one click target.
     row.innerHTML = `
       <input type="checkbox" class="chk" tabindex="-1" ${sel?"checked":""}/>
       <span class="sw" style="background:${colorFor(r.run_id)};${sel?'':'opacity:.28'}"></span>
@@ -315,22 +315,22 @@ function drawAll(){
 function legend(el, series){ el.innerHTML = series.map(s=>`<span><span class="swatch" style="background:${s.color}"></span>${escapeHtml(s.label)}</span>`).join(""); }
 
 function lineChart(svg, series, opts={}){
-  const W=svg.clientWidth||560, H=svg.clientHeight||250, P={l:52,r:16,t:12,b:30};
+  const W=svg.clientWidth||560, H=svg.clientHeight||220, FS=(rem()*0.74), P={l:rem()*3.2,r:rem()*1,t:rem()*.8,b:rem()*1.9};
   const pts = series.flatMap(s=>s.points).filter(p=>p[1]!=null && !isNaN(p[1]));
-  if(!pts.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="13">no data yet</text>`; return; }
+  if(!pts.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="${rem()*.85}">no data yet</text>`; return; }
   let xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
   let xmin=Math.min(...xs), xmax=Math.max(...xs), ymin=(opts.ymin!=null?opts.ymin:Math.min(...ys)), ymax=Math.max(...ys);
   if(xmax===xmin) xmax=xmin+1; if(ymax===ymin) ymax=ymin+1;
   const pad=(ymax-ymin)*0.08; ymin-=(opts.ymin!=null?0:pad); ymax+=pad;
   const X=x=>P.l+(x-xmin)/(xmax-xmin)*(W-P.l-P.r);
   const Y=y=>H-P.b-(y-ymin)/(ymax-ymin)*(H-P.t-P.b);
-  let g=`<g font-size="12" fill="#9aa7bd">`;
+  let g=`<g font-size="${FS.toFixed(1)}" fill="#9aa7bd">`;
   for(let i=0;i<=4;i++){ const yv=ymin+(ymax-ymin)*i/4, y=Y(yv);
-    g+=`<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="#232e47"/>`;
-    g+=`<text x="${P.l-8}" y="${y+4}" text-anchor="end">${fmtAxis(yv)}</text>`; }
+    g+=`<line x1="${P.l}" y1="${y.toFixed(1)}" x2="${W-P.r}" y2="${y.toFixed(1)}" stroke="#232e47"/>`;
+    g+=`<text x="${P.l-FS*.5}" y="${(y+FS*.34).toFixed(1)}" text-anchor="end">${fmtAxis(yv)}</text>`; }
   const nT=Math.min(6,Math.round(xmax-xmin)||1);
   for(let i=0;i<=nT;i++){ const xv=xmin+(xmax-xmin)*i/nT, x=X(xv);
-    g+=`<text x="${x}" y="${H-9}" text-anchor="middle">${Math.round(xv)}</text>`; }
+    g+=`<text x="${x.toFixed(1)}" y="${(H-FS*.6).toFixed(1)}" text-anchor="middle">${Math.round(xv)}</text>`; }
   g+=`</g>`;
   let paths="";
   series.forEach(s=>{
@@ -339,17 +339,17 @@ function lineChart(svg, series, opts={}){
     const d=P2.map((p,i)=>(i?"L":"M")+X(p[0]).toFixed(1)+" "+Y(p[1]).toFixed(1)).join(" ");
     paths+=`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.2"/>`;
     const last=P2[P2.length-1];
-    paths+=`<circle cx="${X(last[0])}" cy="${Y(last[1])}" r="3.4" fill="${s.color}"/>`;
+    paths+=`<circle cx="${X(last[0]).toFixed(1)}" cy="${Y(last[1]).toFixed(1)}" r="3.4" fill="${s.color}"/>`;
   });
   svg.innerHTML=g+paths;
 }
 function fmtAxis(v){ const a=Math.abs(v); if(a>=1000) return (v/1000).toFixed(1)+"k"; if(a<1&&a>0) return v.toFixed(2); return v.toFixed(a<10?1:0); }
 
 function outcomeChart(svg, runs){
-  const W=svg.clientWidth||560,H=svg.clientHeight||250,P={l:16,r:16,t:12,b:46};
-  if(!runs.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="13">no data yet</text>`; return; }
+  const W=svg.clientWidth||560,H=svg.clientHeight||220,FS=rem()*0.74,P={l:rem()*1,r:rem()*1,t:rem()*1.7,b:rem()*3};
+  if(!runs.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="${rem()*.85}">no data yet</text>`; return; }
   const keys=[1,2,3,4,0];
-  const bw=Math.min(74,(W-P.l-P.r)/runs.length-16);
+  const bw=Math.min(rem()*4.6,(W-P.l-P.r)/runs.length-rem());
   const maxN=Math.max(1,...runs.map(r=>r.detail.episodes.length));
   let g="";
   runs.forEach((r,ri)=>{
@@ -358,12 +358,12 @@ function outcomeChart(svg, runs){
     const cx=P.l+(ri+0.5)*((W-P.l-P.r)/runs.length);
     let y=H-P.b;
     keys.forEach(k=>{ const h=(counts[k]/maxN)*(H-P.t-P.b);
-      if(h>0){ g+=`<rect x="${cx-bw/2}" y="${y-h}" width="${bw}" height="${h}" fill="${OUTCOME_COLOR[k]}"/>`; y-=h; } });
-    g+=`<text x="${cx}" y="${H-28}" fill="#e6ecf5" font-size="12.5" text-anchor="middle">${escapeHtml(r.summary.label).slice(0,14)}</text>`;
-    g+=`<text x="${cx}" y="${H-13}" fill="#9aa7bd" font-size="11.5" text-anchor="middle">${r.detail.episodes.length} ep</text>`;
+      if(h>0){ g+=`<rect x="${(cx-bw/2).toFixed(1)}" y="${(y-h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${OUTCOME_COLOR[k]}"/>`; y-=h; } });
+    g+=`<text x="${cx.toFixed(1)}" y="${(H-P.b+FS*1.4).toFixed(1)}" fill="#e6ecf5" font-size="${FS.toFixed(1)}" text-anchor="middle">${escapeHtml(r.summary.label).slice(0,16)}</text>`;
+    g+=`<text x="${cx.toFixed(1)}" y="${(H-P.b+FS*2.7).toFixed(1)}" fill="#9aa7bd" font-size="${(FS*.9).toFixed(1)}" text-anchor="middle">${r.detail.episodes.length} ep</text>`;
   });
-  let lx=P.l; g+=`<g font-size="11.5" fill="#9aa7bd">`;
-  [2,3,1,4].forEach(k=>{ g+=`<rect x="${lx}" y="1" width="10" height="10" fill="${OUTCOME_COLOR[k]}"/><text x="${lx+15}" y="10">${OUTCOME[k]}</text>`; lx+=Math.min(140,W/4); });
+  let lx=P.l; g+=`<g font-size="${(FS*.92).toFixed(1)}" fill="#9aa7bd">`;
+  [2,3,1,4].forEach(k=>{ g+=`<rect x="${lx.toFixed(1)}" y="1" width="${(FS*.8).toFixed(1)}" height="${(FS*.8).toFixed(1)}" fill="${OUTCOME_COLOR[k]}"/><text x="${(lx+FS).toFixed(1)}" y="${(FS*.85).toFixed(1)}">${OUTCOME[k]}</text>`; lx+=Math.min(W/4,rem()*8.5); });
   g+=`</g>`;
   svg.innerHTML=g;
 }
@@ -388,18 +388,6 @@ function renderTable(){
     </tr>`).join("")}</tbody></table>`;
 }
 
-// Responsive whole-UI scale: continuous, tuned by viewport width. Lower REF => larger UI.
-// At ~1322px (laptop) this yields a slightly compact view; at 2560px (2K) a modestly
-// zoomed-in but not oversized view. Adjust ZOOM_MIN / ZOOM_MAX / ZOOM_REF to taste.
-const ZOOM_MIN = 0.9, ZOOM_MAX = 1.15, ZOOM_REF = 1500;
-function applyZoom(){
-  const vw = document.documentElement.clientWidth || window.innerWidth;
-  const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, vw / ZOOM_REF));
-  document.body.style.zoom = z.toFixed(3);
-}
-applyZoom();
-window.addEventListener("resize", ()=>{ applyZoom(); drawAll(); });
-
 // guide panel
 $("#guideBtn").addEventListener("click",()=>$("#guide").classList.add("open"));
 $("#guideClose").addEventListener("click",()=>$("#guide").classList.remove("open"));
@@ -412,7 +400,7 @@ $("#smoothWin").addEventListener("input",()=>{$("#smoothVal").textContent=$("#sm
 $("#selAll").addEventListener("click",()=>{ state.runs.forEach(r=>state.selected.add(r.run_id)); refresh(); });
 $("#selNone").addEventListener("click",()=>{ state.selected.clear(); refresh(); });
 $("#selLive").addEventListener("click",()=>{ state.selected.clear(); state.runs.filter(r=>r.live).forEach(r=>state.selected.add(r.run_id)); refresh(); });
-window.addEventListener("resize",drawAll);
+window.addEventListener("resize", drawAll);
 
 pollRuns();
 setInterval(pollRuns, 2000);
