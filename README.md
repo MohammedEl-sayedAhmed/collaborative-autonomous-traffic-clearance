@@ -93,6 +93,22 @@ while training runs, and a built-in **Guide** explains every term (RL, Q-table, 
 ```
 
 See [docs/DASHBOARD.md](docs/DASHBOARD.md) and [docs/DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md).
+The charts are interactive (hover for values, scroll / drag to zoom, back/reset, maximize).
+
+### See each fix improve the results
+
+Run the built-in campaign — baseline, then each fix from [KNOWN_ISSUES](docs/KNOWN_ISSUES.md) applied
+cumulatively — and compare the learning curves (fast headless harness; no Gazebo needed):
+
+```bash
+./run.sh campaign && ./run.sh dashboard
+```
+
+![Fix-by-fix campaign](docs/img/dashboard-campaign.png)
+
+Enabling the (previously disabled) lane-change maneuver jumps success from **3% → 100%**; ε-decay and
+randomized starts refine it further. The same fixes are toggleable in the real Gazebo pipeline —
+full guide: [docs/RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md).
 
 ## Repository layout
 
@@ -124,6 +140,7 @@ collaborative-autonomous-traffic-clearance/
 | [KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) | Verified issues, applied fixes, and behaviour-changing fixes left for review |
 | [DASHBOARD.md](docs/DASHBOARD.md) | Live training dashboard: stream metrics, compare runs across code changes |
 | [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | Plain-language guide to reading the dashboard (RL, Q-table, episode, epsilon…) |
+| [RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md) | Run the fix-by-fix campaign (fast headless harness + real Gazebo) and compare results |
 
 ## Origin & credits
 
