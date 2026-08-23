@@ -68,9 +68,31 @@ troubleshooting are in **[docs/RUNNING.md](docs/RUNNING.md)**.
 | `./run.sh movecar` | The lane-keeping / lane-changing action stack |
 | `./run.sh ev` | One racecar + one ambulance |
 | `./run.sh rl` | Q-learning move-aside training (see [RUNNING.md](docs/RUNNING.md#running-the-rl-scenario)) |
+| `./run.sh dashboard` | Live training dashboard — compare runs across your RL/env changes ([DASHBOARD.md](docs/DASHBOARD.md)) |
 
 All demos were run and verified during documentation — see the status matrix and per-demo caveats in
 [docs/RUNNING.md](docs/RUNNING.md) and [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
+
+## Training dashboard
+
+A live, zero-dependency dashboard to watch training and see how each change to the RL or the
+environment moves the numbers — runs are tagged by git commit and compared side by side.
+
+![Training dashboard](docs/img/dashboard.png)
+
+Here an *improved-reward* run reaches **78% success** vs the *baseline*'s **30%**. It updates **live**
+while training runs, and a built-in **Guide** explains every term (RL, Q-table, episode, epsilon…).
+
+<p>
+  <img src="docs/img/dashboard-live.png" width="49%" alt="Live training view"/>
+  <img src="docs/img/dashboard-guide.png" width="49%" alt="In-app guide"/>
+</p>
+
+```bash
+./run.sh dashboard-demo && ./run.sh dashboard    # try it now with synthetic runs, at http://127.0.0.1:8770
+```
+
+See [docs/DASHBOARD.md](docs/DASHBOARD.md) and [docs/DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md).
 
 ## Repository layout
 
@@ -100,11 +122,15 @@ collaborative-autonomous-traffic-clearance/
 | [PACKAGES.md](docs/PACKAGES.md) | All 36 packages + every custom message / service / action |
 | [RUNNING.md](docs/RUNNING.md) | Containerized setup, every demo, the RL run order, troubleshooting |
 | [KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) | Verified issues, applied fixes, and behaviour-changing fixes left for review |
+| [DASHBOARD.md](docs/DASHBOARD.md) | Live training dashboard: stream metrics, compare runs across code changes |
+| [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | Plain-language guide to reading the dashboard (RL, Q-table, episode, epsilon…) |
 
 ## Origin & credits
 
 Graduation project (2020), *Collaborative Autonomous Traffic Clearance*, built by
-**Nadine Amr**, **Tasneem Omara**, and **Mohammed El-sayed Ahmed** on top of the
+[Nadine Amr](https://github.com/nadine-amin),
+[Tasneem Omara](https://github.com/TasneemOmara), and
+[Mohammed El-sayed Ahmed](https://github.com/MohammedEl-sayedAhmed) on top of the
 [UPenn F1TENTH Fall 2018 skeletons](https://github.com/mlab-upenn/f110-fall2018-skeletons) and the
 MIT `racecar-simulator`. The containerization and documentation in this repository were added later
 to make the six-year-old ROS Kinetic project reproducible on modern machines.

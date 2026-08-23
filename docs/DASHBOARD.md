@@ -1,0 +1,108 @@
+# Live training dashboard
+
+A zero-dependency dashboard to watch RL training **live** and compare runs across your
+RL/environment improvements. Each training run is saved to its own folder, so you can browse,
+switch between, and overlay them later.
+
+![flow](https://img.shields.io/badge/metrics-jsonl-4fd1c5) ![server](https://img.shields.io/badge/server-python3_stdlib-46c37b) ![deps](https://img.shields.io/badge/dependencies-none-blue)
+
+![Training dashboard — comparing two runs](img/dashboard.png)
+
+## How it works
+
+```
+training (in Docker, Py2)                    dashboard (host, Py3 stdlib)
+──────────────────────────                   ────────────────────────────
+single_agent_qlearning_master.py             tools/dashboard/server.py  ──serves──▶ index.html
+  └─ training_logger.py  ──writes──▶  saved_variables/runs/<ts>_<label>/   ◀──polls every 2s──┘
+         per episode  ▶  metrics.jsonl   (episode, cum_reward, steps, epsilon, outcome)
+         per step     ▶  status.json     (live heartbeat: current episode/step/reward)
+         once         ▶  meta.json       (label, git SHA, hyperparameters, status)
+```
+
+The trainer streams metrics to disk (in the repo, which is bind-mounted, so the host sees them
+live). The dashboard is a tiny Python 3 **standard-library** web server that reads those files and
+serves a single-page app — **nothing is installed on your host**, and the logging is fail-safe (a
+logging error can never interrupt training).
+
+## Try it right now (no training needed)
+
+```bash
+./run.sh dashboard-demo     # seeds two synthetic runs (a baseline and an "improved" one)
+./run.sh dashboard          # opens http://127.0.0.1:8770
+```
+
+You'll see two learning curves overlaid, the epsilon/steps/outcome charts, and a comparison table.
+
+> New to the terms (RL, Q-table, episode, epsilon)? See the plain-language
+> **[dashboard reading guide](DASHBOARD_GUIDE.md)**.
+
+## Real training
+
+Two terminals:
+
+```bash
+# terminal 1 — the environment (loads params, starts the env node, orchestrates Gazebo)
+./run.sh shell
+roslaunch racecar_clear_ev_route env.launch
+
+# terminal 2 — the Q-learning agent, tagged with a label for the dashboard
+RL_LABEL=baseline ./run.sh rl
+```
+
+Then in a third terminal:
+
+```bash
+./run.sh dashboard
+```
+
+The run appears immediately and updates live as episodes complete (a **LIVE** badge shows while the
+heartbeat is fresh). Make a change to the RL or the environment, commit it, and run again with a new
+label:
+
+```bash
+RL_LABEL=shaped-reward ./run.sh rl
+```
+
+Now both runs are listed — tagged with their **git commit** — so you can overlay their learning
+curves and see exactly how the change moved the needle.
+
+## Navigating runs
+
+- **Checkboxes** — include/exclude a run from the comparison (overlay multiple).
+- **Click a run** — focus it (single-run detail with per-run tiles); click again to unfocus.
+- **all / none / live** — quick selection buttons.
+- **smooth** — moving-average the learning curves.
+- Every run is a folder under `saved_variables/runs/` and persists across sessions, so you can
+  always come back and compare old runs against new ones.
+
+## What each chart shows
+
+| Panel | Meaning |
+|-------|---------|
+| Cumulative reward per episode | the learning curve — higher/less-negative is better |
+| Epsilon per episode | exploration decay (ε-greedy) |
+| Steps per episode | episode length; typically drops as the policy improves |
+| Episode outcomes | why episodes ended (ambulance reached goal = success, in green) |
+| Comparison table | mean / final / best reward and success rate per run |
+
+## Testing (optional)
+
+The run-selection UI has a Playwright regression test that clicks checkboxes in many sequences and
+asserts the checkbox state, row highlight, and comparison table always agree:
+
+```bash
+./run.sh dashboard-demo && ./run.sh dashboard &     # serve with demo data
+npm i playwright && npx playwright install chromium
+DASH_URL=http://127.0.0.1:8770 node tools/dashboard/test_dashboard.mjs
+```
+
+## Notes
+
+- Run outputs live under `saved_variables/` and are **git-ignored** (local experiment data). Each
+  `meta.json` records the git SHA the run used, so comparisons stay meaningful even though the data
+  isn't committed.
+- Port: `DASH_PORT=9000 ./run.sh dashboard`. Custom runs dir:
+  `python3 tools/dashboard/server.py --runs-dir /path/to/runs`.
+- The dashboard is intentionally **not** a Claude Artifact: a live view has to read files on your
+  disk as training writes them, which a sandboxed static page can't do.

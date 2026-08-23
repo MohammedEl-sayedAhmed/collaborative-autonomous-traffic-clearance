@@ -28,10 +28,26 @@ case "${1:-help}" in
     shift || true; gui roslaunch racecar_navigation one_racecar_navigation.launch "$@" ;;
   movecar)                             # move_car action stack (lane keeping / lane changing)
     shift || true; gui roslaunch racecar_move_car one_racecar_move_car.launch "$@" ;;
-  rl)                                  # RL: Q-learning master node (emergency-vehicle route clearing)
-    shift || true; run roslaunch racecar_clear_ev_route single_agent_qlearning.launch "$@" ;;
+  rl)                                  # RL: Q-learning master (tags the run for the dashboard)
+    shift || true
+    LABEL="${RL_LABEL:-run}"
+    SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    echo "Logging training run '$LABEL' @ $SHA -> saved_variables/runs/  (view with ./run.sh dashboard)"
+    docker compose run --rm -e RL_RUN_LABEL="$LABEL" -e RL_GIT_SHA="$SHA" ros \
+      roslaunch racecar_clear_ev_route single_agent_qlearning.launch "$@" ;;
   ev)                                  # one racecar + one ambulance scenario
     shift || true; gui roslaunch racecar_clear_ev_route one_racecar_one_ambulance.launch "$@" ;;
+
+  dashboard)                           # live training dashboard (host python3, nothing installed)
+    shift || true
+    PORT="${DASH_PORT:-8770}"
+    command -v python3 >/dev/null 2>&1 || { echo "python3 is required on the host for the dashboard"; exit 1; }
+    ( command -v xdg-open >/dev/null 2>&1 && sleep 1 && xdg-open "http://127.0.0.1:$PORT" >/dev/null 2>&1 & ) || true
+    exec python3 tools/dashboard/server.py --port "$PORT" "$@" ;;
+  dashboard-demo)                      # seed two synthetic runs so you can try the dashboard now
+    python3 tools/dashboard/demo_run.py --label baseline        --episodes 40 --seed 1
+    python3 tools/dashboard/demo_run.py --label improved-reward --episodes 40 --seed 2 --improve
+    echo "Seeded 2 demo runs. Now: ./run.sh dashboard" ;;
 
   shell)                               # interactive shell inside the container (workspace sourced)
     gui bash ;;
@@ -49,10 +65,17 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [roslaunch/cat
   nav           Navigation demo: Gazebo + AMCL + move_base + RViz
   movecar       move_car action stack (lane keeping / lane changing)
   ev            One racecar + one ambulance scenario
-  rl            Q-learning master node (emergency-vehicle route clearing)
+  rl            Q-learning master (set RL_LABEL=name to tag the run for the dashboard)
+
+  dashboard     Live training dashboard at http://127.0.0.1:8770 (compare runs)
+  dashboard-demo  Seed two synthetic runs so you can try the dashboard immediately
 
   shell         Bash shell inside the container
   clean         Delete the build volume (your source files stay untouched)
+
+Training + dashboard:
+  RL_LABEL=baseline ./run.sh rl     # in one terminal (after ./run.sh shell -> env.launch)
+  ./run.sh dashboard                # in another terminal; runs appear/update live
 
 First-time setup:
   ./run.sh build-image      # ~5 min (mostly download)
