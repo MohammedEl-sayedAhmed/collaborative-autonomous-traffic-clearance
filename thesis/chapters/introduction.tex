@@ -1,0 +1,70 @@
+\label{intro_chapter}
+
+In this chapter, we introduce our project and the contents of this document. Section \ref{problem_def} illustrates the problem at hand; Traffic Clearance for Emergency Vehicles (EVs). Section \ref{prev_eff} discusses previous efforts and what other researchers have proposed to solve this problem. Section \ref{prop_sol} discusses our proposed solution. Section \ref{doc_org} helps the reader navigate the contents of this document by highlighting its different sections.
+
+
+
+\section{Problem Definition}
+\label{problem_def}
+Given our technical backgrounds and the highlighted congestion problems, the problem we choose to tackle (regarding emergency response times) is reducing the travel time an EV takes to reach its destination. It is undoubtedly crucial that emergency vehicles reach their destinations in the least possible amount of time. Taking the ambulance as a compelling example, we can promptly realize how critical it is for such vehicle to reach targeted patients on time and transport them to their nearest hospitals as fast as possible to avoid any adverse consequent complications or deterioration. Unfortunately, what actually happens is that ambulances get considerably delayed by the severely congested streets; they probably end up either wasting time waiting for vehicles to make way for them or taking relatively longer zigzag paths to overtake vehicles in their way. \\ \\
+In countries like Egypt with no dedicated lanes for emergency vehicles, this problem gets specifically escalated. However, even in countries with such dedicated lanes, drivers sometimes tend to break the law by driving in emergency lanes. As a result, several collisions are actually caused by emergency vehicles crashing with other vehicles illegally driven in those emergency lanes. Consequently, this issue is extremely alluring worldwide and definitely constitutes a hot area of research.
+
+\section{Previous Efforts}
+\label{prev_eff}
+Many approaches tried to solve the problem of traffic clearance. A literature review of them along with state of the art results with the research gaps identified are to be discussed in chapter 3. Previous efforts as documented in  sections \ref{vehicle_rerouting}, \ref{Dynamic_signal_control}, and \ref{independent_learner} are divided into three approaches:
+\begin{itemize}
+    \item Vehicle rerouting
+    \item Dynamic signal control
+    \item Independent vehicle planning
+\end{itemize}
+Vehicle rerouting algorithms try to find alternative routes for either the emergency vehicle, or the other vehicles to alleviate the congestion problem and plan the fastest road for the vehicle. 
+\\ \\
+On the other hand, Dynamic signal control algorithms rely on local control signal to sense the emergency vehicle, and organise traffic signals in a way that directs the emergency vehicle to the fastest possible road.
+\\ \\
+Finally, independent vehicle planning takes into consideration the role of autonomous vehicles, AVs. Algorithms in this section suggest equipping AVs with planning systems that sense the existence of an emergency vehicle and try to avoid slowing it down.
+
+
+\section{Proposed Solution}
+\label{prop_sol}
+The emergency lane evacuation problem is evidently a communication and planning problem. Information -at least- about the approaching emergency vehicle should be \textit{\textbf{communicated}} to allow for clearing its path. And, for us to use this piece of information to clear the path, careful \textbf{\textit{planning}} is in order.\\
+
+\noindent Our proposed solution tackles the planning task for autonomous vehicles, assuming a perfect-information decentralized communication system, to avoid dealing with the communication problem which is carefully studied in more communication-related papers  \cite{6550885}\cite{paper30}. For the planning part, on the other hand, we explore in Section \ref{des_alt_and_just} several approaches  after which we reside to choosing reinforcement learning as our planning method.\\
+
+\subsection{Solution Platforms}
+\label{sec:solt_plat}
+Our proof-of-concept (illustrated in this project) demonstrates how communicating RL agents can help build on the current commercially used autonomous functionalities in order to reduce the total emergency vehicle's travel time; helping it reach its destination faster. Our approach is investigated on the following platforms:
+\begin{enumerate}
+    \item The first platform is a \textbf{\textit{traffic simulation}} platform called SUMO (Simulation of Urban Mobility) \cite{sumomain}, on which we demonstrate the results of using communicating autonomous agents that implement reinforcement learning for planning (and cooperatiopn) to evacuate the approaching emergency vehicle's path. We use this platform to demonstrate the aggregate properties of the emerging system, such as reduction in the ambulance travel time, through several experiments (in Chapter \ref{SecProjTest}).
+    
+    \item The second platform is a \textbf{\textit{robotic simulation }} platform called ROS (Robot Operating System) \cite{ROSBookMorgan}, on which we demonstrate the practical feasibility of using an RL agent on top of a communicating autonomous agent.
+    
+    \item A third \textbf{\textit{hardware}} platform would have been in place, where we were going to implement the resulting agent on a real-world toy autonomous vehicle (one tenth of the size of a real formula car), following F1/10 \cite{okelly2019f110}, needless to say, as a result of the COVID-19 pandemic, we were not able to continue working on it.
+\end{enumerate}
+
+\subsection{Main Concepts that Affected the Solution}
+Throughout the design and implementation phases, several concepts have affected our decisions. Some of which were goals, others were just constraints. Below, we mention a few of them:
+\begin{enumerate}
+    \item Decentralization and limited communication range: Our system was built on the premise of having a limited communication range for each vehicle, enabling a real-world decentralized implementation. A decentralized implementation (as opposed to a centralized one) is not only much cheaper to implement on large scale, but also avoids the problem of a single failure point. It also enables the incorporation of non-autonomous vehicles, by assuming the problem's solution depends on the participation of all members, but also accounting for noise during training, thus being not totally failing in case of other non-cooperative vehicles. A limited communication range also accounts for power (and thus range) limitations of real-world communication. This imposed ,however, some challenges, as it is much easier to implement a solution that gives the best possible action given the full system information, rather than only a part of the information, but that system inevitably uses much more resources, and thus was avoided for reasons mentioned above.
+    
+    \item Efficiency: We tried to minimize the amount of communicated and stored information, and use the communicated information as efficiently as possible, to account for the limited communication rates in real-world applications.
+    
+    \item Safety: Reinforcement learning, despite being able to learn many autonomous driving tasks, has not yet matured enough to be used as a an autonomous driving solution on its own \cite{rl_auto_safety}. A reinforcement learning policy with autonomous functionalities for feasibility testing and implementation was thus used; more on that in chapter \ref{chapter_methdology}.
+    
+\end{enumerate}
+
+
+
+
+
+
+
+
+
+\section{Document Organization}
+\label{doc_org}
+\\ \\ In\textbf{ Chapter \ref{chapter_background}}, we give the reader a background about the theory used in this document. In Section \ref{sec:RL_BG}, the user is given a background about the field of Reinforcement learning. In Section \ref{sec:q_learning}, the Q-learning Algorithm (the main algorithm used in our RL solution) is explained from the literature.
+\\ \\ In \textbf{Chapter \ref{chapter_lit_review}}, a literature review of the methods used by fellow researchers to solve our problem is presented. The approach of vehicle rerouting is discussed in Section \ref{vehicle_rerouting}, Section \ref{Dynamic_signal_control} discusses the dynamic signal control approach, while Section \ref{independent_learner} discusses independent vehicle planning. Section \ref{sec:RL_as_alternative} discusses Reinforcement Learning as an alternative to the previously mentioned methods.
+\\ \\ In \textbf{Chapter \ref{chapter_project_design}}, the main tasks of the system as well as the tools used to achieve these tasks are discussed. Section \ref{tech_specs} lays out the technical specifications of the proposed system by introducing the Gazebo and SUMO environment and their associated agent models . Section \ref{des_alt_and_just} introduces design alternatives we had and justifications for using the current choices.
+\\ \\ In \textbf{Chapter \ref{chapter_methdology}}, a detailed description of the implementation and the methodology behind each subsystem is introduced. In Section \ref{method_auto_func}, the methodologies of all the autonomous functionalities\footnote{Mapping, Localization, Longitudinal Control, Lateral Control, Lane Keeping, Lane Changing, Path Planning, Navigation and External Commands Following.} are explained in great detail with figures. In Section \ref{method_v2v_comm}, we illustrate how V2V communication is simulated in our system. In Section \ref{method_collab_tech}, the Q-Learning with communication cooperation technique is highlighted mainly by discussing the problem formulation designed and how it was used on SUMO. In Section \ref{method_integr}, the details of integrating the RL and ROS systems are discussed.
+\\ \\ In \textbf{Chapter \ref{SecProjTest}}, we illustrate how we tested each of our modules and their integration. We also show the results of our experiments and follow them with a discussion.  In Section \ref{sec:test_aut_func} we illustrate how each of the autonomous functionalities was tested. In Section \ref{sec:test_v2v_comm}, basic simulations of V2V communications on ROS were performed as tests. In Section \ref{sec:RL_Results} the results of using the reinforcement learning model on the EV travel time are discussed. Finally, in Section \ref{test_final_int}, we demonstrate how the integration of different system modules was tested. 
+\\ \\In \textbf{Chapter \ref{chapter_conclusion_and_future_work}}, we conclude the document by highlighting what we concluded from our experiments and what our work has amounted to. In Section \ref{sec:conclusion}, we conclude the document as well as summarize and comment on our work. In Section \ref{sec:main_contribs}, we highlight our main contributions presented throughout the document. In Section \ref{sec:future_work}, we mention our future plans regarding our work.

@@ -1,0 +1,100 @@
+\documentclass[12pt,twoside]{report}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\graphicspath{ {images/} }
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[a4paper,width=150mm,top=25mm,bottom=25mm,bindingoffset=6mm]{geometry}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhead{}
+\fancyhead[RO,LE]{Autonomous Traffic Clearance for Emergency Vehicles}
+\fancyfoot{}
+\fancyfoot[LE,RO]{\thepage}
+\fancyfoot[LO,CE]{Chapter \thechapter}
+\fancyfoot[CO,RE]{Zewail City - Valeo}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\raggedbottom
+\usepackage{hyperref}
+\usepackage[colorinlistoftodos]{todonotes}
+\usepackage{enumitem}
+
+\usepackage[ruled,vlined]{algorithm2e}
+\usepackage{float}
+
+\usepackage[style=numeric,sorting=none]{biblatex}
+\usepackage{amsmath}
+\addbibresource{references.bib}
+\usepackage{tabularx}
+
+
+\newenvironment{conditions*}
+  {\par\vspace{\abovedisplayskip}\noindent
+   \tabularx{\columnwidth}{>{$}l<{$} @{${}={}$} >{\raggedright\arraybackslash}X}}
+  {\endtabularx\par\vspace{\belowdisplayskip}}
+ 
+
+\usepackage{glossaries} 
+
+\setcounter{tocdepth}{4}
+\setcounter{secnumdepth}{3} 
+\begin{document}
+
+\input{titlepage}
+
+\input{acknowledgement}
+
+\input{abstract}
+
+
+
+\tableofcontents
+
+\listoffigures
+
+\listoftables
+
+
+% \newcommand{\listequationsname}{List of Equations}
+% \newlistof{myequations}{equ}{\listequationsname}
+% \newcommand{\myequations}[1]{%
+% \addcontentsline{equ}{myequations}{\protect\numberline{\theequation}#1}\par}
+% \setlength{\cftmyequationsnumwidth}{2.5em}% Width of equation number in List of Equations
+
+% \listofmyequations
+
+%\chapter{Glossary}
+
+
+
+
+\chapter{Introduction}
+\input{chapters/introduction}
+
+\chapter{Background}
+\input{chapters/background}
+
+\chapter{Literature Review}
+\input{chapters/literatureReview}
+
+\chapter{Project Design}
+\input{chapters/projectDesign}
+
+\chapter{Project Implementation }
+\input{chapters/methodology}
+
+\chapter{Project Testing and Discussion}
+\input{chapters/projectTestAndDiscussion}
+
+\chapter{Conclusion and Future Work}
+\input{chapters/conclusion}
+
+
+\printbibliography
+
+
+
+
+\end{document}
+
