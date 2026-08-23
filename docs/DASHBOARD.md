@@ -6,6 +6,8 @@ switch between, and overlay them later.
 
 ![flow](https://img.shields.io/badge/metrics-jsonl-4fd1c5) ![server](https://img.shields.io/badge/server-python3_stdlib-46c37b) ![deps](https://img.shields.io/badge/dependencies-none-blue)
 
+![Training dashboard — comparing two runs](img/dashboard.png)
+
 ## How it works
 
 ```

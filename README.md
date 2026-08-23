@@ -73,6 +73,27 @@ troubleshooting are in **[docs/RUNNING.md](docs/RUNNING.md)**.
 All demos were run and verified during documentation — see the status matrix and per-demo caveats in
 [docs/RUNNING.md](docs/RUNNING.md) and [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
 
+## Training dashboard
+
+A live, zero-dependency dashboard to watch training and see how each change to the RL or the
+environment moves the numbers — runs are tagged by git commit and compared side by side.
+
+![Training dashboard](docs/img/dashboard.png)
+
+Here an *improved-reward* run reaches **78% success** vs the *baseline*'s **30%**. It updates **live**
+while training runs, and a built-in **Guide** explains every term (RL, Q-table, episode, epsilon…).
+
+<p>
+  <img src="docs/img/dashboard-live.png" width="49%" alt="Live training view"/>
+  <img src="docs/img/dashboard-guide.png" width="49%" alt="In-app guide"/>
+</p>
+
+```bash
+./run.sh dashboard-demo && ./run.sh dashboard    # try it now with synthetic runs, at http://127.0.0.1:8770
+```
+
+See [docs/DASHBOARD.md](docs/DASHBOARD.md) and [docs/DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md).
+
 ## Repository layout
 
 ```

@@ -1,7 +1,10 @@
 # Reading the dashboard — a plain-language guide
 
 This guide explains, in simple terms, what the training dashboard is showing, the words it uses, and
-how to navigate it. No prior reinforcement-learning background needed.
+how to navigate it. No prior reinforcement-learning background needed. (The same guide is available
+inside the dashboard via the **📖 Guide** button.)
+
+![Single-run detail view](img/dashboard-single.png)
 
 ## The one-paragraph story
 
