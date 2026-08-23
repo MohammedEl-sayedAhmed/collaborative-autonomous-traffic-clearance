@@ -313,19 +313,18 @@ def get_line_fits_from_sliding_window(birdeye_binary, xm_per_pix, ym_per_pix,lef
     # in the last_fit of any line to avoid assuming the last detected lane was a straight line.
 
     if not list(line_lt.all_x) or not list(line_lt.all_y):
-#        left_fit_pixel = line_lt.last_fit_pixel
-#        left_fit_meter = line_lt.last_fit_meter
-#        detected = False
-        left_fit_pixel = np.polyfit(line_lt.all_y, line_lt.all_x, 2)
-        left_fit_meter = np.polyfit(line_lt.all_y * ym_per_pix, line_lt.all_x * xm_per_pix, 2)
-
+        # No left-lane pixels this frame: reuse the last good fit, or a neutral straight
+        # line on the first frame. Never polyfit an empty vector (it crashed the node).
+        left_fit_pixel = line_lt.last_fit_pixel if line_lt.last_fit_pixel is not None else np.array([0.0, 0.0, 0.0])
+        left_fit_meter = line_lt.last_fit_meter if line_lt.last_fit_meter is not None else np.array([0.0, 0.0, 0.0])
+        detected = False
     else:
         left_fit_pixel = np.polyfit(line_lt.all_y, line_lt.all_x, 2)
         left_fit_meter = np.polyfit(line_lt.all_y * ym_per_pix, line_lt.all_x * xm_per_pix, 2)
 
     if not list(line_rt.all_x) or not list(line_rt.all_y):
-        right_fit_pixel = line_rt.last_fit_pixel
-        right_fit_meter = line_rt.last_fit_meter
+        right_fit_pixel = line_rt.last_fit_pixel if line_rt.last_fit_pixel is not None else np.array([0.0, 0.0, 0.0])
+        right_fit_meter = line_rt.last_fit_meter if line_rt.last_fit_meter is not None else np.array([0.0, 0.0, 0.0])
         detected = False
     else:
         right_fit_pixel = np.polyfit(line_rt.all_y, line_rt.all_x, 2)
