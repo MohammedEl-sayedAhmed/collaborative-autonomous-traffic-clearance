@@ -8,13 +8,17 @@ cd "$(dirname "$0")"
 # physical device); blacklisting it keeps the simulation build clean.
 CATKIN_ARGS=(-j2 -DCATKIN_BLACKLIST_PACKAGES=hokuyo_node)
 
+# GPU=1 adds the optional NVIDIA override (needs driver + nvidia-container-toolkit on the host).
+DC=(docker compose)
+if [ "${GPU:-0}" = "1" ]; then DC=(docker compose -f docker-compose.yml -f docker-compose.gpu.yml); fi
+
 xhost_allow() { command -v xhost >/dev/null 2>&1 && xhost +local: >/dev/null 2>&1 || true; }
-run()  { docker compose run --rm ros "$@"; }
-gui()  { xhost_allow; docker compose run --rm ros "$@"; }
+run()  { "${DC[@]}" run --rm ros "$@"; }
+gui()  { xhost_allow; "${DC[@]}" run --rm ros "$@"; }
 
 case "${1:-help}" in
   build-image)                         # build the Docker image (ROS Kinetic + all deps + Gazebo models)
-    docker compose build ros ;;
+    "${DC[@]}" build ros ;;
   build)                               # catkin_make the workspace inside the container
     shift || true; run catkin_make "${CATKIN_ARGS[@]}" "$@" ;;
 
@@ -28,16 +32,38 @@ case "${1:-help}" in
     shift || true; gui roslaunch racecar_navigation one_racecar_navigation.launch "$@" ;;
   movecar)                             # move_car action stack (lane keeping / lane changing)
     shift || true; gui roslaunch racecar_move_car one_racecar_move_car.launch "$@" ;;
-  rl)                                  # RL: Q-learning master (tags the run for the dashboard)
-    shift || true
-    LABEL="${RL_LABEL:-run}"
-    SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    echo "Logging training run '$LABEL' @ $SHA -> saved_variables/runs/  (view with ./run.sh dashboard)"
-    docker compose run --rm -e RL_RUN_LABEL="$LABEL" -e RL_GIT_SHA="$SHA" ros \
-      roslaunch racecar_clear_ev_route single_agent_qlearning.launch "$@" ;;
   ev)                                  # one racecar + one ambulance scenario
     shift || true; gui roslaunch racecar_clear_ev_route one_racecar_one_ambulance.launch "$@" ;;
 
+  # ---- reinforcement learning -------------------------------------------------
+  harness)                             # FAST headless training (host python3, no Gazebo) — runs anywhere
+    shift || true; python3 tools/rl_harness/train.py "$@" ;;
+  campaign)                            # FAST headless baseline -> cumulative fixes, saved for the dashboard
+    shift || true
+    SHA="$(git rev-parse --short HEAD 2>/dev/null || echo harness)"
+    RL_GIT_SHA="$SHA" python3 tools/rl_harness/train.py --campaign "$@" ;;
+
+  rl)                                  # RL master only (expects env.launch already running); tags the run
+    shift || true
+    LABEL="${RL_LABEL:-run}"; SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    echo "Logging training run '$LABEL' @ $SHA -> saved_variables/runs/  (view with ./run.sh dashboard)"
+    run -e RL_RUN_LABEL="$LABEL" -e RL_GIT_SHA="$SHA" \
+      roslaunch racecar_clear_ev_route single_agent_qlearning.launch "$@" ;;
+  rl-train)                            # REAL Gazebo training: env + master together, labeled (needs RAM/GPU)
+    shift || true
+    LABEL="${RL_LABEL:-run}"; SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    ELC="${ENABLE_LANE_CHANGES:-false}"
+    xhost_allow
+    echo "Real Gazebo training '$LABEL' @ $SHA (enable_lane_changes=$ELC) -> saved_variables/runs/"
+    run -e DISPLAY="${DISPLAY:-:0}" -e RL_RUN_LABEL="$LABEL" -e RL_GIT_SHA="$SHA" bash -c "
+      source /opt/ros/kinetic/setup.bash; source /ws/devel/setup.bash
+      export DISPLAY='${DISPLAY:-:0}'
+      roslaunch racecar_clear_ev_route env.launch > /ws/env.log 2>&1 &
+      for i in \$(seq 1 90); do rosservice list 2>/dev/null | grep -q startSim && break; sleep 1; done
+      roslaunch racecar_clear_ev_route single_agent_qlearning.launch enable_lane_changes:=$ELC
+    " ;;
+
+  # ---- dashboard --------------------------------------------------------------
   dashboard)                           # live training dashboard (host python3, nothing installed)
     shift || true
     PORT="${DASH_PORT:-8770}"
@@ -52,10 +78,10 @@ case "${1:-help}" in
   shell)                               # interactive shell inside the container (workspace sourced)
     gui bash ;;
   clean)                               # remove containers + the build volume (source untouched)
-    docker compose down -v ;;
+    "${DC[@]}" down -v ;;
   *)
     cat <<'EOF'
-Collaborative Autonomous Traffic Clearance — ./run.sh <command> [roslaunch/catkin args]
+Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
 
   build-image   Build the Docker image (ROS Kinetic + deps + baked Gazebo models)
   build         catkin_make the workspace (inside the container)
@@ -65,27 +91,31 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [roslaunch/cat
   nav           Navigation demo: Gazebo + AMCL + move_base + RViz
   movecar       move_car action stack (lane keeping / lane changing)
   ev            One racecar + one ambulance scenario
-  rl            Q-learning master (set RL_LABEL=name to tag the run for the dashboard)
 
-  dashboard     Live training dashboard at http://127.0.0.1:8770 (compare runs)
-  dashboard-demo  Seed two synthetic runs so you can try the dashboard immediately
+  campaign      FAST headless RL: baseline -> cumulative fixes (runs anywhere, seconds)
+  harness       FAST headless RL: one config (see tools/rl_harness/train.py --help)
+  rl-train      REAL Gazebo RL training, env + master together (needs lots of RAM; GPU=1 optional)
+  rl            RL master only (expects env.launch already running)
+
+  dashboard       Live training dashboard at http://127.0.0.1:8770 (compare runs)
+  dashboard-demo  Seed two synthetic runs to try the dashboard immediately
 
   shell         Bash shell inside the container
   clean         Delete the build volume (your source files stay untouched)
 
-Training + dashboard:
-  RL_LABEL=baseline ./run.sh rl     # in one terminal (after ./run.sh shell -> env.launch)
-  ./run.sh dashboard                # in another terminal; runs appear/update live
+See how each fix improves results (fast, works on any machine):
+  ./run.sh campaign            # runs baseline + each fix; saves labeled runs
+  ./run.sh dashboard           # compare them live
+
+Real Gazebo training campaign (on a machine with plenty of RAM):
+  # terminal 1: dashboard      ->  ./run.sh dashboard
+  RL_LABEL=baseline ENABLE_LANE_CHANGES=false ./run.sh rl-train
+  RL_LABEL=lane-changes ENABLE_LANE_CHANGES=true ./run.sh rl-train
+  GPU=1 RL_LABEL=... ./run.sh rl-train        # if the host has an NVIDIA GPU + toolkit
 
 First-time setup:
   ./run.sh build-image      # ~5 min (mostly download)
   ./run.sh build            # ~15 min (compiles the vendored ROS navigation stack)
-  ./run.sh sim              # drive a car around
-
-Tips:
-  ./run.sh sim gui:=false                 # headless
-  ./run.sh sim world_name:=twoLanes       # pick a different world
-  LIBGL_ALWAYS_SOFTWARE=1 ./run.sh sim    # software rendering fallback
 EOF
     ;;
 esac
