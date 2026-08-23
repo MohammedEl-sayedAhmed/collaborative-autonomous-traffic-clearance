@@ -69,6 +69,7 @@ const consoleErrors = [];
 
   await click(A.run); await click(B.run); await page.waitForTimeout(600);
   ok((await legendCount(page)) === 2, 'reward legend shows 2 series');
+  ok(/Runs compared|Total episodes/.test(await page.$eval('#tiles', el => el.textContent)), 'tiles show multi-run summary when 2 selected (no lag)');
 
   // in-dashboard guide panel
   await page.click('#guideBtn'); await page.waitForTimeout(150);
