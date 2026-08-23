@@ -203,7 +203,7 @@ function lineChart(svg, series, opts={}){
   out+=`</g>`;
   if(view){ out+=`<text x="${(W-P.r).toFixed(1)}" y="${(P.t+FS).toFixed(1)}" text-anchor="end" font-size="${(FS).toFixed(1)}" fill="#4fd1c5">zoomed — double-click to reset</text>`; }
   svg.innerHTML=out;
-  svg.__series=series;
+  svg.__series=series; svg.__kind="line";
   if(!svg.__interactive) attachChartInteraction(svg);
 }
 
@@ -215,8 +215,9 @@ function attachChartInteraction(svg){
                                                              (e.clientY-r.top)*(svg.clientHeight/r.height)]; };
   const dataX=px=>{ const G=chartGeom[id]; return G? G.xmin+(px-G.P.l)/G.plotW*(G.xmax-G.xmin):0; };
   let drag=null;
-  svg.addEventListener("mousedown",e=>{ if(e.button!==0) return; drag={x:rel(e)[0]}; interacting=true; hideTip(); e.preventDefault(); });
+  svg.addEventListener("mousedown",e=>{ if(svg.__kind!=="line"||e.button!==0) return; drag={x:rel(e)[0]}; interacting=true; hideTip(); e.preventDefault(); });
   svg.addEventListener("mousemove",e=>{
+    if(svg.__kind!=="line") return;
     const G=chartGeom[id]; if(!G) return; const [px]=rel(e);
     if(drag){
       let sel=svg.querySelector("#__sel");
@@ -233,11 +234,11 @@ function attachChartInteraction(svg){
       pushView(id,{x0:a,x1:b,y0:G.ymin,y1:G.ymax}); }
     drag=null; interacting=false;
   });
-  svg.addEventListener("wheel",e=>{ const G=chartGeom[id]; if(!G) return; e.preventDefault();
+  svg.addEventListener("wheel",e=>{ if(svg.__kind!=="line") return; const G=chartGeom[id]; if(!G) return; e.preventDefault();
     const cx=dataX(rel(e)[0]); const f=e.deltaY<0?0.8:1.25;
     pushView(id,{x0:cx-(cx-G.xmin)*f, x1:cx+(G.xmax-cx)*f, y0:G.ymin, y1:G.ymax});
   },{passive:false});
-  svg.addEventListener("dblclick",()=>homeView(id));
+  svg.addEventListener("dblclick",()=>{ if(svg.__kind==="line") homeView(id); });
   svg.addEventListener("mouseleave",()=>hideTip());
 }
 
@@ -278,7 +279,7 @@ function outcomeChart(svg, runs){
   [2,3,1,4].forEach(k=>{ g+=`<rect x="${lx.toFixed(1)}" y="1" width="${(FS*.8).toFixed(1)}" height="${(FS*.8).toFixed(1)}" fill="${OUTCOME_COLOR[k]}"/><text x="${(lx+FS).toFixed(1)}" y="${(FS*.85).toFixed(1)}">${OUTCOME[k]}</text>`; lx+=Math.min(W/4,rem()*8.5); });
   g+=`</g>`;
   svg.innerHTML=g;
-  svg.__bars=bars;
+  svg.__bars=bars; svg.__kind="outcome";
   if(!svg.__ointeractive) attachOutcomeInteraction(svg);
 }
 
@@ -287,6 +288,7 @@ function attachOutcomeInteraction(svg){
   svg.__ointeractive=true;
   const rel=e=>{ const r=svg.getBoundingClientRect(); return (e.clientX-r.left)*(svg.clientWidth/r.width); };
   svg.addEventListener("mousemove",e=>{
+    if(svg.__kind!=="outcome") return;
     const bars=svg.__bars; if(!bars||!bars.length){ hideTip(); return; }
     const x=rel(e); let b=bars[0]; bars.forEach(bb=>{ if(Math.abs(bb.cx-x)<Math.abs(b.cx-x)) b=bb; });
     let rows=""; [2,3,1,4,0].forEach(k=>{ if(b.counts[k]) rows+=`<div><span class="ttsw" style="background:${OUTCOME_COLOR[k]}"></span>${OUTCOME[k]}: <b>${b.counts[k]}</b> (${Math.round(100*b.counts[k]/b.total)}%)</div>`; });

@@ -1,6 +1,7 @@
 // Playwright regression test for the dashboard: run selection, guide, interactive charts
-// (hover/zoom/box-zoom/back/reset), maximize, outcomes hover, and responsive layout.
-//   ./run.sh dashboard-demo && ./run.sh dashboard &     # serve with demo data
+// (hover/zoom/box-zoom/back/reset), maximize (incl. line->outcomes cross-type), outcomes
+// hover, and responsive layout.
+//   ./run.sh dashboard-demo && ./run.sh dashboard &
 //   npm i playwright && npx playwright install chromium
 //   DASH_URL=http://127.0.0.1:8770 node tools/dashboard/test_dashboard.mjs
 
@@ -142,6 +143,12 @@ const consoleErrors = [];
   ok((await page.$eval('#chartBig', el => el.querySelectorAll('path').length)) > 0, 'maximized chart renders its series');
   await page.click('#chartClose'); await page.waitForTimeout(150);
   ok(!(await page.isVisible('#chartModal .sheet')), 'maximized chart closes');
+  // cross-type: after maximizing a line chart, maximizing the outcomes (bar) chart must still hover
+  await page.locator('.card button[title="maximize"]').nth(3).click(); await page.waitForTimeout(250);
+  { const bx = await page.$eval('#chartBig', e => { const r = e.getBoundingClientRect(); return { x:r.x, y:r.y, w:r.width, h:r.height }; });
+    await page.mouse.move(bx.x + bx.w*0.5, bx.y + bx.h*0.5); await page.waitForTimeout(150); }
+  ok((await page.$eval('#tt', e => getComputedStyle(e).display)) !== 'none', 'maximized outcomes hover works even after a line chart was maximized');
+  await page.click('#chartClose'); await page.waitForTimeout(150);
 
   console.log('\n[O] outcomes (bar) chart has a hover tooltip');
   const ob = await page.$eval('#chartOutcomes', el => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
