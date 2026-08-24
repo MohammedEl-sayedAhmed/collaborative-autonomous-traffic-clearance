@@ -78,12 +78,11 @@ All demos were run and verified during documentation — see the status matrix a
 A live, zero-dependency dashboard to watch training and see how each change to the RL or the
 environment moves the numbers — runs are tagged by git commit and compared side by side.
 
-![Training dashboard](docs/img/dashboard.png)
+![Training dashboard](docs/img/dashboard-campaign.png)
 
-Here the **linear function-approximation** agent solves the harder *blocker* scenario (its reward
-curve climbs into positive territory and its episodes end in the ambulance reaching its goal), while
-the **tabular** agent and a **random** baseline keep crashing. It updates **live** while training
-runs, and a built-in **Guide** explains every term (RL, Q-table, episode, epsilon…).
+Here the fix-by-fix campaign: the *baseline* barely clears the ambulance, and each fix from
+[KNOWN_ISSUES](docs/KNOWN_ISSUES.md) pushes success from **3% → 100%**. It updates **live** while
+training runs, and a built-in **Guide** explains every term (RL, Q-table, episode, epsilon…).
 
 <p>
   <img src="docs/img/dashboard-live.png" width="49%" alt="Live training view"/>
@@ -100,17 +99,29 @@ The charts are interactive (hover for values, scroll / drag to zoom, back/reset,
 ### See each fix improve the results
 
 Run the built-in campaign — baseline, then each fix from [KNOWN_ISSUES](docs/KNOWN_ISSUES.md) applied
-cumulatively — and compare the learning curves (fast headless harness; no Gazebo needed):
+cumulatively (the shot above) — with a fast headless harness; no Gazebo needed:
 
 ```bash
 ./run.sh campaign && ./run.sh dashboard
 ```
 
-![Fix-by-fix campaign](docs/img/dashboard-campaign.png)
-
 Enabling the (previously disabled) lane-change maneuver jumps success from **3% → 100%**; ε-decay and
-randomized starts refine it further. The same fixes are toggleable in the real Gazebo pipeline —
-full guide: [docs/RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md).
+randomized starts refine it further. The same fixes are toggleable in the real Gazebo pipeline.
+
+### Beyond the fixes: a smarter agent
+
+An enriched **"blocker" scenario** gives the agent a real decision — read which side lane is clear
+(V2V awareness), then move aside *without crashing*. A **linear function-approximation** agent solves
+it where the sparse tabular Q-table can't:
+
+```bash
+./run.sh rl-blocker && ./run.sh dashboard
+```
+
+![Function approximation solves the blocker scenario](docs/img/dashboard.png)
+
+Greedy learned-policy success climbs **random 2% → tabular 9% → linear FA 100%** — full guide:
+[docs/RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md).
 
 ## Thesis
 
