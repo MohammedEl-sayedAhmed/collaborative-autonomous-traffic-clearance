@@ -89,6 +89,13 @@ case "${1:-help}" in
     fi
     ( cd thesis && ./build.sh ) ;;
 
+  # ---- v1.0.0 line (ROS 2 / Python 3): f1tenth_gym RL base --------------------
+  gym-build)                           # build the Python3 gym dev image (f1tenth_gym v1.0.0)
+    command -v docker >/dev/null 2>&1 || { echo "docker is required"; exit 1; }
+    docker build -t caatc-gym -f docker/gym.Dockerfile . ;;
+  gym-smoke)                           # M0: prove the gym base runs headless (1 + 2 agents)
+    docker run --rm caatc-gym python -m caatc.smoke ;;
+
   shell)                               # interactive shell inside the container (workspace sourced)
     gui bash ;;
   clean)                               # remove containers + the build volume (source untouched)
@@ -116,6 +123,9 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
   dashboard-demo  Seed two synthetic runs to try the dashboard immediately
 
   thesis        Compile the thesis (private submodule) -> thesis/main.pdf
+
+  gym-build     [v1.0.0] Build the Python3 f1tenth_gym dev image (ROS 2 / Py3 line)
+  gym-smoke     [v1.0.0] M0 smoke: prove the gym base runs headless (1 + 2 agents)
 
   shell         Bash shell inside the container
   clean         Delete the build volume (your source files stay untouched)

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caatc"
+version = "1.0.0.dev0"
+description = "Collaborative Autonomous Traffic Clearance — v1.0.0 line (ROS 2 / Python 3), RL core on f1tenth_gym"
+readme = "caatc/README.md"
+requires-python = ">=3.9"
+license = { text = "GPL-3.0-or-later" }
+dependencies = [
+  # f1tenth_gym pinned to the v1.0.0 branch (Gymnasium API, N-agent). See ADR 0004.
+  # No PyPI release exists yet, so we pin an exact commit for reproducibility.
+  "f1tenth_gym @ git+https://github.com/f1tenth/f1tenth_gym.git@5a301bd0ae1ceaf7dec653e7549c8d099db58a6b",
+  "gymnasium>=0.29,<0.30",
+  "numpy>=1.18",
+]
+
+[project.scripts]
+caatc-smoke = "caatc.smoke:main"
+
+[tool.setuptools.packages.find]
+include = ["caatc*"]
