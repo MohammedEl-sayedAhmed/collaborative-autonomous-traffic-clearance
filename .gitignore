@@ -9,6 +9,11 @@
 __pycache__/
 *.py[cod]
 
+# Python packaging / env (v1.0.0 line)
+*.egg-info/
+.venv/
+dist/
+
 # RL training run outputs + saved Q-tables (local experiment data, read by the dashboard)
 **/saved_variables/
 
