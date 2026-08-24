@@ -72,6 +72,8 @@ Greedy (learned-policy) success on the blocker scenario:
 | tabular Q-table | ~9% | ~91% | the sparse table can't generalize "avoid the occupied lane" across states |
 | **linear function approximation** | **100%** | **0%** | tile-coded features generalize → learns the rule and solves it |
 
+![Function approximation solves the blocker scenario](img/dashboard.png)
+
 This is roadmap **A1** ("function approximation — the single biggest quality jump") demonstrated: same
 faithful parameters (lr=0.7, γ=0.5), the only change is a table → a tiny generalizing linear model.
 The learners also gain **random tie-breaking** (a fixed tie-break made the greedy agent drift back
