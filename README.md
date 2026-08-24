@@ -166,6 +166,7 @@ collaborative-autonomous-traffic-clearance/
 | [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | Plain-language guide to reading the dashboard (RL, Q-table, episode, epsilon…) |
 | [RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md) | Run the fix-by-fix campaign (fast headless harness + real Gazebo) and compare results |
 | [ROADMAP.md](ROADMAP.md) | Improvement ideas — project first (RL, sim, stack), then the dashboard accordingly |
+| [adr/](docs/adr/) | Architecture Decision Records — the migration decisions (ROS 2 / Python 3) and their rationale |
 
 ## Origin & credits
 
