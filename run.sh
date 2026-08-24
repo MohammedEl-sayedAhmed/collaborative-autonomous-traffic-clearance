@@ -42,6 +42,10 @@ case "${1:-help}" in
     shift || true
     SHA="$(git rev-parse --short HEAD 2>/dev/null || echo harness)"
     RL_GIT_SHA="$SHA" python3 tools/rl_harness/train.py --campaign "$@" ;;
+  rl-blocker)                          # enriched "blocker" scenario: random vs tabular vs linear FA
+    shift || true
+    SHA="$(git rev-parse --short HEAD 2>/dev/null || echo harness)"
+    RL_GIT_SHA="$SHA" python3 tools/rl_harness/train.py --blocker-demo --episodes "${EPISODES:-800}" "$@" ;;
 
   rl)                                  # RL master only (expects env.launch already running); tags the run
     shift || true
@@ -103,6 +107,7 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
   ev            One racecar + one ambulance scenario
 
   campaign      FAST headless RL: baseline -> cumulative fixes (runs anywhere, seconds)
+  rl-blocker    FAST headless RL: enriched "blocker" scenario, random vs tabular vs linear FA
   harness       FAST headless RL: one config (see tools/rl_harness/train.py --help)
   rl-train      REAL Gazebo RL training, env + master together (needs lots of RAM; GPU=1 optional)
   rl            RL master only (expects env.launch already running)

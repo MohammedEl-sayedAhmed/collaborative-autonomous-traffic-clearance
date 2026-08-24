@@ -1,6 +1,6 @@
 const PALETTE = ["#4fd1c5","#e0b64a","#e06c6c","#7aa2f7","#9ece6a","#bb9af7","#ff9e64","#2ac3de","#f7768e","#73daca"];
-const OUTCOME = {0:"in progress",1:"max time",2:"ambulance goal",3:"agent goal",4:"sim died"};
-const OUTCOME_COLOR = {1:"#e0b64a",2:"#46c37b",3:"#4fd1c5",4:"#e06c6c",0:"#9aa7bd"};
+const OUTCOME = {0:"in progress",1:"max time",2:"ambulance goal",3:"agent goal",4:"sim died",5:"collision"};
+const OUTCOME_COLOR = {1:"#e0b64a",2:"#46c37b",3:"#4fd1c5",4:"#e06c6c",0:"#9aa7bd",5:"#f7768e"};
 
 // Single source of truth: `selected` decides what is shown. No competing "focus".
 const state = {runs:[], data:{}, selected:new Set(), colors:{}, first:true};

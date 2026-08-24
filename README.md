@@ -80,8 +80,10 @@ environment moves the numbers — runs are tagged by git commit and compared sid
 
 ![Training dashboard](docs/img/dashboard.png)
 
-Here an *improved-reward* run reaches **78% success** vs the *baseline*'s **30%**. It updates **live**
-while training runs, and a built-in **Guide** explains every term (RL, Q-table, episode, epsilon…).
+Here the **linear function-approximation** agent solves the harder *blocker* scenario (its reward
+curve climbs into positive territory and its episodes end in the ambulance reaching its goal), while
+the **tabular** agent and a **random** baseline keep crashing. It updates **live** while training
+runs, and a built-in **Guide** explains every term (RL, Q-table, episode, epsilon…).
 
 <p>
   <img src="docs/img/dashboard-live.png" width="49%" alt="Live training view"/>

@@ -44,6 +44,43 @@ The harness models the project's exact RL formulation (state = agent/ambulance v
 γ=0.5 and the same ε-decay) against a lightweight kinematic road model. It is faithful to the
 **algorithm**, not to Gazebo's physics — see `tools/rl_harness/train.py`.
 
+## A2) Beyond the fixes: does a smarter agent help? (roadmap A1 / A4)
+
+Once the lane-change bug is fixed the default toy is *too easy* — the ambulance starts far back in
+an empty middle lane, so even a random policy clears it (random ≈ optimal). There's no headroom left
+for an RL-algorithm change to show a gain (`./run.sh harness --compare-agents` — tabular and linear
+tie on the default toy).
+
+The **enriched "blocker" scenario** adds real headroom: the agent starts in the ambulance's lane
+(so it must move aside) and a **stopped car occupies one side lane**, so the agent has to read
+**lane-occupancy awareness** (derived from V2V) and pick the *free* lane — the wrong lane is a
+**collision**. This is exactly the thesis's own stated future work ("a model capable of detecting
+its surrounding vehicles"), and it only becomes learnable with the thesis's intended **reward
+redesign** — a weighted *EV-acceleration + agent-action* reward — which the ROS code never shipped
+(it kept the older EV-acceleration-only reward).
+
+```bash
+./run.sh rl-blocker    # random baseline vs tabular Q-table vs linear function approximation
+./run.sh dashboard     # compare them (the "collision" outcome shows up in Episode outcomes)
+```
+
+Greedy (learned-policy) success on the blocker scenario:
+
+| agent | success | crash | why |
+|-------|--------:|------:|-----|
+| random baseline | 2% | 98% | no learning — picks the occupied lane ~half the time |
+| tabular Q-table | ~9% | ~91% | the sparse table can't generalize "avoid the occupied lane" across states |
+| **linear function approximation** | **100%** | **0%** | tile-coded features generalize → learns the rule and solves it |
+
+![Function approximation solves the blocker scenario](img/dashboard.png)
+
+This is roadmap **A1** ("function approximation — the single biggest quality jump") demonstrated: same
+faithful parameters (lr=0.7, γ=0.5), the only change is a table → a tiny generalizing linear model.
+The learners also gain **random tie-breaking** (a fixed tie-break made the greedy agent drift back
+into the EV's lane) and a `--agent`/`--scenario` selector. Note the dashboard's per-episode success
+is dominated by ε-exploration early on; the honest "does it work" number is the greedy evaluation the
+harness records in `meta.eval`.
+
 ## B) Real Gazebo training campaign (on a machine with plenty of RAM)
 
 The fixes are toggleable so you can compare code states without editing files:
@@ -70,7 +107,8 @@ RL_LABEL=lane-changes  ENABLE_LANE_CHANGES=true  ./run.sh rl-train
 
 ## Using a GPU
 
-The RL is tabular (CPU only) — a GPU gives it **no** benefit. A GPU only accelerates Gazebo
+The RL here (tabular / linear function approximation) is CPU-only — a GPU gives it **no** benefit
+(a future DQN would be the first thing to use one). A GPU only accelerates Gazebo
 *rendering*, and does not reduce system-RAM use. If your machine has an NVIDIA GPU + driver +
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html):
 
