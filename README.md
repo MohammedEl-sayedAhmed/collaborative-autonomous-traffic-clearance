@@ -110,6 +110,16 @@ Enabling the (previously disabled) lane-change maneuver jumps success from **3% 
 randomized starts refine it further. The same fixes are toggleable in the real Gazebo pipeline —
 full guide: [docs/RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md).
 
+## Thesis
+
+The graduation thesis is kept in a separate **private** repository and included
+here as a git submodule at [`thesis/`](thesis/) (access-restricted). With access:
+
+```bash
+git submodule update --init thesis
+./run.sh thesis        # compile -> thesis/main.pdf (Dockerized TeX Live)
+```
+
 ## Repository layout
 
 ```
@@ -118,6 +128,7 @@ collaborative-autonomous-traffic-clearance/
 ├── docker/                    # Dockerfile (ROS Kinetic + deps + Gazebo models) + entrypoint
 ├── docker-compose.yml         # image + volumes + X11/GPU wiring
 ├── docs/                      # ARCHITECTURE / SUBSYSTEMS / PACKAGES / RUNNING / KNOWN_ISSUES
+├── thesis/                    # graduation thesis (private submodule; ./run.sh thesis)
 ├── simulator/racecar-simulator/
 │   ├── racecar_gazebo, racecar_description        # simulation + robot/ambulance models
 │   ├── racecar_communication                      # V2V broadcast + aggregation

@@ -75,6 +75,16 @@ case "${1:-help}" in
     python3 tools/dashboard/demo_run.py --label improved-reward --episodes 40 --seed 2 --improve
     echo "Seeded 2 demo runs. Now: ./run.sh dashboard" ;;
 
+  # ---- thesis (private submodule) ---------------------------------------------
+  thesis)                              # compile the thesis (private submodule) -> thesis/main.pdf
+    if [ ! -e thesis/build.sh ]; then
+      echo "The thesis lives in a private submodule (access-restricted)."
+      echo "If you have access, fetch it and retry:"
+      echo "  git submodule update --init thesis"
+      exit 1
+    fi
+    ( cd thesis && ./build.sh ) ;;
+
   shell)                               # interactive shell inside the container (workspace sourced)
     gui bash ;;
   clean)                               # remove containers + the build volume (source untouched)
@@ -99,6 +109,8 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
 
   dashboard       Live training dashboard at http://127.0.0.1:8770 (compare runs)
   dashboard-demo  Seed two synthetic runs to try the dashboard immediately
+
+  thesis        Compile the thesis (private submodule) -> thesis/main.pdf
 
   shell         Bash shell inside the container
   clean         Delete the build volume (your source files stay untouched)
