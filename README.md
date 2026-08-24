@@ -110,6 +110,25 @@ Enabling the (previously disabled) lane-change maneuver jumps success from **3% 
 randomized starts refine it further. The same fixes are toggleable in the real Gazebo pipeline —
 full guide: [docs/RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md).
 
+## Thesis
+
+The full graduation thesis — *Autonomous Traffic Clearance for Emergency
+Vehicles: A Cooperative Reinforcement Learning Approach* (2020) — lives in
+[`thesis/`](thesis/) as LaTeX source and compiles to a tracked, 137-page
+[`thesis/main.pdf`](thesis/main.pdf) with one command (Dockerized TeX Live —
+nothing installed on your host, same toolchain Overleaf uses):
+
+```bash
+./run.sh thesis
+```
+
+The thesis spans **two** simulators; only the **Gazebo/ROS** half is implemented
+in this repo (the SUMO travel-time study is not). For a chapter-by-chapter audit
+of the thesis against the actual code — confirmed matches, intended-vs-shipped
+gaps, and out-of-scope SUMO results — see
+[docs/THESIS_CROSSCHECK.md](docs/THESIS_CROSSCHECK.md). Build and Overleaf
+details are in [thesis/README.md](thesis/README.md).
+
 ## Repository layout
 
 ```
@@ -117,7 +136,9 @@ collaborative-autonomous-traffic-clearance/
 ├── run.sh                     # containerized runner — the one entry point
 ├── docker/                    # Dockerfile (ROS Kinetic + deps + Gazebo models) + entrypoint
 ├── docker-compose.yml         # image + volumes + X11/GPU wiring
-├── docs/                      # ARCHITECTURE / SUBSYSTEMS / PACKAGES / RUNNING / KNOWN_ISSUES
+├── docs/                      # ARCHITECTURE / SUBSYSTEMS / PACKAGES / RUNNING / KNOWN_ISSUES / THESIS_CROSSCHECK
+├── thesis/                    # graduation thesis: LaTeX source + compiled main.pdf (./run.sh thesis)
+├── tools/                     # rl_harness, dashboard, thesis build script
 ├── simulator/racecar-simulator/
 │   ├── racecar_gazebo, racecar_description        # simulation + robot/ambulance models
 │   ├── racecar_communication                      # V2V broadcast + aggregation
@@ -141,6 +162,8 @@ collaborative-autonomous-traffic-clearance/
 | [DASHBOARD.md](docs/DASHBOARD.md) | Live training dashboard: stream metrics, compare runs across code changes |
 | [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | Plain-language guide to reading the dashboard (RL, Q-table, episode, epsilon…) |
 | [RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md) | Run the fix-by-fix campaign (fast headless harness + real Gazebo) and compare results |
+| [THESIS_CROSSCHECK.md](docs/THESIS_CROSSCHECK.md) | Chapter-by-chapter cross-check of the 2020 thesis against the shipped code |
+| [thesis/README.md](thesis/README.md) | Compile the thesis LaTeX → `main.pdf` (Dockerized TeX Live / Overleaf) |
 | [ROADMAP.md](ROADMAP.md) | Improvement ideas — project first (RL, sim, stack), then the dashboard accordingly |
 
 ## Origin & credits

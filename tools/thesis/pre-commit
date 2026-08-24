@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+# pre-commit hook: keep thesis/main.pdf in lock-step with the source.
+#
+# When a commit touches thesis sources (.tex/.bib/.cls/.sty/.latexmkrc or an
+# image), rebuild the PDF with `./run.sh thesis` and stage it, so every commit
+# ships the matching compiled thesis.
+#
+# Enable it (optional):
+#   git config --get core.hooksPath        # see where your hooks live
+#   # then symlink/copy this file to <that dir>/pre-commit, e.g. for the default:
+#   ln -sf ../../tools/thesis/pre-commit .git/hooks/pre-commit
+#   # If core.hooksPath is set (e.g. a global hook), add this file's body to the
+#   # pre-commit there so it runs alongside your existing hooks.
+set -eu
+
+ROOT=$(git rev-parse --show-toplevel)
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -E '^thesis/.*\.(tex|bib|cls|sty)$|^thesis/images/|^thesis/\.latexmkrc$' \
+  || true)
+
+[ -z "$staged" ] && exit 0
+
+echo "[pre-commit] thesis sources staged -> rebuilding thesis/main.pdf ..."
+if ! "$ROOT/run.sh" thesis; then
+  echo "[pre-commit] thesis build FAILED — fix the LaTeX errors above, then re-commit." >&2
+  exit 1
+fi
+git add "$ROOT/thesis/main.pdf"
+echo "[pre-commit] staged refreshed thesis/main.pdf"

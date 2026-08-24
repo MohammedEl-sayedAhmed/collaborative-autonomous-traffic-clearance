@@ -75,6 +75,24 @@ case "${1:-help}" in
     python3 tools/dashboard/demo_run.py --label improved-reward --episodes 40 --seed 2 --improve
     echo "Seeded 2 demo runs. Now: ./run.sh dashboard" ;;
 
+  # ---- thesis (LaTeX) ---------------------------------------------------------
+  thesis)                              # compile thesis/ -> thesis/main.pdf (Dockerized TeX Live)
+    IMG="${TEXLIVE_IMAGE:-texlive/texlive:latest}"
+    command -v docker >/dev/null 2>&1 || { echo "docker is required to build the thesis"; exit 1; }
+    docker image inspect "$IMG" >/dev/null 2>&1 || { echo "Pulling $IMG (one-time, a few GB)..."; docker pull "$IMG"; }
+    U="$(id -u)"; G="$(id -g)"
+    echo "Compiling thesis with $IMG ..."
+    # Run as root inside the container (no bind-mount permission issues), then
+    # chown the outputs back to the invoking user so git/host stay clean.
+    docker run --rm -v "$PWD":/work -w /work -e HOME=/tmp "$IMG" \
+      sh -c "sh tools/thesis/build.sh; rc=\$?; chown -R $U:$G /work/thesis 2>/dev/null || true; exit \$rc" ;;
+  thesis-clean)                        # remove LaTeX build artifacts (keeps thesis/main.pdf)
+    rm -f thesis/main.aux thesis/main.bbl thesis/main.bcf thesis/main.blg \
+          thesis/main.fdb_latexmk thesis/main.fls thesis/main.lof thesis/main.log \
+          thesis/main.lot thesis/main.out thesis/main.run.xml thesis/main.synctex.gz \
+          thesis/main.toc thesis/chapters/*.aux 2>/dev/null || true
+    echo "Removed LaTeX build artifacts (thesis/main.pdf kept)." ;;
+
   shell)                               # interactive shell inside the container (workspace sourced)
     gui bash ;;
   clean)                               # remove containers + the build volume (source untouched)
@@ -99,6 +117,9 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
 
   dashboard       Live training dashboard at http://127.0.0.1:8770 (compare runs)
   dashboard-demo  Seed two synthetic runs to try the dashboard immediately
+
+  thesis        Compile thesis/ -> thesis/main.pdf (Dockerized TeX Live; Overleaf-equivalent)
+  thesis-clean  Remove LaTeX build artifacts (keeps thesis/main.pdf)
 
   shell         Bash shell inside the container
   clean         Delete the build volume (your source files stay untouched)

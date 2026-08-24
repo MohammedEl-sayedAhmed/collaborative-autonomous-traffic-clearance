@@ -16,6 +16,33 @@ __pycache__/
 *.log
 *.bag
 
+# ---- LaTeX build artifacts (thesis/) ----
+# The compiled thesis/main.pdf IS tracked (each commit ships its PDF); these
+# intermediates are not. Extension-based, so *.pdf figures/main.pdf are kept.
+# (*.log and *.out are already ignored by the ROS/upstream rules above.)
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.toc
+*.run.xml
+*.synctex.gz
+*.glo
+*.gls
+*.glg
+*.ist
+*.acn
+*.acr
+*.alg
+*.idx
+*.ind
+*.ilg
+*.xdv
+
 # editor / OS cruft
 *.swp
 .DS_Store
