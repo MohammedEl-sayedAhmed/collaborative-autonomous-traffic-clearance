@@ -54,6 +54,7 @@ class ScenarioConfig:
     ev_start_s: float = 0.0        # EV arclength at reset (center lane)
     coop_start_s: float = 8.0      # first cooperator arclength
     coop_gap: float = 10.0         # Delta stagger between cooperators (m)
+    start_jitter: float = 0.5      # +/- m of per-seed jitter on each non-EV start s
 
     # -- EV adaptive-cruise (the blocking mechanism) -------------------------
     acc_standoff: float = 1.5      # d0: gap at which the EV target speed is 0 (m)
@@ -158,26 +159,35 @@ class Placement:
 
 
 def make_layout(cfg: ScenarioConfig, rng: np.random.Generator) -> List[Placement]:
-    """Deterministic-per-seed start layout, ordered as the base env's agents:
+    """Start layout, ordered as the base env's agents:
     ``[EV, coop_0..coop_{K-1}, occ_0..occ_{H-1}]``.
 
     EASY: cooperators are staggered in the EV (center) lane; side lanes empty.
     HARD: additionally one occupant per cooperator blocks a chosen adjacent side
     lane, so the free side must be inferred from V2V occupancy.
+
+    ``rng`` perturbs only the **arclength** of each non-EV car by
+    ``+/- start_jitter`` m, so ``reset(seed=...)`` yields genuinely different
+    episodes while the **structure** (which agent is EV/coop/occupant, and every
+    car's lane) stays seed-independent -- the env caches roles / occupant lanes
+    once at construction and relies on that invariant. The EV is never jittered
+    (fixed goal distance). Each occupant tracks its cooperator's jittered ``s``.
     """
+    def jitter():
+        return float(rng.uniform(-cfg.start_jitter, cfg.start_jitter)) if cfg.start_jitter else 0.0
+
     placements: List[Placement] = [Placement(cfg.ev_start_s, cfg.ev_lane, "ev")]
 
-    coop_lanes = []
+    coop_s = []
     for j in range(cfg.num_cooperators):
-        s = cfg.coop_start_s + j * cfg.coop_gap
+        s = cfg.coop_start_s + j * cfg.coop_gap + jitter()
         placements.append(Placement(s, cfg.ev_lane, "coop"))
-        coop_lanes.append((s, cfg.ev_lane))
+        coop_s.append(s)
 
     if cfg.preset == "hard":
-        sides = cfg.hard_block_sides
-        for j, side in enumerate(sides):
-            s, _ = coop_lanes[j] if j < len(coop_lanes) else (cfg.coop_start_s, cfg.ev_lane)
-            lane = int(np.clip(cfg.ev_lane + side, 0, cfg.num_lanes - 1))
+        for j, side in enumerate(cfg.hard_block_sides):
+            s = coop_s[j] if j < len(coop_s) else cfg.coop_start_s + jitter()
+            lane = int(np.clip(cfg.ev_lane + side, 0, cfg.num_lanes - 1))  # seed-independent
             placements.append(Placement(s, lane, "occupant"))
 
     return placements

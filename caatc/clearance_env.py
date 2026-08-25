@@ -46,17 +46,28 @@ def _reduce_scan_beams(n: int = _CLEARANCE_SCAN_BEAMS) -> None:
     global _scan_beams_patched
     if _scan_beams_patched:
         return
+    _scan_beams_patched = True  # attempt once; a failure just means slower, not wrong
     try:
+        import inspect
         import f1tenth_gym.envs.base_classes as bc
 
-        defaults = list(bc.RaceCar.__init__.__defaults__)
-        if 1080 in defaults:  # num_beams default
-            defaults[defaults.index(1080)] = int(n)
-            bc.RaceCar.__init__.__defaults__ = tuple(defaults)
-        _scan_beams_patched = True
+        init = bc.RaceCar.__init__
+        # locate num_beams by *name* (not by value-searching for 1080), so we can
+        # never overwrite the wrong parameter if the signature changes.
+        defaulted = [
+            p for p in inspect.signature(init).parameters.values()
+            if p.default is not inspect.Parameter.empty
+        ]
+        names = [p.name for p in defaulted]
+        if "num_beams" not in names or init.__defaults__ is None:
+            return  # unexpected signature -> leave the default (correct, just slower)
+        idx = names.index("num_beams")
+        defaults = list(init.__defaults__)  # aligns 1:1 with the defaulted params
+        if isinstance(defaults[idx], int) and defaults[idx] > n:
+            defaults[idx] = int(n)
+            init.__defaults__ = tuple(defaults)
     except Exception:
-        # non-fatal: fall back to the default beam count (slower, still correct)
-        _scan_beams_patched = True
+        pass  # non-fatal: fall back to the default beam count (slower, still correct)
 
 
 def _one_hot(idx: int, n: int) -> List[float]:
@@ -138,19 +149,27 @@ class ClearanceEnv(gym.Env):
         cfg = self.cfg
         rng = np.random.default_rng(seed if seed is not None else cfg.seed)
         layout = make_layout(cfg, rng)
+        # the structure (roles + lanes) must be seed-independent so the roles /
+        # occupant lanes cached at construction stay valid (only s is jittered).
+        assert [p.role for p in layout] == self._roles, "layout structure changed across seeds"
 
         poses = np.zeros((cfg.num_agents, 3), dtype=np.float64)
         for i, p in enumerate(layout):
             d = lane_center_d(cfg, p.lane)
             poses[i, :] = self.frame.frenet_to_xytheta(p.s, d)
 
-        # sanity: no two cars overlap at start
+        # sanity: no two cars overlap at start. Use the car's circumcircle diameter
+        # hypot(length, width) as a conservative non-overlap distance (bounding
+        # circles clear => oriented boxes clear, at any heading). Raise (not assert,
+        # which -O strips) so a bad custom config fails loudly.
+        min_sep = float(np.hypot(cfg.car_length, cfg.car_width))
         for a in range(cfg.num_agents):
             for b in range(a + 1, cfg.num_agents):
                 dist = float(np.hypot(poses[a, 0] - poses[b, 0], poses[a, 1] - poses[b, 1]))
-                assert dist > cfg.car_length, (
-                    f"start poses overlap: agents {a},{b} at {dist:.3f} m"
-                )
+                if dist <= min_sep:
+                    raise ValueError(
+                        f"start poses overlap: agents {a},{b} at {dist:.3f} m (min {min_sep:.3f} m)"
+                    )
 
         obs, _info = self.inner.reset(options={"poses": poses})
         self._last_obs = obs
@@ -158,12 +177,16 @@ class ClearanceEnv(gym.Env):
         K = cfg.num_cooperators
         self.target_lane = np.full(K, cfg.ev_lane, dtype=int)
         self.target_speed = np.full(K, cfg.coop_speed, dtype=float)
+        cars = self._cars(obs)
         self._step_count = 0
-        self._prev_ev_s = self._cars(obs)[0]["s"]
+        self._prev_ev_s = cars[0]["s"]
         self._lane_changes = 0
         self._t_clear = None
 
-        return self._build_obs(obs), self._info(obs, collided=False, success=False, blocked=False)
+        return (
+            self._build_obs(obs, cars),
+            self._info(obs, cars, collided=False, success=False, blocked_frac=0.0),
+        )
 
     # -- action decode --------------------------------------------------------
     def _apply_action(self, action) -> int:
@@ -200,11 +223,12 @@ class ClearanceEnv(gym.Env):
 
         collided = False
         success = False
-        blocked = False
+        blocked_steps = 0
+        substeps_done = 0
         obs = self._last_obs
+        cars = self._cars(obs)
 
         for _ in range(cfg.substeps):
-            cars = self._cars(obs)
             act = np.zeros((cfg.num_agents, 2), dtype=np.float64)
 
             ev = cars[0]
@@ -213,6 +237,8 @@ class ClearanceEnv(gym.Env):
                 cfg, self.frame, ev["s"], ev["d"], ev["theta"], ev["v"], others
             )
             act[0] = (steer, speed)
+            if blocked:
+                blocked_steps += 1
 
             for j in range(K):
                 c = cars[1 + j]
@@ -227,32 +253,35 @@ class ClearanceEnv(gym.Env):
                     int(self._occ_lane[h]), cfg.coop_speed,
                 )
 
-            obs, _r, _term, _trunc, _info = self.inner.step(act)
+            obs, _r, inner_term, _trunc, _info = self.inner.step(act)
             self._last_obs = obs
+            substeps_done += 1
+            cars = self._cars(obs)  # reused next iteration and after the loop
 
             if np.any(np.asarray(self.inner.collisions) > 0):
                 collided = True
                 break
-
-            evo = obs[self._agent_ids[0]]
-            ev_s, _ = self.frame.project(float(evo["pose_x"]), float(evo["pose_y"]))
-            if ev_s >= cfg.s_goal:
+            if cars[0]["s"] >= cfg.s_goal:
                 success = True
+                break
+            if inner_term:
+                # the inner env considers the episode over (its own ego-collision
+                # path); stop stepping a done env. Our collision check above owns
+                # the outcome, so no extra flag is set here.
                 break
 
         self._step_count += 1
 
-        cars = self._cars(obs)
         ev_s = cars[0]["s"]
         ev_v = cars[0]["v"]
         progress = ev_s - self._prev_ev_s
         self._prev_ev_s = ev_s
+        blocked_frac = blocked_steps / max(1, substeps_done)
 
         # -- shared cooperative reward ----------------------------------------
         reward = cfg.w_progress * progress
         reward += cfg.w_ev_speed * ev_v
-        if blocked:
-            reward -= cfg.w_block
+        reward -= cfg.w_block * blocked_frac
         reward -= cfg.w_oscillation * changes
         if collided:
             reward -= cfg.w_collision
@@ -265,11 +294,11 @@ class ClearanceEnv(gym.Env):
         truncated = bool((not terminated) and self._step_count >= cfg.max_steps)
 
         return (
-            self._build_obs(obs),
+            self._build_obs(obs, cars),
             float(reward),
             terminated,
             truncated,
-            self._info(obs, collided=collided, success=success, blocked=blocked),
+            self._info(obs, cars, collided=collided, success=success, blocked_frac=blocked_frac),
         )
 
     # -- observation ----------------------------------------------------------
@@ -335,8 +364,9 @@ class ClearanceEnv(gym.Env):
                 return 0.0
         return 1.0
 
-    def _build_obs(self, obs) -> np.ndarray:
-        cars = self._cars(obs)
+    def _build_obs(self, obs, cars: Optional[List[dict]] = None) -> np.ndarray:
+        if cars is None:
+            cars = self._cars(obs)
         vec: List[float] = []
         for j in range(self.cfg.num_cooperators):
             vec += self._per_coop_obs(j, cars)
@@ -344,14 +374,17 @@ class ClearanceEnv(gym.Env):
         return np.clip(arr, -10.0, 10.0)
 
     # -- info -----------------------------------------------------------------
-    def _info(self, obs, *, collided: bool, success: bool, blocked: bool) -> dict:
-        cars = self._cars(obs)
+    def _info(self, obs, cars: Optional[List[dict]] = None, *,
+              collided: bool, success: bool, blocked_frac: float) -> dict:
+        if cars is None:
+            cars = self._cars(obs)
         ev = cars[0]
         return {
             "ev_s": ev["s"],
             "ev_v": ev["v"],
             "ev_progress": min(ev["s"] / self.cfg.s_goal, 1.0),
-            "ev_blocked": bool(blocked),
+            "ev_blocked": bool(blocked_frac > 0.0),
+            "ev_blocked_frac": float(blocked_frac),
             "collision": bool(collided),
             "success": bool(success),
             "t_clear": self._t_clear,
