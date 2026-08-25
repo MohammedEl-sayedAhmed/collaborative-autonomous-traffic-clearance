@@ -22,6 +22,10 @@ V2V to clear a path for an **emergency vehicle** — will be layered on top.
 
 ## Run M0 (nothing installed on the host)
 
+Needs Docker on the host — if this is a fresh machine, do the one-time
+[Docker prerequisites](../docs/RUNNING.md#prerequisites--install-docker) first (install + the
+`docker` group step, which requires a fresh login).
+
 ```bash
 ./run.sh gym-build     # build the Python 3 image (pins f1tenth_gym @ v1.0.0)
 ./run.sh gym-smoke     # headless smoke: one episode, 1 and 2 agents

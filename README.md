@@ -45,7 +45,12 @@ step-by-step walkthrough of one "clear the route" episode.
 ## Quickstart
 
 Everything runs in Docker — **nothing is installed on your host** (ROS Kinetic can't run on a modern
-distro anyway). You only need Docker + Docker Compose.
+distro anyway). You only need Docker Engine + the Compose plugin.
+
+> **First time on this machine?** Install Docker and add yourself to the `docker` group, then
+> **start a fresh login session** (reboot, or full log out/in) so the group takes effect — a new
+> terminal window alone is *not* enough. Full steps:
+> [Prerequisites — install Docker](docs/RUNNING.md#prerequisites--install-docker).
 
 ```bash
 git clone https://github.com/MohammedEl-sayedAhmed/collaborative-autonomous-traffic-clearance.git
