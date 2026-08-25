@@ -2,8 +2,8 @@
 
 The v1.0.0 milestone that turns the bare `f1tenth_gym` base (M0) into our actual problem: several
 cars cooperating to clear a path for an **emergency vehicle (EV)**. Built as a **Gymnasium wrapper**
-over `f1tenth-v0` (no fork). Status: **proposed** — implement after confirming the open fork (below).
-Recorded as [ADR 0007](../adr/0007-m1-clearance-env-design.md).
+over `f1tenth-v0` (no fork). Status: **accepted** (2026-08-26) — both forks confirmed (see below);
+implementation in progress. Recorded as [ADR 0007](../adr/0007-m1-clearance-env-design.md).
 
 ## Approach — ACC-governed multi-lane move-aside corridor
 - **Composition wrapper** `ClearanceEnv(gymnasium.Env)` over
@@ -96,12 +96,13 @@ by construction** (the exact failure that hid all algorithm differences in the l
 11. `caatc/tests/` — `test_frenet.py`, `test_controllers.py`, `test_termination.py`, `test_headroom.py`.
     Register `caatc/clearance-v0`.
 
-## Open fork — confirm before implementing
-1. **Blocking mechanism:** **ACC on wide lanes** *(recommended)* vs a narrow physical corridor requiring
-   cm-precise steering. ACC decouples guaranteed headroom from fragile low-speed steering and keeps the
-   EV crash-free; the corridor route would rework the EV controller + action space (continuous offset).
-2. **First trainable preset:** **EASY first** *(recommended — a guaranteed floor, timing-only)* vs jumping
-   straight to HARD (occupancy reasoning, wrong-lane collisions).
+## Open fork — CONFIRMED (2026-08-26)
+Both forks were confirmed by the owner; implementation proceeds on these choices:
+1. **Blocking mechanism → ACC on wide lanes.** (Not a narrow physical corridor.) ACC decouples
+   guaranteed headroom from fragile low-speed steering and keeps the EV crash-free; the corridor route
+   would have reworked the EV controller + action space (continuous offset).
+2. **First trainable preset → EASY first.** A guaranteed floor, timing-only. (Not straight to HARD's
+   occupancy reasoning + wrong-lane collisions — HARD follows once EASY learns.)
 
 *(Design produced by a 4-proposal design workflow — angles: racetrack-overtake, virtual multi-lane road,
 minimal-headroom, thesis-faithful V2V — then synthesized.)*
