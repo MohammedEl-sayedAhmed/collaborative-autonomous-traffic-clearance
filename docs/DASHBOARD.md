@@ -37,35 +37,27 @@ You'll see two learning curves overlaid, the epsilon/steps/outcome charts, and a
 > New to the terms (RL, Q-table, episode, epsilon)? See the plain-language
 > **[dashboard reading guide](DASHBOARD_GUIDE.md)**.
 
-## Real training
+## Real runs (v1.0.0)
 
-Two terminals:
-
-```bash
-# terminal 1 — the environment (loads params, starts the env node, orchestrates Gazebo)
-./run.sh shell
-roslaunch racecar_clear_ev_route env.launch
-
-# terminal 2 — the Q-learning agent, tagged with a label for the dashboard
-RL_LABEL=baseline ./run.sh rl
-```
-
-Then in a third terminal:
+The dashboard reads any run written to `saved_variables/runs/` (the format
+`caatc.clearance_eval.write_run` emits). Produce the M1 baseline band, then watch it:
 
 ```bash
+# terminal 1 — log baseline runs for the ClearanceEnv (each is one dashboard "run")
+./run.sh clearance-eval --policy naive  --preset easy --episodes 20
+./run.sh clearance-eval --policy random --preset easy --episodes 20
+./run.sh clearance-eval --policy ideal  --preset easy --episodes 20
+
+# terminal 2 — the dashboard
 ./run.sh dashboard
 ```
 
-The run appears immediately and updates live as episodes complete (a **LIVE** badge shows while the
-heartbeat is fresh). Make a change to the RL or the environment, commit it, and run again with a new
-label:
+Each run appears with its outcome mix (goal / max-steps / collision) and metrics. In **M2**, training
+with stable-baselines3 will write runs the same way — so a learned policy overlays directly on the
+naive / random / ideal band and you can see exactly how far it has climbed.
 
-```bash
-RL_LABEL=shaped-reward ./run.sh rl
-```
-
-Now both runs are listed — tagged with their **git commit** — so you can overlay their learning
-curves and see exactly how the change moved the needle.
+> Legacy ROS 1 Q-learning training (`./run.sh rl`, `env.launch`, …) is at tag `v0.3.0`; its
+> fix-by-fix campaign is documented in [docs/legacy/RL_EXPERIMENTS.md](legacy/RL_EXPERIMENTS.md).
 
 ## Navigating runs
 

@@ -1,5 +1,5 @@
 // Capture the dashboard screenshots used in README/docs, driven headlessly.
-//   ./run.sh campaign && ./run.sh rl-blocker && ./run.sh dashboard &
+//   ./run.sh clearance-eval --policy ideal --preset easy && ./run.sh dashboard &
 //   npm i playwright && npx playwright install chromium
 //   DASH_URL=http://127.0.0.1:8770 node tools/dashboard/capture_screenshots.mjs
 // Writes PNGs into docs/img/.

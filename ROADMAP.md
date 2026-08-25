@@ -4,7 +4,7 @@ Improvement ideas for *Collaborative Autonomous Traffic Clearance*, ordered **pr
 (the RL system, simulation, and stack) and then **the dashboard accordingly** — each dashboard item
 exists to visualize or measure a specific project change.
 
-Legend: ⚡ quick win · 🚀 bigger bet · 🐞 known bug (see [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md))
+Legend: ⚡ quick win · 🚀 bigger bet · 🐞 known bug (see [docs/legacy/KNOWN_ISSUES.md](docs/legacy/KNOWN_ISSUES.md))
 
 ---
 
@@ -84,6 +84,8 @@ Each item supports a project change above.
 2. **Multi-agent extension** — delivers the actual collaborative thesis. → dashboard: per-agent curves + cooperation metrics.
 3. **Reward shaping + de-hardcoded scenarios** — makes learning meaningful and general. → dashboard: benchmark scorecard + episode replay.
 
-> The headless harness ([tools/rl_harness/train.py](tools/rl_harness/train.py)) is the fast place to
-> prototype A–C; the dashboard already visualizes any run written to `saved_variables/runs/`, so most
-> dashboard items are additive.
+> In the v1.0.0 line these land on `caatc/` (the `f1tenth_gym` core): items 1–2 are largely realized by
+> the M1 `ClearanceEnv` (a Gymnasium wrapper with a centralized multi-agent action + cooperative
+> reward), with training to follow in M2. The dashboard visualizes any run written to
+> `saved_variables/runs/`, so most dashboard items are additive. (The legacy headless harness that
+> prototyped this on the ROS 1 line lives at tag `v0.3.0`, `tools/rl_harness/train.py`.)

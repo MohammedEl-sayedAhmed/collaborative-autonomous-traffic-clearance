@@ -1,4 +1,0 @@
-int8 num_of_agents
-int8 num_of_EVs
----
-bool is_successful

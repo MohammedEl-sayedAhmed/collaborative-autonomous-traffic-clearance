@@ -1,7 +1,0 @@
-{
-    "python.pythonPath": "/usr/local/bin/python3.7",
-    "python.autoComplete.extraPaths": [
-        "/home/t/catkin_ws/devel/lib/python2.7/dist-packages",
-        "/opt/ros/kinetic/lib/python2.7/dist-packages"
-    ]
-}
