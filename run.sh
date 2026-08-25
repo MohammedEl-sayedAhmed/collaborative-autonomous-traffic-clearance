@@ -95,6 +95,22 @@ case "${1:-help}" in
     docker build -t caatc-gym -f docker/gym.Dockerfile . ;;
   gym-smoke)                           # M0: prove the gym base runs headless (1 + 2 agents)
     docker run --rm caatc-gym python -m caatc.smoke ;;
+  clearance-smoke)                     # M1: pre-training headroom gate (must pass before training)
+    shift || true
+    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+      -v "$PWD":/src -e PYTHONPATH=/src -e SDL_VIDEODRIVER=dummy -w /src \
+      caatc-gym python -m caatc.clearance_smoke "$@" ;;
+  clearance-eval)                      # M1: roll out a baseline (naive|random|ideal) -> dashboard run
+    shift || true
+    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+      -v "$PWD":/src -e PYTHONPATH=/src -e SDL_VIDEODRIVER=dummy -w /src \
+      caatc-gym python -m caatc.clearance_eval "$@" ;;
+  gym-test)                            # M1: unit tests (frenet / controllers / termination / headroom)
+    shift || true
+    docker build -q -t caatc-gym-test -f docker/gym-test.Dockerfile . >/dev/null
+    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+      -v "$PWD":/src -e PYTHONPATH=/src -e SDL_VIDEODRIVER=dummy -w /src \
+      caatc-gym-test python -m pytest -q caatc/tests "$@" ;;
 
   shell)                               # interactive shell inside the container (workspace sourced)
     gui bash ;;
@@ -124,8 +140,11 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
 
   thesis        Compile the thesis (private submodule) -> thesis/main.pdf
 
-  gym-build     [v1.0.0] Build the Python3 f1tenth_gym dev image (ROS 2 / Py3 line)
-  gym-smoke     [v1.0.0] M0 smoke: prove the gym base runs headless (1 + 2 agents)
+  gym-build       [v1.0.0] Build the Python3 f1tenth_gym dev image (ROS 2 / Py3 line)
+  gym-smoke       [v1.0.0] M0 smoke: prove the gym base runs headless (1 + 2 agents)
+  clearance-smoke [v1.0.0] M1 headroom gate: prove naive << ideal before training
+  clearance-eval  [v1.0.0] M1 roll out a baseline (--policy naive|random|ideal --preset easy|hard)
+  gym-test        [v1.0.0] M1 unit tests (frenet / controllers / termination / headroom)
 
   shell         Bash shell inside the container
   clean         Delete the build volume (your source files stay untouched)

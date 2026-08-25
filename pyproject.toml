@@ -17,8 +17,13 @@ dependencies = [
   "numpy>=1.18",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [project.scripts]
 caatc-smoke = "caatc.smoke:main"
+caatc-clearance-smoke = "caatc.clearance_smoke:main"
+caatc-clearance-eval = "caatc.clearance_eval:main"
 
 [tool.setuptools.packages.find]
 include = ["caatc*"]
