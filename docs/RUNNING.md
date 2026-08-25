@@ -7,6 +7,32 @@ the catkin source. The host only needs Docker + Docker Compose.
 > Why Docker? ROS Kinetic targets Ubuntu 16.04 and cannot be installed on a modern distro. The
 > image pins the exact toolchain the 2020 project was built with.
 
+## Prerequisites — install Docker
+
+The only host requirement is **Docker Engine** plus the **Compose plugin** (`docker compose`).
+On Debian/Ubuntu the distro packages are enough:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2 docker-buildx
+sudo systemctl enable --now docker      # start the daemon now, and on every boot
+sudo usermod -aG docker "$USER"         # so you can run docker without sudo
+```
+
+> **Important — the `docker` group only takes effect in a *new login session*.** After
+> `usermod -aG docker`, **reboot or fully log out and back in**. Opening a new terminal window is
+> *not* enough: it inherits the graphical session's old group set. (On Ubuntu 25.10+/26.04 the
+> classic `newgrp docker` / `sg` work-around is no longer installed by default, so a fresh login is
+> the reliable path.) Then verify:
+>
+> ```bash
+> docker run --rm hello-world
+> ```
+
+Any recent Docker works — these steps were validated on Ubuntu 26.04 with `docker.io` 29.x. If your
+distribution's packages are too old, install Docker's official packages from
+[docs.docker.com/engine/install](https://docs.docker.com/engine/install/) instead.
+
 ## First-time setup
 
 ```bash
