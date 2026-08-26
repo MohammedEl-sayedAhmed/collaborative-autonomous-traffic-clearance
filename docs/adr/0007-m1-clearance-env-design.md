@@ -1,7 +1,7 @@
 # 0007. M1 scenario — ACC-governed multi-lane move-aside (ClearanceEnv)
 
-- **Status:** proposed
-- **Date:** 2026-08-25
+- **Status:** accepted
+- **Date:** 2026-08-25 (accepted 2026-08-26)
 - **Deciders:** Mohammed El-sayed Ahmed
 
 ## Context and problem statement
@@ -31,7 +31,9 @@ observation, a shared cooperative reward, and **EASY** (timing-only) as the firs
 before **HARD** (occupancy reasoning). Headroom is proven by a pre-training gate before any learning is
 spent. Full design and implementation plan: [`../design/m1-clearance-env.md`](../design/m1-clearance-env.md).
 
-Status is **proposed** pending the owner's confirmation of the two forks noted in the design doc.
+**Both open forks confirmed by the owner (2026-08-26):** (1) blocking = **ACC on wide lanes** (not a
+narrow physical corridor); (2) first trainable preset = **EASY** (not HARD). Status moved to
+**accepted**; implementation proceeds on these choices.
 
 ## Consequences
 

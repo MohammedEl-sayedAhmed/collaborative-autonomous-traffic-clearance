@@ -13,6 +13,7 @@ __pycache__/
 *.egg-info/
 .venv/
 dist/
+.pytest_cache/
 
 # RL training run outputs + saved Q-tables (local experiment data, read by the dashboard)
 **/saved_variables/

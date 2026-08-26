@@ -4,26 +4,26 @@ The ground-up rewrite of the project onto a **maintained** stack (see
 [`../docs/adr/`](../docs/adr/)). The RL core is built on
 [`f1tenth_gym`](https://github.com/f1tenth/f1tenth_gym) (Gymnasium API, N-agent),
 pinned to the `v1.0.0` branch. Our contribution — several cars cooperating over
-V2V to clear a path for an **emergency vehicle** — will be layered on top.
+V2V to clear a path for an **emergency vehicle** — is layered on top (M1).
 
-> The legacy ROS 1 / Python 2 project still lives in this repo (`simulator/`,
-> `system/`, `run.sh sim`, …) and at tags `v0.1.0`–`v0.3.0`. It is removed in
-> milestone **M1**, once this gym base is proven.
+> The legacy ROS 1 / Python 2 project was removed from `master` in **M1** and is
+> preserved at tags `v0.1.0`–`v0.3.0` (`git checkout v0.3.0`); its docs are in
+> [`../docs/legacy/`](../docs/legacy/). See [ADR 0003](../docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md).
 
 ## Milestones (gym-first — ADR 0005)
 
-- **M0 — scaffold & smoke** *(this)*: pin `f1tenth_gym@v1.0.0`, a Python 3 Docker
+- **M0 — scaffold & smoke** *(done)*: pin `f1tenth_gym@v1.0.0`, a Python 3 Docker
   dev image, and one headless Gymnasium episode (1 and 2 agents) to prove the base.
-- **M1 — the scenario**: N-agent env with one **EV** + K cooperating cars, V2V
-  shared observation, cooperative reward, and a scripted baseline (design with real
-  headroom from day one). Legacy ROS 1 tree removed here.
-- **M2 — learn it**: train with stable-baselines3 (PPO/DQN); log to the existing
+- **M1 — the scenario** *(done)*: `ClearanceEnv` — one **EV** + K cooperating cars,
+  V2V shared observation, cooperative reward, scripted baselines, and a pre-training
+  headroom gate. Legacy ROS 1 tree removed here.
+- **M2 — learn it** *(next)*: train with stable-baselines3 (PPO/DQN); log to the
   dashboard; show learned ≫ naive.
 
 ## Run M0 (nothing installed on the host)
 
 Needs Docker on the host — if this is a fresh machine, do the one-time
-[Docker prerequisites](../docs/RUNNING.md#prerequisites--install-docker) first (install + the
+[Docker prerequisites](../README.md#prerequisites--install-docker) first (install + the
 `docker` group step, which requires a fresh login).
 
 ```bash
@@ -33,3 +33,14 @@ Needs Docker on the host — if this is a fresh machine, do the one-time
 
 Expected: it prints the per-agent observation keys and a step count for both the
 1-agent and 2-agent runs, ending with `OK: gym base runs headless.`
+
+## M1 — ClearanceEnv
+
+```bash
+./run.sh clearance-smoke      # the pre-training headroom gate (must pass before training)
+./run.sh gym-test             # unit tests (frenet / controllers / termination / headroom)
+./run.sh clearance-eval --policy ideal --preset easy --episodes 20   # log a dashboard run
+```
+
+Design: [`../docs/design/m1-clearance-env.md`](../docs/design/m1-clearance-env.md) and
+[ADR 0007](../docs/adr/0007-m1-clearance-env-design.md).

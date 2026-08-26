@@ -1,2 +1,0 @@
-bool is_activated
-int8 is_episode_done

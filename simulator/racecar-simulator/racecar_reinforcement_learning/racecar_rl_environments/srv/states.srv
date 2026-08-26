@@ -1,7 +1,0 @@
-int8 robot_num
----
-float32 agent_vel
-int8 agent_lane
-float32 amb_vel
-int8 amb_lane   
-float32 rel_amb_y

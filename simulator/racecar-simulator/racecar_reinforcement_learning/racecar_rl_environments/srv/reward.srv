@@ -1,4 +1,0 @@
-float32 amb_last_velocity
-float32 execution_time
----
-float32 reward

@@ -13,8 +13,7 @@ import argparse, json, math, os, random, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-RUNS = os.path.join(REPO, "simulator", "racecar-simulator", "racecar_reinforcement_learning",
-                    "racecar_clear_ev_route", "saved_variables", "runs")
+RUNS = os.path.join(REPO, "saved_variables", "runs")
 
 
 def main():

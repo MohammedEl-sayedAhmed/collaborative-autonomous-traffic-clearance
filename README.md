@@ -1,137 +1,134 @@
 # Collaborative Autonomous Traffic Clearance
 
 > Multiple 1/10-scale autonomous cars cooperatively open a corridor for an emergency vehicle —
-> coordinating over vehicle-to-vehicle communication, with a reinforcement-learning agent that
-> learns *when and how* to move aside.
+> coordinating over vehicle-to-vehicle communication, with reinforcement learning that learns
+> *when and how* to move aside.
 
-![ROS](https://img.shields.io/badge/ROS-Kinetic-22314E?logo=ros&logoColor=white)
-![Gazebo](https://img.shields.io/badge/Gazebo-7-FF6600)
-![Python](https://img.shields.io/badge/Python-2.7-3776AB?logo=python&logoColor=white)
+![Stack](https://img.shields.io/badge/ROS%202-Humble%20(planned)-22314E?logo=ros&logoColor=white)
+![Gym](https://img.shields.io/badge/RL-f1tenth__gym-4B8BBE)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/Run-Dockerized-2496ED?logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-GPLv3-blue)
 
-This is a 2020 graduation project built on the F1TENTH / MIT `racecar-simulator`. Several Ackermann
-racecars share a three-lane road; when an **ambulance** approaches, the cars must collaborate to
-clear its path. The problem is decentralized — no car sees all the others — so each vehicle
-broadcasts its state over a shared V2V channel, a **custom costmap layer** turns those broadcasts
-into planning constraints, and a **tabular Q-learning** agent learns the move-aside policy.
+An emergency vehicle (EV) broadcasts its location and intent over V2V ahead of time; the ordinary
+cars around it each run a learned policy that times a **move-aside** so the EV never has to slow down.
+Originally a **2020 graduation project** on ROS Kinetic / Gazebo 7 / Python 2, it is being migrated
+to a maintained **ROS 2 Humble / Python 3** stack built on
+[`f1tenth_gym`](https://github.com/f1tenth/f1tenth_gym) — **gym-first**, with the cooperative
+EV-clearing problem layered on top of the N-agent racing simulator.
 
-## At a glance
+## Status
 
-```mermaid
-flowchart LR
-  GZ["🏎️ Gazebo<br/>cars + ambulance"] -->|odom, laser, camera| V2V["📡 V2V comm<br/>racecar_communication"]
-  V2V -->|peer footprints| NAV["🗺️ Navigation<br/>move_base + CommunicationLayer"]
-  V2V -->|neighbor states| RL["🧠 RL agent<br/>Q-learning"]
-  NAV -->|lane decision| MC["🔀 move_car<br/>action layer"]
-  RL -->|move-aside action| MC
-  MC -->|maneuver| CTRL["🎛️ Control<br/>Stanley + Krauss"]
-  CTRL -->|wheel/steer cmds| GZ
+| Line | State |
+|------|-------|
+| **v1.0.0** — ROS 2 / Python 3 (this `master`) | **in progress** (gym-first): **M0 done** (gym base), **M1 done** (`ClearanceEnv` + baselines + headroom gate), **M2 next** (train with stable-baselines3) |
+| **v0.x** — ROS 1 Kinetic / Python 2 (legacy) | frozen at tags `v0.1.0`–`v0.3.0`; `git checkout v0.3.0` for the full Gazebo project. Removed from `master` in M1 ([ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md)); its docs are in [`docs/legacy/`](docs/legacy/) |
+
+The migration decisions and their rationale are recorded as **Architecture Decision Records** in
+[`docs/adr/`](docs/adr/); improvement ideas in [`ROADMAP.md`](ROADMAP.md).
+
+## Prerequisites — install Docker
+
+Everything runs in Docker — **nothing is installed on your host**. You only need **Docker Engine**
+plus the **Compose plugin**. On Debian/Ubuntu the distro packages are enough:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2 docker-buildx
+sudo systemctl enable --now docker      # start the daemon now, and on every boot
+sudo usermod -aG docker "$USER"         # so you can run docker without sudo
 ```
 
-- **Decentralized V2V communication** — each car broadcasts identity, pose, lane, motion limits and
-  body footprint on one shared channel; receivers range-gate and fuse peers into a shared world model.
-- **A custom `costmap_2d::CommunicationLayer`** — stamps peers' broadcast footprints into each car's
-  `move_base` costmap as lethal obstacles, so cars plan around each other without line of sight.
-- **A `MoveCar` action layer** — one discrete maneuver vocabulary (lane keep / left / right +
-  acceleration) that either classical navigation *or* the RL policy can drive, with arbitration.
-- **Reinforcement learning** — a single-agent tabular Q-learning policy, rewarded for keeping the
-  ambulance accelerating, running in a Gazebo-backed environment that re-renders each episode via
-  jinja2.
+> **Important — the `docker` group only takes effect in a *new login session*.** After
+> `usermod -aG docker`, **reboot or fully log out and back in** (a new terminal window is not enough;
+> on Ubuntu 25.10+/26.04 the classic `newgrp`/`sg` work-around is no longer installed). Verify with
+> `docker run --rm hello-world`. Any recent Docker works — validated on Ubuntu 26.04 with `docker.io` 29.x.
 
-See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full data-flow diagram and a
-step-by-step walkthrough of one "clear the route" episode.
-
-## Quickstart
-
-Everything runs in Docker — **nothing is installed on your host** (ROS Kinetic can't run on a modern
-distro anyway). You only need Docker Engine + the Compose plugin.
-
-> **First time on this machine?** Install Docker and add yourself to the `docker` group, then
-> **start a fresh login session** (reboot, or full log out/in) so the group takes effect — a new
-> terminal window alone is *not* enough. Full steps:
-> [Prerequisites — install Docker](docs/RUNNING.md#prerequisites--install-docker).
+## Quickstart (v1.0.0)
 
 ```bash
 git clone https://github.com/MohammedEl-sayedAhmed/collaborative-autonomous-traffic-clearance.git
 cd collaborative-autonomous-traffic-clearance
 
-./run.sh build-image     # ROS Kinetic + all deps + baked Gazebo models  (~5 min)
-./run.sh build           # catkin_make the workspace inside the container (~15 min)
-./run.sh sim             # Gazebo + one car you can drive with w/a/s/d
+./run.sh gym-build          # build the Python 3 image (pins f1tenth_gym @ v1.0.0)   (~3–5 min)
+./run.sh gym-smoke          # M0: prove the gym base runs headless -> "OK: gym base runs headless."
+./run.sh clearance-smoke    # M1: prove the scenario has real headroom (naive << ideal)
+./run.sh gym-test           # M1: unit tests (frenet / controllers / termination / headroom)
 ```
 
-`./run.sh` with no arguments prints every command. Full details, the verified demo matrix, and
-troubleshooting are in **[docs/RUNNING.md](docs/RUNNING.md)**.
+`./run.sh` with no arguments prints every command.
 
-## Demos
+## M1 — the ClearanceEnv
 
-| Command | Scenario |
-|---------|----------|
-| `./run.sh sim` / `sim2` / `sim4` | 1 / 2 / 4 cars in Gazebo (multi-car adds V2V communication) |
-| `./run.sh nav` | Navigation: `move_base` + AMCL + RViz |
-| `./run.sh movecar` | The lane-keeping / lane-changing action stack |
-| `./run.sh ev` | One racecar + one ambulance |
-| `./run.sh rl` | Q-learning move-aside training (see [RUNNING.md](docs/RUNNING.md#running-the-rl-scenario)) |
-| `./run.sh dashboard` | Live training dashboard — compare runs across your RL/env changes ([DASHBOARD.md](docs/DASHBOARD.md)) |
+`ClearanceEnv` (a Gymnasium wrapper over `f1tenth_gym`, **no fork**) turns the bare N-car racetrack
+into the cooperative problem: one **scripted EV** (`agent_0`) must clear a virtual 3-lane road on
+which **K cooperators** we control are staggered in its lane.
 
-All demos were run and verified during documentation — see the status matrix and per-demo caveats in
-[docs/RUNNING.md](docs/RUNNING.md) and [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
+```mermaid
+flowchart LR
+  POL["🧠 Centralized policy<br/>MultiDiscrete([5]*K)"] -->|per-car move-aside| LL["🎛️ Low-level<br/>Stanley lane-keeper"]
+  LL -->|steer, speed| GYM["🏎️ f1tenth_gym<br/>N-agent physics"]
+  GYM -->|poses, collisions| FR["📐 Frenet frame<br/>(s, d), lanes"]
+  FR -->|V2V obs| POL
+  EV["🚑 Scripted EV (ACC)"] -->|clamped by cars ahead| GYM
+  FR -->|EV progress / blocked| RW["➕ Shared reward"]
+```
+
+- **Blocking = adaptive cruise on wide lanes** (ADR 0007). Cooperators cruise slow; the EV runs an ACC
+  law, so a car left in its lane clamps it to a graded, **crash-free** convoy speed, while a timely
+  move-aside lets it **sprint** — a robust ~4× speed ratio that gives the learner a dense gradient.
+- **Staggered** cooperators mean return is **monotone** in how many yield in time — which defeats by
+  construction the "saturation trap" (where even random ≈ optimal) that hid every algorithm difference
+  in the 2020 toy harness.
+- A **pre-training headroom gate** (`./run.sh clearance-smoke`) proves the naive-vs-ideal gap *before*
+  any training is spent, and **exits non-zero** if the gap is absent.
+
+Baselines log to the dashboard so you can see the band a learner must climb:
+
+```bash
+./run.sh clearance-eval --policy naive  --preset easy --episodes 20
+./run.sh clearance-eval --policy ideal  --preset easy --episodes 20
+./run.sh dashboard      # compare at http://127.0.0.1:8770
+```
+
+Full design: [`docs/design/m1-clearance-env.md`](docs/design/m1-clearance-env.md) and
+[ADR 0007](docs/adr/0007-m1-clearance-env-design.md).
 
 ## Training dashboard
 
-A live, zero-dependency dashboard to watch training and see how each change to the RL or the
-environment moves the numbers — runs are tagged by git commit and compared side by side.
+A live, zero-dependency dashboard to watch training and compare runs (tagged by commit) — it reads the
+JSONL that `clearance-eval` (and, in M2, training) writes, so it is **stack-agnostic** and carries over
+from the legacy line unchanged.
 
 ![Training dashboard](docs/img/dashboard-campaign.png)
 
-Here the fix-by-fix campaign: the *baseline* barely clears the ambulance, and each fix from
-[KNOWN_ISSUES](docs/KNOWN_ISSUES.md) pushes success from **3% → 100%**. It updates **live** while
-training runs, and a built-in **Guide** explains every term (RL, Q-table, episode, epsilon…).
-
-<p>
-  <img src="docs/img/dashboard-live.png" width="49%" alt="Live training view"/>
-  <img src="docs/img/dashboard-guide.png" width="49%" alt="In-app guide"/>
-</p>
+*(Shown: the legacy RL fix-by-fix campaign — success 3% → 100%. In v1.0.0 the same dashboard shows the
+naive / random / ideal band for `ClearanceEnv`.)*
 
 ```bash
-./run.sh dashboard-demo && ./run.sh dashboard    # try it now with synthetic runs, at http://127.0.0.1:8770
+./run.sh dashboard-demo && ./run.sh dashboard    # try it now with synthetic runs
 ```
 
 See [docs/DASHBOARD.md](docs/DASHBOARD.md) and [docs/DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md).
-The charts are interactive (hover for values, scroll / drag to zoom, back/reset, maximize).
 
-### See each fix improve the results
+## Legacy (2020 ROS 1 / Gazebo project)
 
-Run the built-in campaign — baseline, then each fix from [KNOWN_ISSUES](docs/KNOWN_ISSUES.md) applied
-cumulatively (the shot above) — with a fast headless harness; no Gazebo needed:
-
-```bash
-./run.sh campaign && ./run.sh dashboard
-```
-
-Enabling the (previously disabled) lane-change maneuver jumps success from **3% → 100%**; ε-decay and
-randomized starts refine it further. The same fixes are toggleable in the real Gazebo pipeline.
-
-### Beyond the fixes: a smarter agent
-
-An enriched **"blocker" scenario** gives the agent a real decision — read which side lane is clear
-(V2V awareness), then move aside *without crashing*. A **linear function-approximation** agent solves
-it where the sparse tabular Q-table can't:
+The original project — Gazebo simulation, V2V (`racecar_communication`), a custom `move_base` costmap
+layer, the `move_car` action stack, AMCL/gmapping, and the headline single-agent Q-learning
+move-aside — is **preserved, buildable, at the tags**:
 
 ```bash
-./run.sh rl-blocker && ./run.sh dashboard
+git checkout v0.3.0     # the full ROS 1 / Gazebo project + its run.sh sim|nav|movecar|ev|rl|…
 ```
 
-![Function approximation solves the blocker scenario](docs/img/dashboard.png)
-
-Greedy learned-policy success climbs **random 2% → tabular 9% → linear FA 100%** — full guide:
-[docs/RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md).
+Its documentation is in [`docs/legacy/`](docs/legacy/) (architecture, subsystems, packages, running,
+known issues, RL experiments). It was removed from `master` in M1 per
+[ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md).
 
 ## Thesis
 
-The graduation thesis is kept in a separate **private** repository and included
-here as a git submodule at [`thesis/`](thesis/) (access-restricted). With access:
+The graduation thesis is kept in a separate **private** repository and included here as a git submodule
+at [`thesis/`](thesis/) (access-restricted). With access:
 
 ```bash
 git submodule update --init thesis
@@ -142,36 +139,36 @@ git submodule update --init thesis
 
 ```
 collaborative-autonomous-traffic-clearance/
-├── run.sh                     # containerized runner — the one entry point
-├── docker/                    # Dockerfile (ROS Kinetic + deps + Gazebo models) + entrypoint
-├── docker-compose.yml         # image + volumes + X11/GPU wiring
-├── docs/                      # ARCHITECTURE / SUBSYSTEMS / PACKAGES / RUNNING / KNOWN_ISSUES
-├── thesis/                    # graduation thesis (private submodule; ./run.sh thesis)
-├── simulator/racecar-simulator/
-│   ├── racecar_gazebo, racecar_description        # simulation + robot/ambulance models
-│   ├── racecar_communication                      # V2V broadcast + aggregation
-│   ├── racecar_navigation, navigation_/           # move_base + custom CommunicationLayer
-│   ├── racecar_move_car                           # MoveCar action layer
-│   ├── racecar_control                            # Stanley / Krauss / lane keeping / teleop
-│   ├── racecar_localization, racecar_mapping      # AMCL / gmapping
-│   └── racecar_reinforcement_learning/            # Q-learning agent + environment
-└── system/                    # MIT racecar hardware bringup (vesc, ackermann_cmd_mux, ...)
+├── run.sh                     # containerized runner — the one entry point (v1.0.0)
+├── pyproject.toml             # the caatc package (pins f1tenth_gym @ v1.0.0)
+├── caatc/                     # v1.0.0 Python 3 package — the RL core on f1tenth_gym
+│   ├── clearance_env.py       #   M1 ClearanceEnv (cooperative EV-clearing wrapper)
+│   ├── scenario.py            #   scenario config + EASY/HARD presets + track builder
+│   ├── frenet.py              #   centerline frenet frame (s, d, lanes)
+│   ├── controllers.py         #   Stanley lane-keeper + scripted EV (ACC)
+│   ├── baselines.py           #   naive / random / ideal reference policies
+│   ├── clearance_eval.py      #   evaluate + log dashboard runs
+│   ├── clearance_smoke.py     #   the pre-training headroom gate
+│   ├── smoke.py               #   M0 headless smoke
+│   └── tests/                 #   unit tests
+├── docker/                    # gym.Dockerfile (dev image) + gym-test.Dockerfile
+├── tools/dashboard/           # stack-agnostic training dashboard (reads JSONL runs)
+├── docs/adr/                  # Architecture Decision Records (the migration)
+├── docs/design/               # design docs (the M1 ClearanceEnv design)
+├── docs/legacy/               # docs for the tagged 2020 ROS 1 / Gazebo stack
+└── thesis/                    # graduation thesis (private submodule; ./run.sh thesis)
 ```
 
 ## Documentation
 
 | Doc | Contents |
 |-----|----------|
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered architecture, system data-flow diagram, one end-to-end episode, the RL loop |
-| [SUBSYSTEMS.md](docs/SUBSYSTEMS.md) | Mechanism of each layer (simulation, V2V, navigation, move_car, control, RL) |
-| [PACKAGES.md](docs/PACKAGES.md) | All 36 packages + every custom message / service / action |
-| [RUNNING.md](docs/RUNNING.md) | Containerized setup, every demo, the RL run order, troubleshooting |
-| [KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) | Verified issues, applied fixes, and behaviour-changing fixes left for review |
+| [adr/](docs/adr/) | Architecture Decision Records — the ROS 2 / Python 3 migration decisions and rationale |
+| [design/m1-clearance-env.md](docs/design/m1-clearance-env.md) | The M1 ClearanceEnv design (scenario, ACC headroom, V2V obs, reward, verification) |
 | [DASHBOARD.md](docs/DASHBOARD.md) | Live training dashboard: stream metrics, compare runs across code changes |
-| [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | Plain-language guide to reading the dashboard (RL, Q-table, episode, epsilon…) |
-| [RL_EXPERIMENTS.md](docs/RL_EXPERIMENTS.md) | Run the fix-by-fix campaign (fast headless harness + real Gazebo) and compare results |
-| [ROADMAP.md](ROADMAP.md) | Improvement ideas — project first (RL, sim, stack), then the dashboard accordingly |
-| [adr/](docs/adr/) | Architecture Decision Records — the migration decisions (ROS 2 / Python 3) and their rationale |
+| [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | Plain-language guide to reading the dashboard (RL, episode, epsilon…) |
+| [legacy/](docs/legacy/) | The 2020 ROS 1 / Gazebo stack (architecture, subsystems, packages, running, RL experiments) |
+| [ROADMAP.md](ROADMAP.md) | Improvement ideas — RL, simulation, stack, and the dashboard |
 
 ## Origin & credits
 
@@ -180,10 +177,9 @@ Graduation project (2020), *Collaborative Autonomous Traffic Clearance*, built b
 [Tasneem Omara](https://github.com/TasneemOmara), and
 [Mohammed El-sayed Ahmed](https://github.com/MohammedEl-sayedAhmed) on top of the
 [UPenn F1TENTH Fall 2018 skeletons](https://github.com/mlab-upenn/f110-fall2018-skeletons) and the
-MIT `racecar-simulator`. The containerization and documentation in this repository were added later
-to make the six-year-old ROS Kinetic project reproducible on modern machines.
+MIT `racecar-simulator`. The ROS 2 / Python 3 migration onto `f1tenth_gym` is ongoing.
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE). Upstream `racecar-simulator` and ROS navigation components retain
-their original licenses.
+GPL-3.0 — see [LICENSE](LICENSE). Upstream `f1tenth_gym`, `racecar-simulator`, and ROS navigation
+components retain their original licenses.

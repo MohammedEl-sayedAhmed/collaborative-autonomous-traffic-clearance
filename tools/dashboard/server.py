@@ -18,11 +18,7 @@ from urllib.parse import urlparse, parse_qs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
-DEFAULT_RUNS_DIR = os.path.join(
-    REPO_ROOT,
-    "simulator", "racecar-simulator", "racecar_reinforcement_learning",
-    "racecar_clear_ev_route", "saved_variables", "runs",
-)
+DEFAULT_RUNS_DIR = os.path.join(REPO_ROOT, "saved_variables", "runs")
 
 RUNS_DIR = DEFAULT_RUNS_DIR
 
