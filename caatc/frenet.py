@@ -55,16 +55,11 @@ class CenterlineFrame:
         self.ss = np.concatenate([[0.0], np.cumsum(seg_len)])  # (N,)
         self.length = float(self.ss[-1])
 
-    # -- constructors ---------------------------------------------------------
-    @classmethod
-    def from_track(cls, track) -> "CenterlineFrame":
-        """Build a frame from an f1tenth_gym ``Track`` (uses its centerline).
-
-        Using the track's resampled centerline guarantees the frame matches the
-        very polyline the simulator drives on.
-        """
-        cl = track.centerline
-        return cls(np.asarray(cl.xs), np.asarray(cl.ys))
+    # NOTE: intentionally no `from_track` constructor. An f1tenth_gym Track built
+    # by `Track.from_refline` closes an open reference line into a loop (its cubic
+    # spline returns to the start), so a frame built from `track.centerline` would
+    # mis-project any right-of-center point onto the return leg. Build the frame
+    # from the open road polyline instead (see scenario.centerline_xy).
 
     # -- projection -----------------------------------------------------------
     def project(self, x, y):

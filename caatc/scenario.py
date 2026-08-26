@@ -86,7 +86,7 @@ class ScenarioConfig:
     preset: str = "easy"           # "easy" | "hard"
     # HARD: for each cooperator, one adjacent side lane is blocked by a scripted
     # occupant so the free side must be read from V2V occupancy. Seeded per env.
-    hard_block_sides: List[int] = field(default_factory=list)  # -1 left, +1 right
+    hard_block_sides: List[int] = field(default_factory=list)  # +1 left, -1 right (d is left-positive)
 
     seed: int = 12345
 
@@ -208,7 +208,7 @@ def hard_preset(**overrides) -> ScenarioConfig:
     base = ScenarioConfig(preset="hard")
     base = replace(base, **overrides)
     rng = np.random.default_rng(base.seed)
-    # one blocked side (+1 right / -1 left) per cooperator, from valid sides
+    # one blocked side (+1 left / -1 right) per cooperator, from valid sides
     sides = []
     for _ in range(base.num_cooperators):
         choices = []

@@ -63,6 +63,7 @@ def _rates(records):
         sum(r["collision"] for r in records) / n,
         np.mean([r["ev_mean_speed"] for r in records]) if records else 0.0,
         np.mean([r["ev_progress"] for r in records]) if records else 0.0,
+        np.mean([r["cum_reward"] for r in records]) if records else 0.0,
     )
 
 
@@ -85,23 +86,26 @@ def run_gate(easy_seeds: int = 10, hard_seeds: int = 8, mono_seeds: int = 3) -> 
     env = ClearanceEnv(cfg)
     naive = [run_episode(env, NaiveHold(), seed=s) for s in range(easy_seeds)]
     ideal = [run_episode(env, IdealCooperator(), seed=s) for s in range(easy_seeds)]
-    n_succ, _n_coll, n_spd, n_prog = _rates(naive)
-    i_succ, _i_coll, i_spd, i_prog = _rates(ideal)
+    n_succ, _n_coll, n_spd, n_prog, n_ret = _rates(naive)
+    i_succ, _i_coll, i_spd, i_prog, i_ret = _rates(ideal)
     ratio = i_spd / n_spd if n_spd > 1e-6 else float("inf")
-    print(f"    naive: success={n_succ:.2f} ev_speed={n_spd:.2f} progress={n_prog:.2f}")
-    print(f"    ideal: success={i_succ:.2f} ev_speed={i_spd:.2f} progress={i_prog:.2f}")
+    print(f"    naive: success={n_succ:.2f} ev_speed={n_spd:.2f} progress={n_prog:.2f} return={n_ret:.2f}")
+    print(f"    ideal: success={i_succ:.2f} ev_speed={i_spd:.2f} progress={i_prog:.2f} return={i_ret:.2f}")
     g.check("naive truncates (success ~ 0)", n_succ <= NAIVE_SUCCESS_MAX, f"{n_succ:.2f}")
     g.check("ideal succeeds (100%)", i_succ >= IDEAL_SUCCESS_MIN, f"{i_succ:.2f}")
     g.check("EV speed ratio ideal/naive >= 3", ratio >= SPEED_RATIO_MIN, f"{ratio:.2f}x")
     g.check("progress gap ideal-naive >= 0.2", i_prog - n_prog >= PROGRESS_GAP_MIN,
             f"{i_prog - n_prog:.2f}")
+    # guard the training signal itself: the cooperative reward must rank ideal above
+    # naive (a sign/weight bug would otherwise pass every physics-based check).
+    g.check("cooperative return ideal > naive", i_ret > n_ret, f"{i_ret:.1f} > {n_ret:.1f}")
 
     # -- 3. monotonicity -----------------------------------------------------
     print(f"\nMonotonicity ({mono_seeds} seeds/point):")
     progs = []
     for m in range(cfg.num_cooperators + 1):
         recs = [run_episode(env, IdealCooperator(yield_count=m), seed=s) for s in range(mono_seeds)]
-        _s, _c, spd, prog = _rates(recs)
+        _s, _c, spd, prog, _r = _rates(recs)
         progs.append(prog)
         print(f"    m={m}: progress={prog:.3f} ev_speed={spd:.2f}")
     non_decreasing = all(progs[m] >= progs[m - 1] - MONO_EPS for m in range(1, len(progs)))
@@ -117,8 +121,8 @@ def run_gate(easy_seeds: int = 10, hard_seeds: int = 8, mono_seeds: int = 3) -> 
     envh = ClearanceEnv(cfgh)
     rnd = [run_episode(envh, RandomPolicy(s), seed=s) for s in range(hard_seeds)]
     idl = [run_episode(envh, IdealCooperator(), seed=s) for s in range(hard_seeds)]
-    _rs, r_coll, _rspd, _rprog = _rates(rnd)
-    _is, i_coll, _ispd, i_prog2 = _rates(idl)
+    _rs, r_coll, _rspd, _rprog, _rret = _rates(rnd)
+    _is, i_coll, _ispd, i_prog2, _iret = _rates(idl)
     print(f"    random: collision={r_coll:.2f}")
     print(f"    ideal:  collision={i_coll:.2f} progress={i_prog2:.2f}")
     g.check("HARD random collides substantially", r_coll >= HARD_RANDOM_COLLISION_MIN, f"{r_coll:.2f}")

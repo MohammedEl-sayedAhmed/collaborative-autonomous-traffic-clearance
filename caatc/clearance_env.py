@@ -24,6 +24,7 @@ from .scenario import (
     ScenarioConfig,
     EASY_PRESET,
     build_track,
+    centerline_xy,
     lane_center_d,
     lane_of,
     make_layout,
@@ -36,8 +37,16 @@ STAY, MERGE_LEFT, MERGE_RIGHT, SPEED_UP, SLOW_DOWN = range(5)
 # The base env ray-casts a 1080-beam lidar per car per 100 Hz physics step. We
 # never use scans (our road has no walls; car-car collisions come from GJK, not
 # lidar), so that cost is pure waste -- reduce the beam count for a large speedup.
-# Correctness is unaffected: only wall/TTC collisions use scans, and there are no
-# walls. Applied process-wide before the first RaceCar is built.
+# Correctness is unaffected here: only wall/TTC collisions use scans, and there
+# are no walls.
+#
+# CAVEAT: this rewrites RaceCar's *process-wide* default num_beams, and f1tenth_gym
+# fixes its scan simulator (and scan-angle tables) as a class-level singleton on
+# the FIRST RaceCar built. So the reduced beam count is effectively global for the
+# process. That is fine for this project -- every env we build is a ClearanceEnv
+# that never scans -- but do NOT construct a stock lidar-based f1tenth env in the
+# same process as a ClearanceEnv: it would silently inherit the 16-beam lidar.
+# (The M0 smoke runs in a separate process, so it is unaffected.)
 _CLEARANCE_SCAN_BEAMS = 16
 _scan_beams_patched = False
 
@@ -92,7 +101,15 @@ class ClearanceEnv(gym.Env):
         from f1tenth_gym.envs.f110_env import F110Env
 
         self.track = build_track(self.cfg)
-        self.frame = CenterlineFrame.from_track(self.track)
+        # Build the frenet frame from the OPEN road polyline, NOT the track's
+        # centerline. Track.from_refline fits a cubic spline that *closes* the
+        # open sinusoid into a ~2x-length loop; its return leg makes project()
+        # snap right-of-center (d < 0) points onto the wrong leg, corrupting
+        # (s, d, lane) for any right-merging car or HARD right-side occupant. The
+        # open polyline round-trips every lane correctly, and the sim never
+        # constrains cars to a centerline (the track is only an empty occupancy
+        # map for the -- unused -- lidar), so this stays consistent with the physics.
+        self.frame = CenterlineFrame(*centerline_xy(self.cfg))
         self.inner = F110Env(
             config={
                 "map": self.track,
@@ -147,8 +164,12 @@ class ClearanceEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         cfg = self.cfg
-        rng = np.random.default_rng(seed if seed is not None else cfg.seed)
-        layout = make_layout(cfg, rng)
+        # Use the Gymnasium-managed generator: super().reset(seed=seed) above
+        # seeds it deterministically when a seed is given (reproducible gate/eval)
+        # and merely advances it when seed is None -- so SB3/VecEnv auto-resets
+        # (which pass no seed) get genuinely different start jitter each episode,
+        # rather than re-seeding from the constant cfg.seed every time.
+        layout = make_layout(cfg, self.np_random)
         # the structure (roles + lanes) must be seed-independent so the roles /
         # occupant lanes cached at construction stay valid (only s is jittered).
         assert [p.role for p in layout] == self._roles, "layout structure changed across seeds"
