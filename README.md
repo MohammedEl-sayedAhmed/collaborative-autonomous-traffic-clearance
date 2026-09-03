@@ -21,7 +21,7 @@ EV-clearing problem layered on top of the N-agent racing simulator.
 
 | Line | State |
 |------|-------|
-| **v1.0.0** — ROS 2 / Python 3 (this `master`) | **in progress** (gym-first): **M0 done** (gym base), **M1 done** (`ClearanceEnv` + baselines + headroom gate), **M2 done** (PPO matches the scripted oracle on EASY) |
+| **v1.0.0** — ROS 2 / Python 3 (this `master`) | **in progress** (gym-first): **M0 done** (gym base), **M1 done** (`ClearanceEnv` + baselines + headroom gate), **M2 done** (PPO matches the scripted oracle on **both** EASY and HARD) |
 | **v0.x** — ROS 1 Kinetic / Python 2 (legacy) | frozen at tags `v0.1.0`–`v0.3.0`; `git checkout v0.3.0` for the full Gazebo project. Removed from `master` in M1 ([ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md)); its docs are in [`docs/legacy/`](docs/legacy/) |
 
 The migration decisions and their rationale are recorded as **Architecture Decision Records** in
@@ -123,6 +123,20 @@ once, at the right moment, rather than oscillating the way `random` does at 80 c
 Against the naive floor the emergency vehicle moves **3.2× faster** and clears a route it otherwise
 never finishes.
 
+**Result on HARD** (250k steps; each cooperator has one adjacent side lane blocked, so the free side
+has to be read from the V2V occupancy features — guessing collides):
+
+| policy | success | collisions | mean `t_clear` | EV mean speed | return |
+|--------|--------:|-----------:|---------------:|--------------:|-------:|
+| `naive` | 0% | 0% | — *(times out)* | 2.29 m/s | 31.4 |
+| `random` | 25% | **60%** | 11.78 s | 3.65 m/s | −24.4 |
+| `ideal` (scripted oracle) | 100% | 0% | 6.13 s | 7.30 m/s | 102.2 |
+| **PPO (learned)** | **100%** | **0%** | **6.00 s** | **7.43 m/s** | **102.3** |
+
+`random` collides in 60% of HARD episodes by merging into an occupied lane; the learned policy never
+does. This is the 2020 project's "blocker" scenario — which its tabular agent could not solve —
+now solved from the V2V observation alone.
+
 ## Watching it
 
 Training is headless, but any policy can be replayed as a top-down scene — recorded to an mp4
@@ -131,6 +145,7 @@ Training is headless, but any policy can be replayed as a top-down scene — rec
 ```bash
 ./run.sh clearance-watch --policy naive                              # the blocked baseline -> mp4
 ./run.sh clearance-watch --model saved_variables/models/ppo-easy.zip # the trained policy -> mp4
+./run.sh clearance-watch --model saved_variables/models/ppo-hard.zip --preset hard
 ./run.sh view-build                                                  # once: X11 libs for a window
 ./run.sh clearance-watch --policy ideal --mode human                 # a live window
 ```

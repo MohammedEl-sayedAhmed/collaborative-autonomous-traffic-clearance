@@ -22,9 +22,11 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
     removed the legacy ROS 1 tree (ADR 0003).
   - **M2 — done:** trained with **stable-baselines3 PPO** on the centralized `MultiDiscrete` joint
     action (`caatc/train.py`, ADR 0008), streaming every episode to the dashboard and evaluating the
-    greedy policy through the *baselines' own* eval path. On EASY the learned policy **matches the
-    scripted oracle**: 100% success, 0 collisions, `t_clear` 6.00 s, EV 7.44 m/s (naive 2.29 m/s,
-    return 102.3 vs 31.4), with exactly K=3 lane changes. Also added a **top-down scene renderer**
+    greedy policy through the *baselines' own* eval path. On **both** presets the learned policy
+    **matches the scripted oracle**: EASY 100% success / 0 collisions / `t_clear` 6.00 s / EV
+    7.44 m/s / return 102.3 (naive 0% / 2.29 m/s / 31.4); HARD 100% / 0% / 6.00 s / 7.43 m/s /
+    102.3 where `random` collides 60% of the time — i.e. it learned to read the V2V occupancy and
+    merge to the *free* side. Exactly K=3 lane changes, no oscillation. Also added a **top-down scene renderer**
     (`caatc/render2d.py`) + replay tool (`caatc/play.py`): record an mp4 headless, or a live window.
 - Architectural decisions are recorded in **`docs/adr/`**. Improvement ideas in **`ROADMAP.md`**.
 
@@ -72,9 +74,8 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
 - The network here is flaky — retry git pushes/pulls and Docker image builds.
 
 ## Next step
-**M3 — decentralize.** EASY is solved centrally (M2). The open work, in rough order: finish the
-**HARD** preset (occupancy reasoning — side lanes blocked, so the free side must be read from V2V);
-then move from one centralized joint policy to **CTDE / per-agent policies** (the env already
+**M3 — decentralize.** Both presets are solved centrally (M2). The open work, in rough order: move
+from one centralized joint policy to **CTDE / per-agent policies** (the env already
 anticipates a PettingZoo-parallel obs mode) so execution is decentralized like the thesis intends;
 then richer V2V (intention sharing, dropouts) and the **ROS 2 Humble mechanical demo** (ADR 0005).
 Always run `./run.sh clearance-smoke` before training a scenario.

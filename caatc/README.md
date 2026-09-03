@@ -19,8 +19,10 @@ V2V to clear a path for an **emergency vehicle** — is layered on top (M1).
   headroom gate. Legacy ROS 1 tree removed here.
 - **M2 — learn it** *(done)*: train with **stable-baselines3 PPO** on the centralized
   joint action; stream episodes to the dashboard; replay any policy as a video or a
-  live window. On EASY the learned policy **matches the scripted oracle** (100%
-  success, 0 collisions, 6.0 s clearance, 7.44 m/s vs the naive floor's 2.29 m/s).
+  live window. On **both** EASY and HARD the learned policy **matches the scripted
+  oracle** (100% success, 0 collisions, 6.0 s clearance, ~7.4 m/s vs the naive floor's
+  2.29 m/s); on HARD it picks the free side from the V2V occupancy, where `random`
+  collides 60% of the time.
   See [ADR 0008](../docs/adr/0008-train-with-stable-baselines3-ppo.md).
 
 ## Run M0 (nothing installed on the host)
