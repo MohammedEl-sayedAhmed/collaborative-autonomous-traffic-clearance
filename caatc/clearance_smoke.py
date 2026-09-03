@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
@@ -32,6 +32,7 @@ from .scenario import easy_preset, hard_preset
 from .clearance_env import ClearanceEnv
 from .clearance_eval import run_episode
 from .baselines import NaiveHold, RandomPolicy, IdealCooperator
+from .decentralized import LocalOnlyView, LocalSquad
 
 # thresholds
 SPEED_RATIO_MIN = 3.0
@@ -40,6 +41,8 @@ IDEAL_SUCCESS_MIN = 0.95
 PROGRESS_GAP_MIN = 0.20        # ideal_progress - naive_progress
 HARD_RANDOM_COLLISION_MIN = 0.30
 MONO_EPS = 0.02                # tolerance for "non-decreasing"
+LOCAL_SUCCESS_MIN = 0.95       # the local oracle must essentially always succeed
+LOCAL_TCLEAR_TOL = 0.10        # ... within 10% of the privileged oracle's t_clear
 
 
 class Gate:
@@ -132,12 +135,85 @@ def run_gate(easy_seeds: int = 10, hard_seeds: int = 8, mono_seeds: int = 3) -> 
     return g.passed()
 
 
+def run_m3_gate(seeds: int = 20, num_cooperators: Optional[int] = None) -> bool:
+    """M3 gate: is the per-agent observation SUFFICIENT, with no global state?
+
+    Deploys the scripted **local** oracle -- which sees only ``per_agent_obs(j)`` --
+    to all K cars, through the same ``run_episode`` path as every other policy, and
+    requires it to match the privileged oracle. If a hand-written local policy can
+    do the job, learning it is a tractable problem; if it cannot, the observation is
+    missing information and no amount of training fixes that (ADR 0009).
+
+    Also checks that the executor runs against ``LocalOnlyView``, i.e. that it
+    cannot even reach joint state.
+    """
+    g = Gate()
+    over = {} if num_cooperators is None else {"num_cooperators": num_cooperators}
+
+    for label, cfg in (("EASY", easy_preset(**over)), ("HARD", hard_preset(**over))):
+        env = ClearanceEnv(cfg)
+        try:
+            priv = [run_episode(env, IdealCooperator(), seed=s) for s in range(seeds)]
+            loc = [run_episode(env, LocalSquad(), seed=s) for s in range(seeds)]
+        finally:
+            env.close()
+        p_succ, p_coll, _p_spd, _p_prog, _p_ret = _rates(priv)
+        l_succ, l_coll, l_spd, _l_prog, _l_ret = _rates(loc)
+        p_tc = np.mean([r["t_clear"] for r in priv if r["t_clear"]]) if any(
+            r["t_clear"] for r in priv) else None
+        l_tc = np.mean([r["t_clear"] for r in loc if r["t_clear"]]) if any(
+            r["t_clear"] for r in loc) else None
+        print(f"\n{label} ({seeds} seeds, K={cfg.num_cooperators}):")
+        print(f"    privileged oracle: success={p_succ:.2f} coll={p_coll:.2f} "
+              f"t_clear={('%.2f' % p_tc) if p_tc else '-'}")
+        print(f"    local oracle:      success={l_succ:.2f} coll={l_coll:.2f} "
+              f"t_clear={('%.2f' % l_tc) if l_tc else '-'} speed={l_spd:.2f}")
+        g.check(f"{label}: local oracle succeeds", l_succ >= LOCAL_SUCCESS_MIN, f"{l_succ:.2f}")
+        g.check(f"{label}: local oracle never collides", l_coll == 0.0, f"{l_coll:.2f}")
+        if p_tc and l_tc:
+            rel = abs(l_tc - p_tc) / p_tc
+            g.check(f"{label}: local t_clear within 10% of privileged",
+                    rel <= LOCAL_TCLEAR_TOL, f"{rel * 100:.1f}%")
+
+    # the executor must work with NO access to joint state
+    env = ClearanceEnv(easy_preset(**over))
+    try:
+        env.reset(seed=0)
+        action = LocalSquad()(LocalOnlyView(env))
+        ok_shape = np.asarray(action).shape == (env.cfg.num_cooperators,)
+        leaked = True
+        try:
+            LocalOnlyView(env)._cars          # must raise
+            leaked = True
+        except AttributeError:
+            leaked = False
+    finally:
+        env.close()
+    print()
+    g.check("executor acts through a local-only view", ok_shape)
+    g.check("the local-only view hides joint state", not leaked)
+    return g.passed()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="ClearanceEnv pre-training headroom gate.")
     ap.add_argument("--easy-seeds", type=int, default=10)
     ap.add_argument("--hard-seeds", type=int, default=8)
     ap.add_argument("--mono-seeds", type=int, default=3)
+    ap.add_argument("--m3", action="store_true",
+                    help="run the M3 observability gate (the local oracle) instead")
+    ap.add_argument("--num-cooperators", type=int, default=None,
+                    help="override K, so any K that M3 claims is gated before it is evaluated")
     a = ap.parse_args(argv)
+
+    if a.m3:
+        print("=== M3 observability gate: is the per-agent view sufficient? ===")
+        ok = run_m3_gate(seeds=a.easy_seeds, num_cooperators=a.num_cooperators)
+        print("\n" + ("OK: the local view is sufficient -- decentralization is well posed."
+                      if ok else
+                      "FAIL: the local view is NOT sufficient -- enrich the observation "
+                      "before training a decentralized policy."))
+        return 0 if ok else 1
 
     print("=== ClearanceEnv headroom gate (headless) ===")
     ok = run_gate(a.easy_seeds, a.hard_seeds, a.mono_seeds)
