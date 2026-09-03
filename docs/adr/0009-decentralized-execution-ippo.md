@@ -1,7 +1,7 @@
 # 0009. M3 — decentralized execution via a parameter-shared per-agent policy (IPPO)
 
-- **Status:** proposed
-- **Date:** 2026-09-03
+- **Status:** accepted
+- **Date:** 2026-09-03 (forks confirmed 2026-09-03)
 - **Deciders:** Mohammed El-sayed Ahmed
 
 ## Context and problem statement
@@ -55,7 +55,19 @@ wrapper, staged behind two decision gates, per
 - **Success is equality under information restriction**, measured on shared eval seeds against M2, plus
   the two capability columns (K-transfer, dropout). Not an improvement claim.
 
-Status is **proposed** pending the owner's confirmation of the three forks in the design doc.
+**All three forks confirmed by the owner (2026-09-03):**
+
+1. **The learner → parameter-shared IPPO** over an agent-split vec env (not the frozen-partner ladder,
+   not MAPPO now; the central-critic variant stays the recorded escalation).
+2. **Range-gate the neighbour block now** (`neighbor_range = None → v2v_range`), so "no global state at
+   execution" is true by construction and the locality gate is falsifiable. Measured inert on every
+   configuration the M2 comparison uses, and a bit-identity test proves it.
+3. **Build the PettingZoo parallel mode in M3** — the owner chose to honour ADR 0007's promise now
+   rather than defer it. It is therefore in scope as a *tested* adapter over `per_agent_obs_all()` (the
+   API-conformance seam for external MARL baselines such as QMIX/MADDPG, ROADMAP #6), with
+   `pettingzoo` as an optional/test-only dependency. Training still routes through
+   `AgentSplitVecEnv`, so the adapter must be exercised by its own conformance tests rather than left
+   unexercised.
 
 ## Consequences
 

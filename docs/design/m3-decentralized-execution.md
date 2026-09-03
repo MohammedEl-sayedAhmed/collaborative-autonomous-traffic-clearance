@@ -5,7 +5,7 @@ the scenario is learnable — one PPO network reading all K cooperators and emit
 matches the scripted oracle on both presets. M3 keeps that result and takes the joint view away: each
 cooperating car decides from **its own 26-feature observation** (its own sensing plus the V2V broadcast
 it receives), one network evaluated K times, no joint state at execution. Centralized *training* stays
-(CTDE); centralized *execution* goes. Status: **proposed** — three forks below need confirmation.
+(CTDE); centralized *execution* goes. Status: **accepted** (2026-09-03) — all three forks confirmed (see below).
 Recorded as [ADR 0009](../adr/0009-decentralized-execution-ippo.md).
 
 ## Approach — one shared per-agent policy, K independent forward passes
@@ -155,17 +155,15 @@ extend along that axis. Both new gates exit non-zero on failure.
    first F features** while the critic reads everything — MAPPO's variance reduction without MAPPO,
    still deployable per-agent (~80 lines). Adopted only on demonstrated need.
 
-## Open forks — confirm before implementing
+## Open forks — CONFIRMED (2026-09-03)
 
-1. **The learner: parameter-shared IPPO over an agent-split vec env, or a frozen-partner ladder?**
-   *Recommended: **IPPO**.* It trains under the condition it deploys in, harvests all K transitions per
+1. **The learner → parameter-shared IPPO** *(confirmed)*. It trains under the condition it deploys in, harvests all K transitions per
    physics step instead of one, and needs no partner pool, stage schedule or cross-play matrix (~300
    lines and ~49 run directories less), keeping SB3's PPO as the maintained learner. Non-stationarity
    is real but mild here: with `coop_gap = 10 m` against `clear_window = 6 m`, two merged cooperators
    never occupy each other's clear window. If IPPO plateaus, the escalation is the reserve
    central-critic policy above, not the ladder.
-2. **Range-gate the neighbour block now (touching M1's most load-bearing function), or leave it?**
-   *Recommended: **gate it now** (`neighbor_range = None → v2v_range`).* Without it, "no global state at
+2. **Range-gate the neighbour block now → yes** *(confirmed)*, `neighbor_range = None → v2v_range`. Without it, "no global state at
    execution" is not true and the locality check cannot be written in falsifiable form. Measured on
    master @ `f4534bb` (oracle rollouts, 4 seeds): the largest `|Δs|` ever carried in a neighbour slot is
    **20.84 m on EASY / 10.56 m on HARD**, and **0 of 1,476 slots** exceed the 25 m range on any default
@@ -173,13 +171,12 @@ extend along that axis. Both new gates exit non-zero on failure.
    and a bit-identity test can prove it. But at `coop_gap = 13 m` (+30%, exactly the sweep this
    milestone plans) **492 of 1,476 slots carry a car beyond range, up to 26.86 m** — the leak is real
    and would bite precisely where the new capability claims live, invisibly.
-3. **Build the PettingZoo parallel mode in M3, or defer it with a written trigger?**
-   *Recommended: **defer**,* recording that this supersedes ADR 0007's "optional PettingZoo-parallel
-   Dict … for CTDE". Training does not route through it in this design, so it would be ~110 lines plus
-   a test-only dependency kept alive by gate checks — dead code with a pin. `per_agent_obs_all()` *is*
-   the seam a `ParallelEnv` (or a TorchRL `EnvBase`) wraps; the adapter is ~60 lines whenever an
-   external MARL baseline (QMIX/MADDPG, ROADMAP #6) is actually wanted. Trigger: adopt it when a
-   third-party MARL algorithm is genuinely on the table, not on aesthetics.
+3. **Build the PettingZoo parallel mode in M3 → yes** *(confirmed; the owner chose to honour ADR
+   0007's promise now rather than defer it).* It lands as `caatc/pz_env.py`, a `ParallelEnv` over
+   `per_agent_obs_all()`, with `pettingzoo` as an optional/test-only dependency and its own
+   **API-conformance tests** (`pettingzoo.test.parallel_api_test`) so it is exercised code rather than
+   a pin with no caller. Training still routes through `AgentSplitVecEnv`; the adapter is the seam for
+   external MARL baselines (QMIX/MADDPG, ROADMAP #6).
 
 *(Design produced by a 4-proposal judged workflow — angles: minimal per-agent Gym view, shared IPPO
 over a split vec env, true CTDE/MAPPO, V2V-realism-first — then synthesized: the interfaces and
