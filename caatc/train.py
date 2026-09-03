@@ -44,6 +44,20 @@ from .clearance_eval import (
 
 
 # -- dashboard run writer (incremental / live) -------------------------------
+def _say(msg: str) -> None:
+    """Report to stdout without ever raising.
+
+    Reporting a failure must not become a failure: stdout can be as broken as the
+    thing being reported (a full disk when the log is on the same mount, or a closed
+    pipe), and a raise from here would escape the very guards that exist to keep
+    training alive -- or, from inside a ``finally``, abandon the rest of teardown.
+    """
+    try:
+        print(msg)
+    except BaseException:
+        pass
+
+
 class RunWriter:
     """Writes a dashboard run directory incrementally as episodes complete.
 
@@ -59,12 +73,21 @@ class RunWriter:
         base = f"{stamp}_{label.replace('/', '-')}"
         self.errors = 0
         self.n = 0
-        # one-second stamps collide when two runs start together; never reuse a
-        # directory, or the second run would truncate the first one's metrics.
+        # One-second stamps collide when two runs start together, and a run must
+        # never reuse a directory (the newcomer would truncate the other's
+        # metrics). Claim the directory by *creating* it exclusively rather than
+        # checking first, so concurrent starts cannot both win the same name.
         run_id, suffix = base, 1
-        while os.path.exists(os.path.join(runs_dir, run_id)):
-            suffix += 1
-            run_id = f"{base}-{suffix}"
+        while True:
+            try:
+                os.makedirs(os.path.join(runs_dir, run_id), exist_ok=False)
+                break
+            except FileExistsError:
+                suffix += 1
+                run_id = f"{base}-{suffix}"
+            except Exception as e:      # unwritable parent: degrade, never abort
+                self._fail("create the run directory", e)
+                break
         self.run_id = run_id
         self.dir = os.path.join(runs_dir, self.run_id)
         self.metrics_path = os.path.join(self.dir, "metrics.jsonl")
@@ -77,19 +100,18 @@ class RunWriter:
             "num_episodes": 0, "status": "running",
         }
         try:
-            os.makedirs(self.dir, exist_ok=True)
             open(self.metrics_path, "w").close()
         except Exception as e:
-            self._fail("create the run directory", e)
+            self._fail("create the metrics file", e)
         self._wjson("meta.json", self.meta)
 
     def _fail(self, what: str, exc: BaseException) -> None:
         """Report a logging failure without ever raising into the training loop."""
         self.errors += 1
         if self.errors <= 3:
-            print(f"[RunWriter] could not {what} (training continues): {exc!r}")
+            _say(f"[RunWriter] could not {what} (training continues): {exc!r}")
         elif self.errors == 4:
-            print("[RunWriter] further logging errors suppressed")
+            _say("[RunWriter] further logging errors suppressed")
 
     def _wjson(self, name: str, obj: Dict) -> None:
         p = os.path.join(self.dir, name)
@@ -178,7 +200,7 @@ def _make_callback(writer: RunWriter, n_envs: int):
                     except Exception as e:
                         # logging must never abort training (the writer is already
                         # best-effort; this guards future changes to it too)
-                        print(f"[DashboardCallback] episode log failed: {e!r}")
+                        _say(f"[DashboardCallback] episode log failed: {e!r}")
             return True
 
     return DashboardCallback(writer, n_envs)
@@ -247,20 +269,20 @@ def train(cfg: ScenarioConfig, timesteps: int, n_envs: int, seed: int, label: st
             try:
                 os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
                 model.save(model_path)
-                print(f"  model -> {model_path}" + ("" if status == "completed"
-                                                     else f" (run {status})"))
+                _say(f"  model -> {model_path}" + ("" if status == "completed"
+                                                   else f" (run {status})"))
             except Exception as e:
-                print(f"[train] could not save the model: {e!r}")
+                _say(f"[train] could not save the model: {e!r}")
         if writer is not None:
             try:
                 writer.close(status)
             except Exception as e:
-                print(f"[train] could not finalize the run log: {e!r}")
+                _say(f"[train] could not finalize the run log: {e!r}")
         if vec is not None:
             try:
                 vec.close()
             except Exception as e:
-                print(f"[train] could not close the vec env: {e!r}")
+                _say(f"[train] could not close the vec env: {e!r}")
     return model
 
 
@@ -304,7 +326,7 @@ def main(argv=None):
     runs_dir = a.runs_dir or default_runs_dir()
     # saving the model is independent of dashboard logging: --no-log means "no run
     # directory", not "throw the trained policy away".
-    model_out = a.model_out
+    model_out = None if a.no_model else a.model_out
     if model_out is None and not a.no_model:
         model_out = os.path.join(os.path.dirname(runs_dir.rstrip("/")), "models", f"{label}.zip")
 

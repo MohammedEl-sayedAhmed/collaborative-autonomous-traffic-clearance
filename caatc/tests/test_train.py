@@ -131,6 +131,69 @@ def test_logging_failure_never_kills_training(tmp_path):
     assert os.path.exists(model_path), "the trained model must survive a logging failure"
 
 
+def test_say_never_raises():
+    """The failure reporter must swallow its own IO errors -- reporting a full disk
+    on a stdout that is also full must not escape into the training loop."""
+    import io
+    import sys
+
+    from caatc.train import _say
+
+    class Broken(io.TextIOBase):
+        def write(self, *_a, **_k):
+            raise OSError(28, "No space left on device")
+
+    old = sys.stdout
+    sys.stdout = Broken()
+    try:
+        _say("this must not raise")
+    finally:
+        sys.stdout = old
+
+
+def test_crash_keeps_the_model_and_records_failure(tmp_path):
+    """A crash mid-learn must still leave the trained policy on disk, and the run
+    must be recorded as failed rather than completed. This fails if the model save
+    moves back out of the finally, or if close() defaults to 'completed'."""
+    pytest.importorskip("stable_baselines3")
+    from caatc import train as train_mod
+
+    class Boom(Exception):
+        pass
+
+    cfg = easy_preset()
+    runs = str(tmp_path / "runs")
+    model_path = str(tmp_path / "crash.zip")
+    original = train_mod._make_callback
+
+    def wrap(writer, n_envs):
+        cb = original(writer, n_envs)
+        real, calls = cb._on_step, {"n": 0}
+
+        def step():
+            calls["n"] += 1
+            if calls["n"] > 3:
+                raise Boom("simulated training crash")
+            return real()
+
+        cb._on_step = step
+        return cb
+
+    train_mod._make_callback = wrap
+    try:
+        with pytest.raises(Boom):
+            train_mod.train(cfg, timesteps=4096, n_envs=1, seed=0, label="pytest-crash",
+                            runs_dir=runs, log=True, model_path=model_path,
+                            n_steps=128, batch_size=64, verbose=0)
+    finally:
+        train_mod._make_callback = original
+
+    assert os.path.exists(model_path), "a crash must not throw away the trained policy"
+    run_dir = os.path.join(runs, [d for d in os.listdir(runs) if "pytest-crash" in d][0])
+    meta = json.load(open(os.path.join(run_dir, "meta.json")))
+    assert meta["status"] == "failed", "a crashed run must not be recorded as completed"
+
+
 def test_short_train_logs_and_policy_acts(tmp_path):
     pytest.importorskip("stable_baselines3")
     from caatc.train import SB3Policy, evaluate, train
