@@ -31,6 +31,7 @@ import numpy as np
 from .scenario import ScenarioConfig
 from .clearance_env import ClearanceEnv
 from .clearance_eval import (
+    git_sha,
     OUTCOME_COLLISION,
     OUTCOME_LABELS,
     OUTCOME_SUCCESS,
@@ -44,41 +45,74 @@ from .clearance_eval import (
 
 # -- dashboard run writer (incremental / live) -------------------------------
 class RunWriter:
-    """Writes a dashboard run directory incrementally as episodes complete."""
+    """Writes a dashboard run directory incrementally as episodes complete.
+
+    Every write is **best-effort**: this runs inside an SB3 callback, so an IO error
+    here (a full disk, a read-only mount, the run dir removed mid-run) must never
+    abort a training run that has minutes of compute in it. Failures are counted and
+    reported, not raised.
+    """
 
     def __init__(self, runs_dir: str, label: str, cfg: ScenarioConfig,
-                 mode: str = "train", total_episodes: int = 0, git_sha: str = "caatc"):
-        self.run_id = time.strftime("%Y%m%d-%H%M%S") + "_" + label.replace("/", "-")
-        self.dir = os.path.join(runs_dir, self.run_id)
-        os.makedirs(self.dir, exist_ok=True)
-        self.metrics_path = os.path.join(self.dir, "metrics.jsonl")
-        open(self.metrics_path, "w").close()
+                 mode: str = "train", total_episodes: int = 0, sha: Optional[str] = None):
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        base = f"{stamp}_{label.replace('/', '-')}"
+        self.errors = 0
         self.n = 0
+        # one-second stamps collide when two runs start together; never reuse a
+        # directory, or the second run would truncate the first one's metrics.
+        run_id, suffix = base, 1
+        while os.path.exists(os.path.join(runs_dir, run_id)):
+            suffix += 1
+            run_id = f"{base}-{suffix}"
+        self.run_id = run_id
+        self.dir = os.path.join(runs_dir, self.run_id)
+        self.metrics_path = os.path.join(self.dir, "metrics.jsonl")
         self.meta = {
-            "run_id": self.run_id, "label": label, "git_sha": git_sha, "mode": mode,
+            "run_id": self.run_id, "label": label,
+            "git_sha": sha if sha is not None else git_sha(), "mode": mode,
             "config": {"max_num_episodes": total_episodes, "preset": cfg.preset,
                        "algo": "ppo", "scenario": asdict(cfg)},
             "start_time": time.time(), "last_update": time.time(),
             "num_episodes": 0, "status": "running",
         }
+        try:
+            os.makedirs(self.dir, exist_ok=True)
+            open(self.metrics_path, "w").close()
+        except Exception as e:
+            self._fail("create the run directory", e)
         self._wjson("meta.json", self.meta)
+
+    def _fail(self, what: str, exc: BaseException) -> None:
+        """Report a logging failure without ever raising into the training loop."""
+        self.errors += 1
+        if self.errors <= 3:
+            print(f"[RunWriter] could not {what} (training continues): {exc!r}")
+        elif self.errors == 4:
+            print("[RunWriter] further logging errors suppressed")
 
     def _wjson(self, name: str, obj: Dict) -> None:
         p = os.path.join(self.dir, name)
-        with open(p + ".tmp", "w") as f:
-            json.dump(obj, f)
-        os.replace(p + ".tmp", p)
+        try:
+            with open(p + ".tmp", "w") as f:
+                json.dump(obj, f)
+            os.replace(p + ".tmp", p)
+        except Exception as e:
+            self._fail(f"write {name}", e)
 
     def episode(self, rec: Dict) -> None:
         rec = dict(rec)
         rec.setdefault("episode", self.n)
         rec.setdefault("epsilon", 0.0)  # PPO has no epsilon; kept for the schema
         rec.setdefault("time", time.time())
-        with open(self.metrics_path, "a") as f:
-            f.write(json.dumps(rec) + "\n")
-        self.n += 1
+        self.n += 1                      # bump first: episode numbers stay monotone
         self.meta["num_episodes"] = self.n
         self.meta["last_update"] = time.time()
+        try:
+            with open(self.metrics_path, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except Exception as e:
+            self._fail("append an episode", e)
         self._wjson("meta.json", self.meta)
         self._wjson("status.json", {
             "episode": rec["episode"], "step": rec.get("num_steps", 0),
@@ -87,8 +121,11 @@ class RunWriter:
         })
 
     def close(self, status: str = "completed") -> None:
+        """Finalize the run. ``status`` must reflect what actually happened."""
         self.meta["status"] = status
         self.meta["end_time"] = time.time()
+        if self.errors:
+            self.meta["logging_errors"] = self.errors
         self._wjson("meta.json", self.meta)
         self._wjson("status.json", {"state": status, "time": time.time()})
 
@@ -127,16 +164,21 @@ def _make_callback(writer: RunWriter, n_envs: int):
                     success = bool(info.get("success", False))
                     collision = bool(info.get("collision", False))
                     oc = outcome_of(success, collision)
-                    self.writer.episode({
-                        "cum_reward": round(float(ep.get("r", 0.0)), 4),
-                        "num_steps": int(ep.get("l", 0)),
-                        "outcome": oc, "outcome_label": OUTCOME_LABELS[oc],
-                        "t_clear": info.get("t_clear"),
-                        "ev_progress": round(float(info.get("ev_progress", 0.0)), 4),
-                        "ev_mean_speed": round(mean_speed, 4),
-                        "lane_changes": int(info.get("lane_changes", 0)),
-                        "timesteps": int(self.num_timesteps),
-                    })
+                    try:
+                        self.writer.episode({
+                            "cum_reward": round(float(ep.get("r", 0.0)), 4),
+                            "num_steps": int(ep.get("l", 0)),
+                            "outcome": oc, "outcome_label": OUTCOME_LABELS[oc],
+                            "t_clear": info.get("t_clear"),
+                            "ev_progress": round(float(info.get("ev_progress", 0.0)), 4),
+                            "ev_mean_speed": round(mean_speed, 4),
+                            "lane_changes": int(info.get("lane_changes", 0)),
+                            "timesteps": int(self.num_timesteps),
+                        })
+                    except Exception as e:
+                        # logging must never abort training (the writer is already
+                        # best-effort; this guards future changes to it too)
+                        print(f"[DashboardCallback] episode log failed: {e!r}")
             return True
 
     return DashboardCallback(writer, n_envs)
@@ -184,26 +226,41 @@ def train(cfg: ScenarioConfig, timesteps: int, n_envs: int, seed: int, label: st
     from stable_baselines3.common.utils import set_random_seed
 
     set_random_seed(seed)
-    vec = build_vec_env(cfg, n_envs, seed)
-    writer = RunWriter(runs_dir, label, cfg, mode="train") if log else None
-    callback = _make_callback(writer, n_envs) if writer else None
-
-    model = PPO(
-        "MlpPolicy", vec, seed=seed, verbose=verbose,
-        n_steps=n_steps, batch_size=batch_size, ent_coef=ent_coef,
-        learning_rate=learning_rate, gamma=gamma,
-    )
+    vec = writer = callback = model = None
+    status = "failed"
     try:
+        vec = build_vec_env(cfg, n_envs, seed)
+        writer = RunWriter(runs_dir, label, cfg, mode="train") if log else None
+        callback = _make_callback(writer, n_envs) if writer else None
+        model = PPO(
+            "MlpPolicy", vec, seed=seed, verbose=verbose,
+            n_steps=n_steps, batch_size=batch_size, ent_coef=ent_coef,
+            learning_rate=learning_rate, gamma=gamma,
+        )
         model.learn(total_timesteps=timesteps, callback=callback, progress_bar=False)
+        status = "completed"
     finally:
-        if writer:
-            writer.close()
-        vec.close()
-
-    if model_path:
-        os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
-        model.save(model_path)
-        print(f"  model -> {model_path}")
+        # Each step gets its own guard: a failure in one must not skip the others
+        # (that is how the physics subprocesses used to leak), and the model is
+        # saved even on Ctrl-C or a crash so a long run is never thrown away.
+        if model is not None and model_path:
+            try:
+                os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
+                model.save(model_path)
+                print(f"  model -> {model_path}" + ("" if status == "completed"
+                                                     else f" (run {status})"))
+            except Exception as e:
+                print(f"[train] could not save the model: {e!r}")
+        if writer is not None:
+            try:
+                writer.close(status)
+            except Exception as e:
+                print(f"[train] could not finalize the run log: {e!r}")
+        if vec is not None:
+            try:
+                vec.close()
+            except Exception as e:
+                print(f"[train] could not close the vec env: {e!r}")
     return model
 
 
@@ -233,7 +290,8 @@ def main(argv=None):
     ap.add_argument("--eval-episodes", type=int, default=20)
     ap.add_argument("--runs-dir", default=None)
     ap.add_argument("--model-out", default=None, help="where to save the .zip (default: saved_variables/models/<label>.zip)")
-    ap.add_argument("--no-log", action="store_true", help="do not write dashboard runs")
+    ap.add_argument("--no-log", action="store_true", help="do not write dashboard runs (the model is still saved)")
+    ap.add_argument("--no-model", action="store_true", help="do not save the trained model")
     ap.add_argument("--n-steps", type=int, default=512)
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--ent-coef", type=float, default=0.01)
@@ -244,8 +302,10 @@ def main(argv=None):
     cfg = preset_config(a.preset)
     label = a.label or f"ppo-{a.preset}"
     runs_dir = a.runs_dir or default_runs_dir()
+    # saving the model is independent of dashboard logging: --no-log means "no run
+    # directory", not "throw the trained policy away".
     model_out = a.model_out
-    if model_out is None and not a.no_log:
+    if model_out is None and not a.no_model:
         model_out = os.path.join(os.path.dirname(runs_dir.rstrip("/")), "models", f"{label}.zip")
 
     print(f"M2 training: PPO on caatc/clearance-v0 [{a.preset}] "

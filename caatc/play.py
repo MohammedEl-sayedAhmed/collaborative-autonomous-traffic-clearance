@@ -3,12 +3,18 @@
 Training runs headless (rendering costs a draw per physics substep, and there are
 several envs in parallel), so this is the separate "show me what it looks like"
 entry point. It rolls out **one policy** -- a scripted baseline or a trained PPO
-model -- with the f1tenth_gym pygame renderer:
+model -- and draws it one of two ways:
 
-* ``--mode video`` (default) uses the ``rgb_array`` render mode, which draws to an
-  offscreen surface, so it needs **no display** and works in Docker as-is. The
-  frames are written to an ``.mp4``.
-* ``--mode human`` opens a real window; that needs a display handed into the
+* ``--renderer scene`` (default) draws our own top-down view of the road
+  (``render2d.py``) straight from the simulation state with OpenCV. It never opens
+  the gym renderer at all.
+* ``--renderer gym`` uses f1tenth_gym's pygame view of the world instead.
+
+Either renderer can record or display:
+
+* ``--mode video`` (default) writes the frames to an ``.mp4``. Both renderers draw
+  offscreen for this, so it needs **no display** and works in Docker as-is.
+* ``--mode human`` shows a live window; that needs a display handed into the
   container (``./run.sh clearance-watch --mode human`` wires up X11).
 
 Examples::
@@ -93,7 +99,7 @@ def play(cfg, policy, episodes: int, seed: int, mode: str, out: Optional[str],
     # the gym renderer needs a render_mode; the scene renderer draws from state
     render_mode = None if use_scene else ("rgb_array" if mode == "video" else mode)
     env = ClearanceEnv(cfg, render_mode=render_mode)
-    scene = SceneRenderer(cfg) if use_scene else None
+    scene = SceneRenderer(cfg, frame=env.frame) if use_scene else None
     video = VideoWriter(out, fps=fps, bgr=use_scene) if mode == "video" else None
     window = "Traffic Clearance" if (live and use_scene) else None
     pending: List[np.ndarray] = []

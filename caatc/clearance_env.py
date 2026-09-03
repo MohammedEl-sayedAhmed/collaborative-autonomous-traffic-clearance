@@ -13,7 +13,8 @@ See ``docs/design/m1-clearance-env.md``.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from collections import deque
+from typing import Deque, Dict, List, Optional
 
 import numpy as np
 import gymnasium as gym
@@ -101,7 +102,10 @@ class ClearanceEnv(gym.Env):
         if render_mode is not None and render_mode not in self.metadata["render_modes"]:
             raise ValueError(f"render_mode must be one of {self.metadata['render_modes']}")
         self.render_mode = render_mode
-        self._frames: List[np.ndarray] = []
+        # Bounded: a consumer that never calls pop_frames() (or a very long
+        # rollout) must not grow this without limit -- ~30 s of 100 Hz frames at
+        # 900x900 is already ~7 GB. Oldest frames are dropped.
+        self._frames: Deque[np.ndarray] = deque(maxlen=3000)
         # Optional callback invoked once per physics substep with the current car
         # states -- used by caatc/render2d.py to draw its own top-down scene at the
         # 100 Hz physics rate (independent of the gym renderer). Left None while
@@ -517,7 +521,8 @@ class ClearanceEnv(gym.Env):
 
     def pop_frames(self) -> List[np.ndarray]:
         """Return the frames buffered since the last call and clear the buffer."""
-        frames, self._frames = self._frames, []
+        frames = list(self._frames)
+        self._frames.clear()
         return frames
 
     def close(self):

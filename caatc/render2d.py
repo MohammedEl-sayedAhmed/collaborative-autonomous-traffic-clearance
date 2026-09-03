@@ -18,6 +18,7 @@ from typing import List, Optional
 
 import numpy as np
 
+from .frenet import wrap_to_pi
 from .scenario import ScenarioConfig, lane_center_d
 
 # Nocturne palette, as BGR for OpenCV
@@ -40,12 +41,17 @@ BGR = {
 class SceneRenderer:
     """Draws frames of a ClearanceEnv episode as a scrolling top-down strip."""
 
-    def __init__(self, cfg: ScenarioConfig, width: int = 1280, height: int = 460,
-                 span: float = 26.0, px_per_m: Optional[float] = None):
+    def __init__(self, cfg: ScenarioConfig, frame=None, width: int = 1280,
+                 height: int = 460, span: float = 26.0, px_per_m: Optional[float] = None):
+        """``frame`` is the env's CenterlineFrame; with it each car is drawn at its
+        real yaw relative to the road (in the unrolled view that is the heading
+        error), and the minimap spans the true road length."""
         import cv2
 
         self.cv2 = cv2
         self.cfg = cfg
+        self.centerline = frame     # NB: self.frame is the drawing method below
+        self.road_len = float(getattr(frame, "length", cfg.road_length))
         self.W, self.H = width, height
         self.span = span                      # metres of road visible in the strip
         self.ppm = px_per_m or (width - 80) / span   # isotropic px per metre
@@ -127,19 +133,29 @@ class SceneRenderer:
                 left = int(c["lane"]) != cfg.ev_lane
                 color = "coop_moved" if left else "coop"
                 label = f"C{j + 1}"
-            self._car(img, c["s"], c["d"], s0, color, label,
-                      heading=0.0 if c["role"] == "occupant" else 0.0)
+            # in the unrolled view a car's visual yaw is its heading error: how
+            # far its heading deviates from the road tangent at its arclength.
+            heading = 0.0
+            if self.centerline is not None:
+                heading = wrap_to_pi(c["theta"] - self.centerline.tangent_angle(c["s"]))
+            self._car(img, c["s"], c["d"], s0, color, label, heading=heading)
 
         # -- minimap: the whole road, EV progress, every car ------------------
         y = self.y_minimap
         x0, x1 = 40, self.W - 40
-        total = cfg.s_goal
+        # the strip spans the WHOLE road, with the goal drawn at its real fraction
+        # (it sits before the end), so a car past the goal is not clamped onto the
+        # goal tick.
+        total = max(self.road_len, cfg.s_goal)
+        span_px = x1 - x0
+        at = lambda s: int(x0 + min(1.0, max(0.0, s / total)) * span_px)
         cv2.line(img, (x0, y), (x1, y), BGR["road_edge"], 3, cv2.LINE_AA)
-        prog = min(1.0, ev["s"] / total)
-        cv2.line(img, (x0, y), (int(x0 + prog * (x1 - x0)), y), BGR["ev"], 3, cv2.LINE_AA)
-        cv2.line(img, (x1, y - 7), (x1, y + 7), BGR["goal"], 2, cv2.LINE_AA)
+        gx_mm = at(cfg.s_goal)
+        cv2.line(img, (x0, y), (at(ev["s"]), y), BGR["ev"], 3, cv2.LINE_AA)
+        cv2.line(img, (gx_mm, y - 7), (gx_mm, y + 7), BGR["goal"], 2, cv2.LINE_AA)
+        prog = min(1.0, ev["s"] / cfg.s_goal)   # progress is measured to the GOAL
         for k, c in enumerate(cars):
-            cx = int(x0 + min(1.0, max(0.0, c["s"] / total)) * (x1 - x0))
+            cx = at(c["s"])
             col = ("ev" if c["role"] == "ev"
                    else "occupant" if c["role"] == "occupant"
                    else "coop_moved" if int(c["lane"]) != cfg.ev_lane else "coop")

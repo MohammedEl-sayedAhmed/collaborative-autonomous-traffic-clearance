@@ -50,8 +50,19 @@ case "${1:-help}" in
     docker build -t caatc-view -f docker/gym-view.Dockerfile . ;;
   clearance-watch)                     # M2: WATCH a rollout -- mp4 by default, or a live window
     shift || true
-    case " $* " in
-      *" --mode human"*|*" --mode human_fast"*)
+    # Parse the two flags that pick the image/branch, accepting BOTH "--flag value"
+    # and "--flag=value" (argparse takes either, so this must too).
+    WATCH_MODE=video; WATCH_MODEL=0; prev=""
+    for a in "$@"; do
+      case "$a" in
+        --model|--model=*) WATCH_MODEL=1 ;;
+        --mode=*)          WATCH_MODE="${a#--mode=}" ;;
+      esac
+      [ "$prev" = "--mode" ] && WATCH_MODE="$a"
+      prev="$a"
+    done
+    case "$WATCH_MODE" in
+      human|human_fast)
         # A live window needs the X11/Qt libs from the view image, plus the X
         # server socket and DISPLAY handed into the container.
         docker image inspect caatc-view >/dev/null 2>&1 || {
@@ -66,7 +77,7 @@ case "${1:-help}" in
       *)
         # recording renders offscreen: the base image is enough, unless a trained
         # model has to be loaded (that needs stable-baselines3 -> training image).
-        IMG=caatc-gym; for a in "$@"; do [ "$a" = "--model" ] && IMG=caatc-train; done
+        IMG=caatc-gym; [ "$WATCH_MODEL" = "1" ] && IMG=caatc-train
         dev "$IMG" python -m caatc.play "$@" ;;
     esac ;;
 

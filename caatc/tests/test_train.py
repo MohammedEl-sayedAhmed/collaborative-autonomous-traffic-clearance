@@ -69,6 +69,68 @@ def test_env_passes_sb3_env_checker():
         env.close()
 
 
+def test_logged_metrics_have_sane_values(tmp_path):
+    """The streamed metrics must be *right*, not merely present -- and the
+    multi-env path (which is what --n-envs 8 ships) must be exercised, since each
+    env accumulates its own EV speed and their episodes interleave."""
+    pytest.importorskip("stable_baselines3")
+    from caatc.train import train
+
+    cfg = easy_preset()
+    runs = str(tmp_path / "runs")
+    train(cfg, timesteps=1024, n_envs=2, seed=0, label="pytest-values",
+          runs_dir=runs, log=True, model_path=None, n_steps=256, batch_size=64,
+          verbose=0)
+
+    run_dir = os.path.join(runs, [d for d in os.listdir(runs) if "pytest-values" in d][0])
+    recs = [json.loads(l) for l in open(os.path.join(run_dir, "metrics.jsonl")) if l.strip()]
+    assert len(recs) >= 2, "expected several episodes from 2 envs x 1024 steps"
+
+    assert [r["episode"] for r in recs] == list(range(len(recs)))  # monotone, no gaps
+    for r in recs:
+        assert 1 <= r["num_steps"] <= cfg.max_steps
+        assert r["outcome"] in (OUTCOME_SUCCESS, OUTCOME_TIMEOUT, OUTCOME_COLLISION)
+        # an EV speed accumulated per-env: never negative, never above the sprint cap
+        assert 0.0 <= r["ev_mean_speed"] <= cfg.ev_max_speed + 0.5, r
+        assert 0.0 <= r["ev_progress"] <= 1.0, r
+        assert r["lane_changes"] >= 0
+        assert r["timesteps"] > 0
+        # a truncated episode ran the full clock and cannot have cleared the road
+        if r["outcome"] == OUTCOME_TIMEOUT:
+            assert r["num_steps"] == cfg.max_steps and r["t_clear"] is None
+        if r["outcome"] == OUTCOME_SUCCESS:
+            assert r["t_clear"] is not None and r["ev_progress"] > 0.99
+
+    meta = json.load(open(os.path.join(run_dir, "meta.json")))
+    assert meta["status"] == "completed" and meta["num_episodes"] == len(recs)
+    assert meta["git_sha"] and meta["git_sha"] != "caatc"   # a real commit, or "unknown"
+
+
+def test_logging_failure_never_kills_training(tmp_path):
+    """A write error inside the callback must not abort a run (or lose the model):
+    the writer is best-effort by contract."""
+    pytest.importorskip("stable_baselines3")
+    from caatc import train as train_mod
+
+    cfg = easy_preset()
+    runs = str(tmp_path / "runs")
+    model_path = str(tmp_path / "m.zip")
+    original = train_mod.RunWriter.episode
+
+    def boom(self, rec):
+        raise OSError("simulated disk failure")
+
+    train_mod.RunWriter.episode = boom
+    try:
+        model = train_mod.train(cfg, timesteps=512, n_envs=1, seed=0, label="pytest-boom",
+                                runs_dir=runs, log=True, model_path=model_path,
+                                n_steps=256, batch_size=64, verbose=0)
+    finally:
+        train_mod.RunWriter.episode = original
+    assert model is not None
+    assert os.path.exists(model_path), "the trained model must survive a logging failure"
+
+
 def test_short_train_logs_and_policy_acts(tmp_path):
     pytest.importorskip("stable_baselines3")
     from caatc.train import SB3Policy, evaluate, train

@@ -54,9 +54,20 @@ The dashboard reads any run written to `saved_variables/runs/` (the format
 ./run.sh dashboard
 ```
 
-Each run appears with its outcome mix (goal / max-steps / collision) and metrics. In **M2**, training
-with stable-baselines3 will write runs the same way — so a learned policy overlays directly on the
-naive / random / ideal band and you can see exactly how far it has climbed.
+Each run appears with its outcome mix (goal / max-steps / collision) and metrics.
+
+**Training (M2)** writes runs the same way, live — every finished episode is appended while PPO is
+still learning, so the curve climbs the baseline band while you watch:
+
+```bash
+./run.sh clearance-smoke                                     # the gate, first
+./run.sh clearance-train --preset easy --timesteps 300000 --n-envs 8
+```
+
+That produces two runs: `ppo-easy` (the training curve, marked **LIVE** while it runs) and
+`ppo-easy-eval` (the greedy policy scored over 20 episodes through the *same* evaluation code the
+baselines use). Overlay them on `ideal-easy` / `naive-easy` to see exactly how far the learned policy
+has climbed — on EASY and HARD it reaches the scripted oracle.
 
 > Legacy ROS 1 Q-learning training (`./run.sh rl`, `env.launch`, …) is at tag `v0.3.0`; its
 > fix-by-fix campaign is documented in [docs/legacy/RL_EXPERIMENTS.md](legacy/RL_EXPERIMENTS.md).
