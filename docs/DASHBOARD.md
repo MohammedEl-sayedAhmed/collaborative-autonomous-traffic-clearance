@@ -59,6 +59,20 @@ naive / random / ideal band and you can see exactly how far it has climbed.
 > Legacy ROS 1 Q-learning training (`./run.sh rl`, `env.launch`, …) is at tag `v0.3.0`; its
 > fix-by-fix campaign is documented in [docs/legacy/RL_EXPERIMENTS.md](legacy/RL_EXPERIMENTS.md).
 
+## Colours
+
+The dashboard uses the **Nocturne** palette: a violet-tinted deep-ink ground with ten
+categorical series hues spaced 36° apart and *interleaved*, so two runs compared side by
+side land 144–180° apart on the colour wheel. It was derived in OKLCH (not by eye) inside
+the dark-mode lightness band and validated for colour-vision-deficiency separation,
+a normal-vision floor, and ≥3:1 contrast against the panel surface.
+
+Series colours are assigned in **fixed order** — a run keeps its colour when you filter
+others out — and the status colours (success / max-time / collision) are *reserved*: they
+are never reused as a series hue. All of it lives in two places: the CSS custom properties
+at the top of `tools/dashboard/app.css` and `PALETTE` / `INK` / `OUTCOME_COLOR` at the top
+of `tools/dashboard/app.js`.
+
 ## Navigating runs
 
 - **Checkboxes** — include/exclude a run from the comparison (overlay multiple).

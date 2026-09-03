@@ -88,10 +88,10 @@
     <p><b>Epsilon per episode</b> — explore-vs-exploit, decaying over time. If it stays high and flat, the agent never settles (train longer / decay faster).</p>
     <p><b>Steps per episode</b> — how long each attempt took. Usually <b>drops</b> as the policy improves.</p>
     <p><b>Episode outcomes</b> — why episodes ended:
-      <span class="pill" style="background:#46c37b"></span>ambulance reached goal (success),
-      <span class="pill" style="background:#4fd1c5"></span>agent reached goal,
-      <span class="pill" style="background:#e0b64a"></span>max time,
-      <span class="pill" style="background:#e06c6c"></span>sim died. More green = better.</p>
+      <span class="pill" style="background:var(--good)"></span>ambulance reached goal (success),
+      <span class="pill" style="background:var(--accent)"></span>agent reached goal,
+      <span class="pill" style="background:var(--warn)"></span>max time,
+      <span class="pill" style="background:var(--bad)"></span>sim died. More green = better.</p>
     <p><b>Run comparison (table)</b> — per run: git <b>commit</b>, episodes, mean / final / best reward, and <b>success rate</b> (% of episodes the ambulance got through). This is where you read off “did my change help?”</p>
     <p><b>Live tile</b> — while training, shows the current episode/step/reward/ε in real time; a <span class="good">LIVE</span> badge marks a run whose heartbeat is fresh.</p>
 

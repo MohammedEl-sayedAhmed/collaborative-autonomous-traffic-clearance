@@ -1,8 +1,8 @@
   /* Fluid root font: scales smoothly with viewport width (no zoom hacks), so text is
      readable on a laptop and a 2K/4K monitor alike. Everything below is sized in rem. */
   :root{ font-size: clamp(14px, calc(11.8px + 0.24vw), 20px);
-    --bg:#0f1420; --panel:#161d2e; --panel2:#1d2740; --line:#2a3550;
-    --fg:#e6ecf5; --muted:#9aa7bd; --accent:#4fd1c5; --good:#46c37b; --warn:#e0b64a; --bad:#e06c6c;
+    --bg:#0e0e18; --panel:#191a25; --panel2:#262735; --line:#333546; --grid:#2a2b3a;
+    --fg:#edeef4; --muted:#9d9fad; --accent:#09b4bb; --good:#38ad64; --warn:#d38e22; --bad:#d9515e;
   }
   *{box-sizing:border-box}
   html,body{overflow-x:hidden;max-width:100%}
@@ -15,7 +15,7 @@
   .ctl input[type=range]{width:6rem}
   .dot{width:.62rem;height:.62rem;border-radius:50%;display:inline-block;flex:none}
   .pulse{background:var(--good);animation:p 1.6s infinite}
-  @keyframes p{0%{box-shadow:0 0 0 0 rgba(70,195,123,.6)}70%{box-shadow:0 0 0 .5rem rgba(70,195,123,0)}100%{box-shadow:0 0 0 0 rgba(70,195,123,0)}}
+  @keyframes p{0%{box-shadow:0 0 0 0 rgba(56,173,100,.6)}70%{box-shadow:0 0 0 .5rem rgba(56,173,100,0)}100%{box-shadow:0 0 0 0 rgba(56,173,100,0)}}
   .wrap{display:grid;grid-template-columns:clamp(230px,22vw,330px) 1fr;min-height:calc(100vh - 3.4rem)}
   aside{background:var(--panel);border-right:1px solid var(--line);padding:.9rem;overflow:auto}
   aside h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:.2rem .1rem .8rem}
@@ -28,10 +28,10 @@
   .runrow .lbl{font-weight:600;font-size:.96rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .runrow .sub{color:var(--muted);font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .badge{font-size:.68rem;padding:.1rem .45rem;border-radius:.6rem;font-weight:600;margin-left:.3rem}
-  .b-live{background:rgba(70,195,123,.18);color:var(--good)}
-  .b-done{background:rgba(79,209,197,.16);color:var(--accent)}
-  .b-stale{background:rgba(224,182,74,.16);color:var(--warn)}
-  .b-test{background:rgba(154,167,189,.18);color:var(--muted)}
+  .b-live{background:rgba(56,173,100,.18);color:var(--good)}
+  .b-done{background:rgba(9,180,187,.16);color:var(--accent)}
+  .b-stale{background:rgba(211,142,34,.16);color:var(--warn)}
+  .b-test{background:rgba(157,159,173,.18);color:var(--muted)}
   main{padding:1.1rem 1.2rem;overflow:auto}
   .tiles{display:flex;gap:.8rem;flex-wrap:wrap;margin-bottom:1rem}
   .tile{background:var(--panel);border:1px solid var(--line);border-radius:.7rem;padding:.7rem .95rem;min-width:8.5rem;flex:1 1 8.5rem}
@@ -60,10 +60,10 @@
   .legend span{display:inline-flex;align-items:center;gap:.35rem}
   button.mini{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:.45rem;padding:.3rem .75rem;cursor:pointer;font-size:.82rem}
   button.mini:hover{border-color:var(--accent)}
-  .gbtn{background:var(--accent);color:#08131a;border:none;border-radius:.5rem;padding:.35rem .9rem;cursor:pointer;font-size:.9rem;font-weight:650;white-space:nowrap}
+  .gbtn{background:var(--accent);color:#0e0e18;border:none;border-radius:.5rem;padding:.35rem .9rem;cursor:pointer;font-size:.9rem;font-weight:650;white-space:nowrap}
   .gbtn:hover{filter:brightness(1.08)}
   /* modal: viewport units, unaffected by any content scaling */
-  .modal{position:fixed;inset:0;background:rgba(6,10,18,.74);display:none;z-index:50;padding:clamp(10px,3vh,34px)}
+  .modal{position:fixed;inset:0;background:rgba(8,8,14,.76);display:none;z-index:50;padding:clamp(10px,3vh,34px)}
   .modal.open{display:flex;align-items:flex-start;justify-content:center}
   .sheet{background:var(--panel);border:1px solid var(--line);border-radius:.9rem;width:min(60rem,100%);max-height:92vh;overflow:auto;padding:1.4rem 1.7rem;box-shadow:0 1.4rem 4rem rgba(0,0,0,.55)}
   .sheet h2{margin:0 0 .3rem;font-size:1.45rem}
