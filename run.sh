@@ -26,10 +26,49 @@ case "${1:-help}" in
     shift || true; dev caatc-gym python -m caatc.clearance_smoke "$@" ;;
   clearance-eval)                      # M1: roll out a baseline (naive|random|ideal) -> dashboard run
     shift || true; dev caatc-gym python -m caatc.clearance_eval "$@" ;;
-  gym-test)                            # M1: unit tests (frenet / controllers / termination / headroom)
+  gym-test)                            # unit tests (frenet / controllers / termination / headroom / train)
     shift || true
-    docker build -q -t caatc-gym-test -f docker/gym-test.Dockerfile . >/dev/null
-    dev caatc-gym-test python -m pytest -q caatc/tests "$@" ;;
+    # prefer the training image when it exists: it has stable-baselines3, so the
+    # M2 training tests run instead of skipping.
+    if docker image inspect caatc-train >/dev/null 2>&1; then
+      echo "running the full suite in caatc-train (includes the SB3 tests)"
+      dev caatc-train python -m pytest -q -p no:cacheprovider caatc/tests "$@"
+    else
+      docker build -q -t caatc-gym-test -f docker/gym-test.Dockerfile . >/dev/null
+      echo "running in caatc-gym-test (SB3 tests will skip; ./run.sh train-build adds them)"
+      dev caatc-gym-test python -m pytest -q -p no:cacheprovider caatc/tests "$@"
+    fi ;;
+
+  train-build)                         # M2: build the training image (gym base + stable-baselines3)
+    command -v docker >/dev/null 2>&1 || { echo "docker is required -- see README.md (Prerequisites)"; exit 1; }
+    docker build -t caatc-train -f docker/gym-train.Dockerfile . ;;
+  clearance-train)                     # M2: train PPO on caatc/clearance-v0 -> live dashboard run
+    shift || true; dev caatc-train python -m caatc.train "$@" ;;
+
+  view-build)                          # M2: build the viewing image (adds the X11 libs a window needs)
+    command -v docker >/dev/null 2>&1 || { echo "docker is required -- see README.md (Prerequisites)"; exit 1; }
+    docker build -t caatc-view -f docker/gym-view.Dockerfile . ;;
+  clearance-watch)                     # M2: WATCH a rollout -- mp4 by default, or a live window
+    shift || true
+    case " $* " in
+      *" --mode human"*|*" --mode human_fast"*)
+        # A live window needs the X11/Qt libs from the view image, plus the X
+        # server socket and DISPLAY handed into the container.
+        docker image inspect caatc-view >/dev/null 2>&1 || {
+          echo "the live window needs the view image: ./run.sh view-build"; exit 1; }
+        command -v xhost >/dev/null 2>&1 && xhost +local: >/dev/null 2>&1 || true
+        docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+          -v "$PWD":/src -e PYTHONPATH=/src -w /src \
+          -e DISPLAY="${DISPLAY:-:0}" -e SDL_VIDEODRIVER=x11 \
+          -e QT_X11_NO_MITSHM=1 \
+          -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+          caatc-view python -m caatc.play "$@" ;;
+      *)
+        # recording renders offscreen: the base image is enough, unless a trained
+        # model has to be loaded (that needs stable-baselines3 -> training image).
+        IMG=caatc-gym; for a in "$@"; do [ "$a" = "--model" ] && IMG=caatc-train; done
+        dev "$IMG" python -m caatc.play "$@" ;;
+    esac ;;
 
   # ---- training dashboard (stack-agnostic; reads JSONL runs) -----------------
   dashboard)                           # live training dashboard (host python3, nothing installed)
@@ -63,6 +102,13 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
     clearance-eval    M1 roll out a baseline
                         (--policy naive|random|ideal --preset easy|hard --episodes N)
     gym-test          M1 unit tests (frenet / controllers / termination / headroom)
+    train-build       M2 build the training image (adds stable-baselines3 + torch)
+    clearance-train   M2 train PPO on the env, logging live to the dashboard
+                        (--preset easy|hard --timesteps N --n-envs N --seed N)
+    view-build        M2 build the viewing image (X11 libs for a live window)
+    clearance-watch   M2 watch a rollout: records an mp4 (no display needed), or
+                        --mode human for a live window (needs view-build)
+                        (--policy naive|random|ideal | --model <.zip> --preset easy|hard)
 
   dashboard:
     dashboard         Live training dashboard at http://127.0.0.1:8770 (compare runs)
@@ -75,6 +121,7 @@ First time on this machine? Install Docker + join the docker group (needs a fres
 login) — see README.md "Prerequisites". Then:
     ./run.sh gym-build && ./run.sh gym-smoke        # expect: OK: gym base runs headless.
     ./run.sh clearance-smoke                        # prove the M1 scenario has headroom
+    ./run.sh train-build && ./run.sh clearance-train # M2: train it (watch ./run.sh dashboard)
 
 The legacy ROS 1 / Gazebo project (Gazebo demos, navigation, the original
 Q-learning) is preserved at tags v0.1.0–v0.3.0:  git checkout v0.3.0
