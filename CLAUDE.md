@@ -20,15 +20,21 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
     (`./run.sh clearance-smoke`, exits non-zero if the gap is absent), and unit tests
     (`./run.sh gym-test`). Design: **`docs/design/m1-clearance-env.md`** + **ADR 0007**. M1 also
     removed the legacy ROS 1 tree (ADR 0003).
-  - **M2 — next:** train with stable-baselines3 (PPO/DQN) on `caatc/clearance-v0`; visualize on the
-    dashboard; show learned ≫ naive.
+  - **M2 — done:** trained with **stable-baselines3 PPO** on the centralized `MultiDiscrete` joint
+    action (`caatc/train.py`, ADR 0008), streaming every episode to the dashboard and evaluating the
+    greedy policy through the *baselines' own* eval path. On EASY the learned policy **matches the
+    scripted oracle**: 100% success, 0 collisions, `t_clear` 6.00 s, EV 7.44 m/s (naive 2.29 m/s,
+    return 102.3 vs 31.4), with exactly K=3 lane changes. Also added a **top-down scene renderer**
+    (`caatc/render2d.py`) + replay tool (`caatc/play.py`): record an mp4 headless, or a live window.
 - Architectural decisions are recorded in **`docs/adr/`**. Improvement ideas in **`ROADMAP.md`**.
 
 ## Repository map
 - `caatc/` — the v1.0.0 Python 3 package (RL on `f1tenth_gym`): `clearance_env.py` (M1 env),
   `scenario.py`, `frenet.py`, `controllers.py`, `baselines.py`, `clearance_eval.py`,
-  `clearance_smoke.py` (headroom gate), `smoke.py` (M0), `tests/`.
-- `docker/` — `gym.Dockerfile` (Py3 dev image) + `gym-test.Dockerfile` (adds pytest).
+  `clearance_smoke.py` (headroom gate), `train.py` (M2 PPO), `play.py` + `render2d.py` (watch a
+  rollout), `smoke.py` (M0), `tests/`.
+- `docker/` — `gym.Dockerfile` (Py3 dev image), `gym-test.Dockerfile` (pytest),
+  `gym-train.Dockerfile` (stable-baselines3 + CPU torch), `gym-view.Dockerfile` (X11 for a window).
 - `run.sh` — the containerized runner (v1.0.0 only: `gym-*`, `clearance-*`, `dashboard`, `thesis`).
 - `docs/adr/` — Architecture Decision Records (the migration decisions and rationale).
 - `docs/design/` — design docs (the M1 ClearanceEnv design).
@@ -46,6 +52,9 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
 - **v1.0.0 (gym):** `./run.sh gym-build` · `./run.sh gym-smoke`
 - **M1:** `./run.sh clearance-smoke` (headroom gate) · `./run.sh gym-test` (unit tests) ·
   `./run.sh clearance-eval --policy naive|random|ideal --preset easy|hard`
+- **M2:** `./run.sh train-build` · `./run.sh clearance-train --preset easy --timesteps 300000 --n-envs 8`
+  · `./run.sh clearance-watch [--model <zip>|--policy ideal] [--mode human]` (needs `./run.sh view-build`
+  for a window) — never train unless `clearance-smoke` passes.
 - **Dashboard:** `./run.sh dashboard` (reads `saved_variables/runs/`) · `./run.sh dashboard-demo`
 - **Thesis:** `./run.sh thesis`
 - `./run.sh` with no arguments prints every command.
@@ -63,8 +72,9 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
 - The network here is flaky — retry git pushes/pulls and Docker image builds.
 
 ## Next step
-**M2 — train it.** Add stable-baselines3 (PPO for the `MultiDiscrete` joint action) and train on
-`caatc/clearance-v0` (EASY first, then HARD). Run `./run.sh clearance-smoke` first — never train a
-scenario whose headroom gate does not pass. Log training to `saved_variables/runs/` (the dashboard
-format `clearance_eval.write_run` already emits) and compare learned vs the naive/random/ideal band on
-`./run.sh dashboard`. Then extend toward the ROADMAP items (decentralized CTDE, richer V2V).
+**M3 — decentralize.** EASY is solved centrally (M2). The open work, in rough order: finish the
+**HARD** preset (occupancy reasoning — side lanes blocked, so the free side must be read from V2V);
+then move from one centralized joint policy to **CTDE / per-agent policies** (the env already
+anticipates a PettingZoo-parallel obs mode) so execution is decentralized like the thesis intends;
+then richer V2V (intention sharing, dropouts) and the **ROS 2 Humble mechanical demo** (ADR 0005).
+Always run `./run.sh clearance-smoke` before training a scenario.

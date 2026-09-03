@@ -4,24 +4,26 @@ A zero-dependency dashboard to watch RL training **live** and compare runs acros
 RL/environment improvements. Each training run is saved to its own folder, so you can browse,
 switch between, and overlay them later.
 
-![flow](https://img.shields.io/badge/metrics-jsonl-4fd1c5) ![server](https://img.shields.io/badge/server-python3_stdlib-46c37b) ![deps](https://img.shields.io/badge/dependencies-none-blue)
+![flow](https://img.shields.io/badge/metrics-jsonl-0ba7a8) ![server](https://img.shields.io/badge/server-python3_stdlib-38ad64) ![deps](https://img.shields.io/badge/dependencies-none-blue)
 
 ![Training dashboard — comparing runs](img/dashboard.png)
 
 ## How it works
 
 ```
-training (in Docker, Py2)                    dashboard (host, Py3 stdlib)
-──────────────────────────                   ────────────────────────────
-single_agent_qlearning_master.py             tools/dashboard/server.py  ──serves──▶ index.html
-  └─ training_logger.py  ──writes──▶  saved_variables/runs/<ts>_<label>/   ◀──polls every 2s──┘
-         per episode  ▶  metrics.jsonl   (episode, cum_reward, steps, epsilon, outcome)
-         per step     ▶  status.json     (live heartbeat: current episode/step/reward)
-         once         ▶  meta.json       (label, git SHA, hyperparameters, status)
+training / eval (in Docker, Py3)             dashboard (host, Py3 stdlib)
+────────────────────────────────             ────────────────────────────
+caatc/train.py          (PPO, M2)            tools/dashboard/server.py ──serves──▶ index.html
+caatc/clearance_eval.py (baselines, M1)                    │
+  └── writes ──▶ saved_variables/runs/<ts>_<label>/ ◀── polls every 2s ──┘
+         per episode  ▶  metrics.jsonl   (episode, cum_reward, num_steps, outcome,
+                                          t_clear, ev_progress, ev_mean_speed, lane_changes)
+         per episode  ▶  status.json     (live heartbeat: current episode/step/reward)
+         once         ▶  meta.json       (label, git SHA, scenario config, algo, status)
 ```
 
-The trainer streams metrics to disk (in the repo, which is bind-mounted, so the host sees them
-live). The dashboard is a tiny Python 3 **standard-library** web server that reads those files and
+Training streams metrics to disk (inside the repo, which is bind-mounted into the container, so the
+host sees them live). The dashboard is a tiny Python 3 **standard-library** web server that reads those files and
 serves a single-page app — **nothing is installed on your host**, and the logging is fail-safe (a
 logging error can never interrupt training).
 
