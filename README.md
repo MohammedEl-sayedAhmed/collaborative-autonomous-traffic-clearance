@@ -21,7 +21,7 @@ EV-clearing problem layered on top of the N-agent racing simulator.
 
 | Line | State |
 |------|-------|
-| **v1.0.0** — ROS 2 / Python 3 (this `master`) | **in progress** (gym-first): **M0 done** (gym base), **M1 done** (`ClearanceEnv` + baselines + headroom gate), **M2 next** (train with stable-baselines3) |
+| **v1.0.0** — ROS 2 / Python 3 (this `master`) | **in progress** (gym-first): **M0 done** (gym base), **M1 done** (`ClearanceEnv` + baselines + headroom gate), **M2 done** (PPO matches the scripted oracle on **both** EASY and HARD) |
 | **v0.x** — ROS 1 Kinetic / Python 2 (legacy) | frozen at tags `v0.1.0`–`v0.3.0`; `git checkout v0.3.0` for the full Gazebo project. Removed from `master` in M1 ([ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md)); its docs are in [`docs/legacy/`](docs/legacy/) |
 
 The migration decisions and their rationale are recorded as **Architecture Decision Records** in
@@ -94,6 +94,67 @@ Baselines log to the dashboard so you can see the band a learner must climb:
 Full design: [`docs/design/m1-clearance-env.md`](docs/design/m1-clearance-env.md) and
 [ADR 0007](docs/adr/0007-m1-clearance-env-design.md).
 
+## M2 — training it (PPO)
+
+One centralized **PPO** agent (stable-baselines3) picks the joint move-aside action for all K
+cooperators; the EV stays scripted. Training streams every episode to the dashboard in the same
+format the baselines use, and the trained policy is evaluated through the *same* code path as the
+baselines — so the comparison below is apples-to-apples ([ADR 0008](docs/adr/0008-train-with-stable-baselines3-ppo.md)).
+
+```bash
+./run.sh clearance-smoke                        # never train an unproven scenario
+./run.sh train-build                            # image: + stable-baselines3, CPU-only torch
+./run.sh clearance-train --preset easy --timesteps 300000 --n-envs 8
+./run.sh dashboard                              # watch it climb the baseline band, live
+```
+
+**Result on EASY** (20 greedy episodes each; 300k steps ≈ 16 min on 8 CPU cores):
+
+| policy | success | collisions | mean `t_clear` | EV mean speed | lane changes | return |
+|--------|--------:|-----------:|---------------:|--------------:|-------------:|-------:|
+| `naive` (nobody yields) | 0% | 0% | — *(times out)* | 2.29 m/s | 0 | 31.4 |
+| `random` | 30% | 45% | 11.67 s | 3.50 m/s | 80.8 | −2.0 |
+| `ideal` (scripted oracle) | 100% | 0% | 6.13 s | 7.31 m/s | 3.0 | 102.2 |
+| **PPO (learned)** | **100%** | **0%** | **6.00 s** | **7.44 m/s** | **3.0** | **102.3** |
+
+The learned policy **matches the scripted oracle** — same 100% success with zero collisions, a
+marginally faster clearance, and exactly K=3 lane changes (one per cooperator: it learned to yield
+once, at the right moment, rather than oscillating the way `random` does at 80 changes an episode).
+Against the naive floor the emergency vehicle moves **3.2× faster** and clears a route it otherwise
+never finishes.
+
+**Result on HARD** (250k steps; each cooperator has one adjacent side lane blocked, so the free side
+has to be read from the V2V occupancy features — guessing collides):
+
+| policy | success | collisions | mean `t_clear` | EV mean speed | return |
+|--------|--------:|-----------:|---------------:|--------------:|-------:|
+| `naive` | 0% | 0% | — *(times out)* | 2.29 m/s | 31.4 |
+| `random` | 25% | **60%** | 11.78 s | 3.65 m/s | −24.4 |
+| `ideal` (scripted oracle) | 100% | 0% | 6.13 s | 7.30 m/s | 102.2 |
+| **PPO (learned)** | **100%** | **0%** | **6.00 s** | **7.43 m/s** | **102.3** |
+
+`random` collides in 60% of HARD episodes by merging into an occupied lane; the learned policy never
+does. This is the 2020 project's "blocker" scenario — which its tabular agent could not solve —
+now solved from the V2V observation alone.
+
+## Watching it
+
+Training is headless, but any policy can be replayed as a top-down scene — recorded to an mp4
+(offscreen, no display needed) or shown in a live window:
+
+```bash
+./run.sh clearance-watch --policy naive                              # the blocked baseline -> mp4
+./run.sh clearance-watch --model saved_variables/models/ppo-easy.zip # the trained policy -> mp4
+./run.sh clearance-watch --model saved_variables/models/ppo-hard.zip --preset hard
+./run.sh view-build                                                  # once: X11 libs for a window
+./run.sh clearance-watch --policy ideal --mode human                 # a live window
+```
+
+The view unrolls the road into a straight strip (the lanes are frenet offsets, so this is the
+scenario's natural frame), colours each cooperator by whether it has cleared the EV lane, and shows
+the ACC state — the whole mechanism at a glance: **BLOCKED — held at convoy speed** versus
+**CLEAR — sprinting**.
+
 ## Training dashboard
 
 A live, zero-dependency dashboard to watch training and compare runs (tagged by commit) — it reads the
@@ -149,9 +210,12 @@ collaborative-autonomous-traffic-clearance/
 │   ├── baselines.py           #   naive / random / ideal reference policies
 │   ├── clearance_eval.py      #   evaluate + log dashboard runs
 │   ├── clearance_smoke.py     #   the pre-training headroom gate
+│   ├── train.py               #   M2 PPO training + live dashboard logging
+│   ├── play.py                #   replay a policy: mp4 or a live window
+│   ├── render2d.py            #   the top-down scene renderer
 │   ├── smoke.py               #   M0 headless smoke
 │   └── tests/                 #   unit tests
-├── docker/                    # gym.Dockerfile (dev image) + gym-test.Dockerfile
+├── docker/                    # gym (dev) + gym-test + gym-train (SB3) + gym-view (X11)
 ├── tools/dashboard/           # stack-agnostic training dashboard (reads JSONL runs)
 ├── docs/adr/                  # Architecture Decision Records (the migration)
 ├── docs/design/               # design docs (the M1 ClearanceEnv design)
@@ -165,6 +229,7 @@ collaborative-autonomous-traffic-clearance/
 |-----|----------|
 | [adr/](docs/adr/) | Architecture Decision Records — the ROS 2 / Python 3 migration decisions and rationale |
 | [design/m1-clearance-env.md](docs/design/m1-clearance-env.md) | The M1 ClearanceEnv design (scenario, ACC headroom, V2V obs, reward, verification) |
+| [adr/0008](docs/adr/0008-train-with-stable-baselines3-ppo.md) | Why M2 trains with stable-baselines3 PPO on the centralized joint action |
 | [DASHBOARD.md](docs/DASHBOARD.md) | Live training dashboard: stream metrics, compare runs across code changes |
 | [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | Plain-language guide to reading the dashboard (RL, episode, epsilon…) |
 | [legacy/](docs/legacy/) | The 2020 ROS 1 / Gazebo stack (architecture, subsystems, packages, running, RL experiments) |

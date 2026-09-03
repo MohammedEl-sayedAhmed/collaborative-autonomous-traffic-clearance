@@ -19,11 +19,14 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+# M2 training (installed in docker/gym-train.Dockerfile; torch from the CPU index)
+train = ["stable-baselines3>=2.4,<3"]
 
 [project.scripts]
 caatc-smoke = "caatc.smoke:main"
 caatc-clearance-smoke = "caatc.clearance_smoke:main"
 caatc-clearance-eval = "caatc.clearance_eval:main"
+caatc-train = "caatc.train:main"
 
 [tool.setuptools.packages.find]
 include = ["caatc*"]

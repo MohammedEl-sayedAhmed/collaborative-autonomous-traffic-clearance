@@ -17,8 +17,13 @@ V2V to clear a path for an **emergency vehicle** — is layered on top (M1).
 - **M1 — the scenario** *(done)*: `ClearanceEnv` — one **EV** + K cooperating cars,
   V2V shared observation, cooperative reward, scripted baselines, and a pre-training
   headroom gate. Legacy ROS 1 tree removed here.
-- **M2 — learn it** *(next)*: train with stable-baselines3 (PPO/DQN); log to the
-  dashboard; show learned ≫ naive.
+- **M2 — learn it** *(done)*: train with **stable-baselines3 PPO** on the centralized
+  joint action; stream episodes to the dashboard; replay any policy as a video or a
+  live window. On **both** EASY and HARD the learned policy **matches the scripted
+  oracle** (100% success, 0 collisions, 6.0 s clearance, ~7.4 m/s vs the naive floor's
+  2.29 m/s); on HARD it picks the free side from the V2V occupancy, where `random`
+  collides 60% of the time.
+  See [ADR 0008](../docs/adr/0008-train-with-stable-baselines3-ppo.md).
 
 ## Run M0 (nothing installed on the host)
 
@@ -44,3 +49,17 @@ Expected: it prints the per-agent observation keys and a step count for both the
 
 Design: [`../docs/design/m1-clearance-env.md`](../docs/design/m1-clearance-env.md) and
 [ADR 0007](../docs/adr/0007-m1-clearance-env-design.md).
+
+## M2 — train it
+
+```bash
+./run.sh train-build                                   # + stable-baselines3, CPU-only torch
+./run.sh clearance-train --preset easy --timesteps 300000 --n-envs 8
+./run.sh dashboard                                     # the learning curve, live
+
+./run.sh clearance-watch --model saved_variables/models/ppo-easy.zip   # -> mp4
+./run.sh view-build && ./run.sh clearance-watch --policy ideal --mode human   # a window
+```
+
+Modules: `train.py` (PPO + the dashboard callback + greedy eval through the baselines'
+own path), `play.py` (replay/record), `render2d.py` (the top-down scene).

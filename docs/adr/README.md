@@ -24,4 +24,5 @@ from its legacy ROS 1 / Python 2 stack to a maintained ROS 2 / Python 3 one.
 | [0004](0004-adopt-f1tenth-gym-for-rl.md) | Adopt f1tenth_gym as the RL platform | Accepted |
 | [0005](0005-phase-migration-gym-first.md) | Phase the migration gym-first, then a ROS 2 mechanical demo | Accepted |
 | [0006](0006-keep-thesis-as-private-submodule.md) | Keep the thesis as a private git submodule | Accepted |
-| [0007](0007-m1-clearance-env-design.md) | M1 scenario — ACC-governed multi-lane move-aside (ClearanceEnv) | Proposed |
+| [0007](0007-m1-clearance-env-design.md) | M1 scenario — ACC-governed multi-lane move-aside (ClearanceEnv) | Accepted |
+| [0008](0008-train-with-stable-baselines3-ppo.md) | M2 — train the ClearanceEnv with stable-baselines3 PPO | Accepted |

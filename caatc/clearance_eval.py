@@ -32,6 +32,27 @@ OUTCOME_COLLISION = 4  # "simulation died"
 OUTCOME_LABELS = {1: "max time steps", 2: "ambulance reached goal", 4: "simulation died"}
 
 
+def git_sha(default: str = "unknown") -> str:
+    """Short commit of the working tree, so a run is attributable to code.
+
+    The dashboard presents this per run; falling back to a placeholder would make
+    every run look identical, so try git and degrade gracefully. ``safe.directory``
+    is set because the repo is bind-mounted into the container under another uid.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "-c", "safe.directory=*", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            capture_output=True, text=True, timeout=10,
+        )
+        sha = out.stdout.strip()
+        return sha or default
+    except Exception:
+        return default
+
+
 def preset_config(preset: str, **overrides) -> ScenarioConfig:
     preset = preset.lower()
     if preset == "easy":
@@ -105,7 +126,7 @@ def summarize(records: List[Dict]) -> Dict:
 
 
 def write_run(runs_dir: str, label: str, cfg: ScenarioConfig, records: List[Dict],
-              git_sha: str = "caatc") -> str:
+              sha: Optional[str] = None) -> str:
     """Write a dashboard-format run dir. Returns its path."""
     run_id = time.strftime("%Y%m%d-%H%M%S") + "_" + label.replace("/", "-")
     run_dir = os.path.join(runs_dir, run_id)
@@ -117,7 +138,8 @@ def write_run(runs_dir: str, label: str, cfg: ScenarioConfig, records: List[Dict
         os.rename(path + ".tmp", path)
 
     meta = {
-        "run_id": run_id, "label": label, "git_sha": git_sha, "mode": "baseline",
+        "run_id": run_id, "label": label,
+        "git_sha": sha if sha is not None else git_sha(), "mode": "baseline",
         "config": {"max_num_episodes": len(records), "preset": cfg.preset,
                    "scenario": asdict(cfg)},
         "start_time": time.time(), "last_update": time.time(),

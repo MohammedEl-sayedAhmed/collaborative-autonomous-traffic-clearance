@@ -4,24 +4,26 @@ A zero-dependency dashboard to watch RL training **live** and compare runs acros
 RL/environment improvements. Each training run is saved to its own folder, so you can browse,
 switch between, and overlay them later.
 
-![flow](https://img.shields.io/badge/metrics-jsonl-4fd1c5) ![server](https://img.shields.io/badge/server-python3_stdlib-46c37b) ![deps](https://img.shields.io/badge/dependencies-none-blue)
+![flow](https://img.shields.io/badge/metrics-jsonl-0ba7a8) ![server](https://img.shields.io/badge/server-python3_stdlib-38ad64) ![deps](https://img.shields.io/badge/dependencies-none-blue)
 
 ![Training dashboard — comparing runs](img/dashboard.png)
 
 ## How it works
 
 ```
-training (in Docker, Py2)                    dashboard (host, Py3 stdlib)
-──────────────────────────                   ────────────────────────────
-single_agent_qlearning_master.py             tools/dashboard/server.py  ──serves──▶ index.html
-  └─ training_logger.py  ──writes──▶  saved_variables/runs/<ts>_<label>/   ◀──polls every 2s──┘
-         per episode  ▶  metrics.jsonl   (episode, cum_reward, steps, epsilon, outcome)
-         per step     ▶  status.json     (live heartbeat: current episode/step/reward)
-         once         ▶  meta.json       (label, git SHA, hyperparameters, status)
+training / eval (in Docker, Py3)             dashboard (host, Py3 stdlib)
+────────────────────────────────             ────────────────────────────
+caatc/train.py          (PPO, M2)            tools/dashboard/server.py ──serves──▶ index.html
+caatc/clearance_eval.py (baselines, M1)                    │
+  └── writes ──▶ saved_variables/runs/<ts>_<label>/ ◀── polls every 2s ──┘
+         per episode  ▶  metrics.jsonl   (episode, cum_reward, num_steps, outcome,
+                                          t_clear, ev_progress, ev_mean_speed, lane_changes)
+         per episode  ▶  status.json     (live heartbeat: current episode/step/reward)
+         once         ▶  meta.json       (label, git SHA, scenario config, algo, status)
 ```
 
-The trainer streams metrics to disk (in the repo, which is bind-mounted, so the host sees them
-live). The dashboard is a tiny Python 3 **standard-library** web server that reads those files and
+Training streams metrics to disk (inside the repo, which is bind-mounted into the container, so the
+host sees them live). The dashboard is a tiny Python 3 **standard-library** web server that reads those files and
 serves a single-page app — **nothing is installed on your host**, and the logging is fail-safe (a
 logging error can never interrupt training).
 
@@ -52,12 +54,37 @@ The dashboard reads any run written to `saved_variables/runs/` (the format
 ./run.sh dashboard
 ```
 
-Each run appears with its outcome mix (goal / max-steps / collision) and metrics. In **M2**, training
-with stable-baselines3 will write runs the same way — so a learned policy overlays directly on the
-naive / random / ideal band and you can see exactly how far it has climbed.
+Each run appears with its outcome mix (goal / max-steps / collision) and metrics.
+
+**Training (M2)** writes runs the same way, live — every finished episode is appended while PPO is
+still learning, so the curve climbs the baseline band while you watch:
+
+```bash
+./run.sh clearance-smoke                                     # the gate, first
+./run.sh clearance-train --preset easy --timesteps 300000 --n-envs 8
+```
+
+That produces two runs: `ppo-easy` (the training curve, marked **LIVE** while it runs) and
+`ppo-easy-eval` (the greedy policy scored over 20 episodes through the *same* evaluation code the
+baselines use). Overlay them on `ideal-easy` / `naive-easy` to see exactly how far the learned policy
+has climbed — on EASY and HARD it reaches the scripted oracle.
 
 > Legacy ROS 1 Q-learning training (`./run.sh rl`, `env.launch`, …) is at tag `v0.3.0`; its
 > fix-by-fix campaign is documented in [docs/legacy/RL_EXPERIMENTS.md](legacy/RL_EXPERIMENTS.md).
+
+## Colours
+
+The dashboard uses the **Nocturne** palette: a violet-tinted deep-ink ground with ten
+categorical series hues spaced 36° apart and *interleaved*, so two runs compared side by
+side land 144–180° apart on the colour wheel. It was derived in OKLCH (not by eye) inside
+the dark-mode lightness band and validated for colour-vision-deficiency separation,
+a normal-vision floor, and ≥3:1 contrast against the panel surface.
+
+Series colours are assigned in **fixed order** — a run keeps its colour when you filter
+others out — and the status colours (success / max-time / collision) are *reserved*: they
+are never reused as a series hue. All of it lives in two places: the CSS custom properties
+at the top of `tools/dashboard/app.css` and `PALETTE` / `INK` / `OUTCOME_COLOR` at the top
+of `tools/dashboard/app.js`.
 
 ## Navigating runs
 

@@ -1,6 +1,12 @@
-const PALETTE = ["#4fd1c5","#e0b64a","#e06c6c","#7aa2f7","#9ece6a","#bb9af7","#ff9e64","#2ac3de","#f7768e","#73daca"];
+// "Nocturne" categorical palette: 10 hues 36 deg apart, interleaved so consecutive
+// runs land 144-180 deg apart. Built in OKLCH inside the dark lightness band and
+// validated (CVD separation, normal-vision floor, >=3:1 on the panel surface).
+// Assigned in FIXED order -- a run keeps its colour when others are filtered out.
+const PALETTE = ["#0ba7a8","#d5626e","#0a9cd1","#d97734","#6686e4","#b78e08","#a376d6","#81a22e","#c869ab","#1aae74"];
+// Chart ink, mirroring the CSS tokens (SVG presentation attributes need literals).
+const INK = { fg:"#edeef4", muted:"#9d9fad", grid:"#2a2b3a", accent:"#09b4bb", bg:"#0e0e18" };
 const OUTCOME = {0:"in progress",1:"max time",2:"ambulance goal",3:"agent goal",4:"sim died",5:"collision"};
-const OUTCOME_COLOR = {1:"#e0b64a",2:"#46c37b",3:"#4fd1c5",4:"#e06c6c",0:"#9aa7bd",5:"#f7768e"};
+const OUTCOME_COLOR = {1:"#d38e22",2:"#38ad64",3:"#09b4bb",4:"#d9515e",0:"#9d9fad",5:"#c869ab"};
 
 // Single source of truth: `selected` decides what is shown. No competing "focus".
 const state = {runs:[], data:{}, selected:new Set(), colors:{}, first:true};
@@ -166,7 +172,7 @@ function lineChart(svg, series, opts={}){
   const id=svg.id;
   const W=svg.clientWidth||560, H=svg.clientHeight||220, FS=(rem()*0.74), P={l:rem()*3.2,r:rem()*1,t:rem()*.8,b:rem()*1.9};
   const pts = series.flatMap(s=>s.points).filter(p=>p[1]!=null && !isNaN(p[1]));
-  if(!pts.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="${rem()*.85}">no data yet</text>`; chartGeom[id]=null; return; }
+  if(!pts.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="${INK.muted}" text-anchor="middle" font-size="${rem()*.85}">no data yet</text>`; chartGeom[id]=null; return; }
   let xmin,xmax,ymin,ymax;
   const view = chartView[id];
   if(view){ xmin=view.x0; xmax=view.x1; ymin=view.y0; ymax=view.y1; }
@@ -181,9 +187,9 @@ function lineChart(svg, series, opts={}){
   const X=x=>P.l+(x-xmin)/(xmax-xmin)*plotW;
   const Y=y=>H-P.b-(y-ymin)/(ymax-ymin)*plotH;
   chartGeom[id]={W,H,P,xmin,xmax,ymin,ymax,plotW,plotH,zoomed:!!view};
-  let g=`<g font-size="${FS.toFixed(1)}" fill="#9aa7bd">`;
+  let g=`<g font-size="${FS.toFixed(1)}" fill="${INK.muted}">`;
   for(let i=0;i<=4;i++){ const yv=ymin+(ymax-ymin)*i/4, y=Y(yv);
-    g+=`<line x1="${P.l}" y1="${y.toFixed(1)}" x2="${W-P.r}" y2="${y.toFixed(1)}" stroke="#232e47"/>`;
+    g+=`<line x1="${P.l}" y1="${y.toFixed(1)}" x2="${W-P.r}" y2="${y.toFixed(1)}" stroke="${INK.grid}"/>`;
     g+=`<text x="${(P.l-FS*.5).toFixed(1)}" y="${(y+FS*.34).toFixed(1)}" text-anchor="end">${fmtAxis(yv)}</text>`; }
   const nT=Math.min(6,Math.max(1,Math.round(xmax-xmin)));
   for(let i=0;i<=nT;i++){ const xv=xmin+(xmax-xmin)*i/nT, x=X(xv);
@@ -201,7 +207,7 @@ function lineChart(svg, series, opts={}){
     out+=`<circle cx="${X(last[0]).toFixed(1)}" cy="${Y(last[1]).toFixed(1)}" r="3.4" fill="${s.color}"/>`;
   });
   out+=`</g>`;
-  if(view){ out+=`<text x="${(W-P.r).toFixed(1)}" y="${(P.t+FS).toFixed(1)}" text-anchor="end" font-size="${(FS).toFixed(1)}" fill="#4fd1c5">zoomed — double-click to reset</text>`; }
+  if(view){ out+=`<text x="${(W-P.r).toFixed(1)}" y="${(P.t+FS).toFixed(1)}" text-anchor="end" font-size="${(FS).toFixed(1)}" fill="${INK.accent}">zoomed — double-click to reset</text>`; }
   svg.innerHTML=out;
   svg.__series=series; svg.__kind="line";
   if(!svg.__interactive) attachChartInteraction(svg);
@@ -222,7 +228,7 @@ function attachChartInteraction(svg){
     if(drag){
       let sel=svg.querySelector("#__sel");
       if(!sel){ sel=document.createElementNS("http://www.w3.org/2000/svg","rect"); sel.setAttribute("id","__sel");
-        sel.setAttribute("fill","rgba(79,209,197,0.15)"); sel.setAttribute("stroke","#4fd1c5"); sel.setAttribute("stroke-dasharray","3 3"); svg.appendChild(sel); }
+        sel.setAttribute("fill","rgba(9,180,187,0.15)"); sel.setAttribute("stroke",INK.accent); sel.setAttribute("stroke-dasharray","3 3"); svg.appendChild(sel); }
       sel.setAttribute("x",Math.min(drag.x,px)); sel.setAttribute("y",G.P.t);
       sel.setAttribute("width",Math.abs(px-drag.x)); sel.setAttribute("height",G.plotH);
     } else showTip(svg,e,px);
@@ -259,7 +265,7 @@ function fmtAxis(v){ const a=Math.abs(v); if(a>=1000) return (v/1000).toFixed(1)
 
 function outcomeChart(svg, runs){
   const W=svg.clientWidth||560,H=svg.clientHeight||220,FS=rem()*0.74,P={l:rem()*1,r:rem()*1,t:rem()*1.7,b:rem()*3};
-  if(!runs.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#9aa7bd" text-anchor="middle" font-size="${rem()*.85}">no data yet</text>`; return; }
+  if(!runs.length){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="${INK.muted}" text-anchor="middle" font-size="${rem()*.85}">no data yet</text>`; return; }
   const keys=[1,2,3,4,0];
   const bw=Math.min(rem()*4.6,(W-P.l-P.r)/runs.length-rem());
   const maxN=Math.max(1,...runs.map(r=>r.detail.episodes.length));
@@ -272,10 +278,10 @@ function outcomeChart(svg, runs){
     let y=H-P.b;
     keys.forEach(k=>{ const h=(counts[k]/maxN)*(H-P.t-P.b);
       if(h>0){ g+=`<rect x="${(cx-bw/2).toFixed(1)}" y="${(y-h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${OUTCOME_COLOR[k]}"/>`; y-=h; } });
-    g+=`<text x="${cx.toFixed(1)}" y="${(H-P.b+FS*1.4).toFixed(1)}" fill="#e6ecf5" font-size="${FS.toFixed(1)}" text-anchor="middle">${escapeHtml(r.summary.label).slice(0,16)}</text>`;
-    g+=`<text x="${cx.toFixed(1)}" y="${(H-P.b+FS*2.7).toFixed(1)}" fill="#9aa7bd" font-size="${(FS*.9).toFixed(1)}" text-anchor="middle">${r.detail.episodes.length} ep</text>`;
+    g+=`<text x="${cx.toFixed(1)}" y="${(H-P.b+FS*1.4).toFixed(1)}" fill="${INK.fg}" font-size="${FS.toFixed(1)}" text-anchor="middle">${escapeHtml(r.summary.label).slice(0,16)}</text>`;
+    g+=`<text x="${cx.toFixed(1)}" y="${(H-P.b+FS*2.7).toFixed(1)}" fill="${INK.muted}" font-size="${(FS*.9).toFixed(1)}" text-anchor="middle">${r.detail.episodes.length} ep</text>`;
   });
-  let lx=P.l; g+=`<g font-size="${(FS*.92).toFixed(1)}" fill="#9aa7bd">`;
+  let lx=P.l; g+=`<g font-size="${(FS*.92).toFixed(1)}" fill="${INK.muted}">`;
   [2,3,1,4].forEach(k=>{ g+=`<rect x="${lx.toFixed(1)}" y="1" width="${(FS*.8).toFixed(1)}" height="${(FS*.8).toFixed(1)}" fill="${OUTCOME_COLOR[k]}"/><text x="${(lx+FS).toFixed(1)}" y="${(FS*.85).toFixed(1)}">${OUTCOME[k]}</text>`; lx+=Math.min(W/4,rem()*8.5); });
   g+=`</g>`;
   svg.innerHTML=g;

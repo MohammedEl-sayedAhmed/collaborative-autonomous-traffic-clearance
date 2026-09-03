@@ -13,7 +13,8 @@ See ``docs/design/m1-clearance-env.md``.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from collections import deque
+from typing import Deque, Dict, List, Optional
 
 import numpy as np
 import gymnasium as gym
@@ -89,12 +90,27 @@ def _one_hot(idx: int, n: int) -> List[float]:
 class ClearanceEnv(gym.Env):
     """Cooperative EV-clearing env; centralized ``MultiDiscrete`` control of K cars."""
 
-    metadata = {"render_modes": []}
+    metadata = {"render_modes": ["human", "human_fast", "rgb_array"], "render_fps": 100}
 
     def __init__(self, cfg: Optional[ScenarioConfig] = None, render_mode=None):
         super().__init__()
         self.cfg = cfg if cfg is not None else EASY_PRESET
-        self.render_mode = None  # headless only in M1
+        # Rendering is opt-in and OFF during training (it costs a pygame draw per
+        # physics substep). "human"/"human_fast" open a window (needs a display);
+        # "rgb_array" draws to an offscreen surface, so it works headless and is
+        # what the video recorder in caatc/play.py uses.
+        if render_mode is not None and render_mode not in self.metadata["render_modes"]:
+            raise ValueError(f"render_mode must be one of {self.metadata['render_modes']}")
+        self.render_mode = render_mode
+        # Bounded: a consumer that never calls pop_frames() (or a very long
+        # rollout) must not grow this without limit -- ~30 s of 100 Hz frames at
+        # 900x900 is already ~7 GB. Oldest frames are dropped.
+        self._frames: Deque[np.ndarray] = deque(maxlen=3000)
+        # Optional callback invoked once per physics substep with the current car
+        # states -- used by caatc/render2d.py to draw its own top-down scene at the
+        # 100 Hz physics rate (independent of the gym renderer). Left None while
+        # training, where it must cost nothing.
+        self.scene_hook = None
 
         # -- inner f1tenth env (built directly -> no gym.make wrappers) --------
         _reduce_scan_beams()
@@ -118,9 +134,11 @@ class ClearanceEnv(gym.Env):
                 "ego_idx": 0,
                 "seed": self.cfg.seed,
             },
-            render_mode=None,
+            render_mode=None,   # we attach our own renderer below (see _attach_renderer)
         )
         self._agent_ids = list(self.inner.agent_ids)
+        if render_mode is not None:
+            self._attach_renderer(render_mode)
 
         # -- roles / occupant lanes (indexing: [EV, K coops, H occupants]) -----
         self._layout = make_layout(self.cfg, np.random.default_rng(self.cfg.seed))
@@ -194,6 +212,11 @@ class ClearanceEnv(gym.Env):
 
         obs, _info = self.inner.reset(options={"poses": poses})
         self._last_obs = obs
+        self._draw()  # initial frame (no-op unless rendering)
+        if self.scene_hook is not None:
+            self.scene_hook(self._cars(obs), {"sim_time": 0.0, "ev_blocked": False,
+                                              "ev_v": 0.0, "ev_progress": 0.0,
+                                              "lane_changes": 0})
 
         K = cfg.num_cooperators
         self.target_lane = np.full(K, cfg.ev_lane, dtype=int)
@@ -277,7 +300,16 @@ class ClearanceEnv(gym.Env):
             obs, _r, inner_term, _trunc, _info = self.inner.step(act)
             self._last_obs = obs
             substeps_done += 1
+            self._draw()  # no-op unless a render_mode was requested
             cars = self._cars(obs)  # reused next iteration and after the loop
+            if self.scene_hook is not None:
+                self.scene_hook(cars, {
+                    "sim_time": (self._step_count + substeps_done / cfg.substeps) * cfg.dt,
+                    "ev_blocked": bool(blocked),
+                    "ev_v": cars[0]["v"],
+                    "ev_progress": min(cars[0]["s"] / cfg.s_goal, 1.0),
+                    "lane_changes": self._lane_changes,
+                })
 
             if np.any(np.asarray(self.inner.collisions) > 0):
                 collided = True
@@ -413,6 +445,85 @@ class ClearanceEnv(gym.Env):
             "step": self._step_count,
             "sim_time": self._step_count * self.cfg.dt,
         }
+
+    # -- rendering ------------------------------------------------------------
+    def _attach_renderer(self, render_mode: str) -> None:
+        """Install our own renderer instead of the base env's default one.
+
+        ``f1tenth_gym``'s ``make_renderer`` reads a hardcoded YAML, so the only way
+        to choose the window size, zoom, followed vehicle and per-car colours is to
+        build the renderer ourselves and swap it in (the base env was constructed
+        with ``render_mode=None``, so nothing is built twice).
+
+        Our "road" is a virtual set of lateral offsets on an empty occupancy map --
+        there are no walls to draw -- so a render callback paints the lane lines and
+        the goal line; without it the scene would be cars on a blank page.
+        """
+        from f1tenth_gym.envs.rendering import RenderSpec
+        from f1tenth_gym.envs.rendering.rendering_pygame import PygameEnvRenderer
+
+        cfg = self.cfg
+        # one colour per agent, in agent order: EV, K cooperators, H occupants
+        palette = (["#d9515e"]                          # EV -- urgent red
+                   + ["#0a9cd1"] * cfg.num_cooperators  # the cars we control
+                   + ["#9d9fad"] * cfg.num_occupants)   # scripted side-lane traffic
+        spec = RenderSpec(
+            window_size=900, focus_on=self._agent_ids[0], zoom_in_factor=2.5,
+            car_tickness=2, show_wheels=True, show_info=True, vehicle_palette=palette,
+        )
+        renderer = PygameEnvRenderer(
+            params=self.inner.params, track=self.track, agent_ids=self._agent_ids,
+            render_spec=spec, render_mode=render_mode, render_fps=int(cfg.sim_hz),
+        )
+        self.inner.render_spec = spec
+        self.inner.renderer = renderer
+        self.inner.render_mode = render_mode  # so F110Env.render() does the work
+
+        # precompute the static road overlay once (it never moves)
+        ss = np.linspace(0.0, self.frame.length, 240)
+        self._road_lines = []
+        for i in range(cfg.num_lanes + 1):
+            d = (i - cfg.ev_lane - 0.5) * cfg.lane_width      # lane boundary offset
+            pts = np.array([self.frame.frenet_to_xytheta(s, d)[:2] for s in ss])
+            edge = i in (0, cfg.num_lanes)
+            self._road_lines.append((pts, (90, 92, 110) if edge else (185, 187, 200),
+                                     2 if edge else 1))
+        half = cfg.num_lanes * cfg.lane_width / 2.0
+        self._goal_line = np.array(
+            [self.frame.frenet_to_xytheta(cfg.s_goal, d)[:2] for d in (-half, half)]
+        )
+        renderer.add_renderer_callback(self._draw_road)
+
+    def _draw_road(self, renderer) -> None:
+        """Render callback: the lane lines and the EV's goal line."""
+        for pts, color, size in self._road_lines:
+            renderer.render_lines(pts, color=color, size=size)
+        renderer.render_lines(self._goal_line, color=(56, 173, 100), size=3)
+
+    def _draw(self) -> None:
+        """Draw one frame at the physics rate (a no-op when not rendering).
+
+        In ``human``/``human_fast`` the inner renderer paces itself and paints its
+        window; in ``rgb_array`` the returned frame is buffered for the recorder
+        (``pop_frames``), which is how ``caatc/play.py`` writes a video.
+        """
+        if self.render_mode is None:
+            return
+        frame = self.inner.render()
+        if self.render_mode == "rgb_array" and frame is not None:
+            self._frames.append(np.asarray(frame))
+
+    def render(self):
+        """Gymnasium render hook: the latest frame in ``rgb_array`` mode."""
+        if self.render_mode == "rgb_array":
+            return self._frames[-1] if self._frames else self.inner.render()
+        return self.inner.render()
+
+    def pop_frames(self) -> List[np.ndarray]:
+        """Return the frames buffered since the last call and clear the buffer."""
+        frames = list(self._frames)
+        self._frames.clear()
+        return frames
 
     def close(self):
         try:
