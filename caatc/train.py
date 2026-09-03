@@ -178,7 +178,12 @@ def _make_callback(writer: RunWriter, n_envs: int):
                 if "ev_v" in info:
                     self.speed_sum[i] += float(info["ev_v"])
                     self.speed_cnt[i] += 1
-                if i < len(dones) and dones[i]:
+                # Only a stream carrying Monitor's episode record closes an
+                # episode. With M3's agent-split env the K streams of one scenario
+                # all report done, but the record sits on exactly one of them -- so
+                # this guard is what keeps an episode counted once, on the team
+                # scale. For M2's joint env every done info has one anyway.
+                if i < len(dones) and dones[i] and "episode" in info:
                     ep = info.get("episode", {})  # from the Monitor wrapper
                     mean_speed = float(self.speed_sum[i] / max(1.0, self.speed_cnt[i]))
                     self.speed_sum[i] = 0.0

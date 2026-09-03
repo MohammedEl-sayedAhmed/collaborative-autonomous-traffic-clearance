@@ -21,12 +21,15 @@ dependencies = [
 test = ["pytest>=7"]
 # M2 training (installed in docker/gym-train.Dockerfile; torch from the CPU index)
 train = ["stable-baselines3>=2.4,<3"]
+# optional: the PettingZoo parallel-API seam (caatc/pz_env.py, ADR 0009)
+marl = ["pettingzoo>=1.24,<2"]
 
 [project.scripts]
 caatc-smoke = "caatc.smoke:main"
 caatc-clearance-smoke = "caatc.clearance_smoke:main"
 caatc-clearance-eval = "caatc.clearance_eval:main"
 caatc-train = "caatc.train:main"
+caatc-train-dec = "caatc.train_dec:main"
 
 [tool.setuptools.packages.find]
 include = ["caatc*"]

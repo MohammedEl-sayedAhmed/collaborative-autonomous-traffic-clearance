@@ -16,4 +16,9 @@ RUN pip install --no-cache-dir "stable-baselines3>=2.4,<3" "gymnasium==0.29.1"
 # actually run (they skip in the lighter test image).
 RUN pip install --no-cache-dir pytest
 
+# pettingzoo is an OPTIONAL dependency: only caatc/pz_env.py (the standard-API
+# seam for external MARL algorithms, ADR 0009 fork 3) uses it, and it is here so
+# that adapter's API-conformance tests actually run.
+RUN pip install --no-cache-dir "pettingzoo>=1.24,<2"
+
 CMD ["python", "-m", "caatc.train", "--help"]
