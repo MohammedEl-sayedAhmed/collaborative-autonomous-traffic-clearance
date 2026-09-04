@@ -4,13 +4,13 @@
 **Collaborative Autonomous Traffic Clearance** — cooperative multi-agent reinforcement learning where
 several 1/10-scale autonomous cars clear a path for an **emergency vehicle** over V2V communication.
 Originally a 2020 graduation project (ROS Kinetic / Gazebo 7 / Python 2, on the F1TENTH / MIT racecar
-stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack built on `f1tenth_gym`.
+stack); now being migrated to a maintained **ROS 2 Jazzy / Python 3.12** stack built on `f1tenth_gym`.
 
 ## Current status — read this first
 - **Legacy ROS 1 / Python 2 line** is frozen at tags **`v0.1.0`** (baseline), **`v0.2.0`** (fixed &
   reproducible), **`v0.3.0`** (enhanced). `git checkout v0.3.0` to see it. It was **removed from
   `master` in M1** (ADR 0003); its docs are in **`docs/legacy/`**.
-- **v1.0.0 migration (ROS 2 Humble / Python 3)** is in progress, **gym-first** (see `docs/adr/`):
+- **v1.0.0 migration (ROS 2 Jazzy / Python 3.12)** is in progress, **gym-first** (see `docs/adr/`):
   - **M0 — done:** the `caatc/` package on **f1tenth_gym v1.0.0** (Gymnasium API, N-agent), Dockerized
     and headless. Prove it: `./run.sh gym-build && ./run.sh gym-smoke`.
   - **M1 — done:** the `ClearanceEnv` wrapper — `agent_0` is the scripted emergency vehicle, K
@@ -94,14 +94,25 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
 - The network here is flaky — retry git pushes/pulls and Docker image builds.
 
 ## Next step
-**M4 — the ROS 2 Humble mechanical demo** (the second half of ADR 0005): bring a trained policy up on
-ROS 2 Humble, mirroring the thesis's split of SUMO-for-RL and Gazebo-for-mechanics. Design it with an
-ADR and confirm the open forks with the owner first, as M1 and M3 were.
+**M4 — the ROS 2 Jazzy demo.** Design is **accepted** (ADR 0011) and all three forks are confirmed.
+The idea in one line: keep **one** `ClearanceEnv` as the only physics, and let **K ROS 2 nodes — one per
+car** — replace exactly rows `1..K` of the per-substep action array. Nothing about the EV, the ACC law,
+the reward or the metrics changes, so the published numbers stay comparable.
 
-Also open, in rough priority order: **richer V2V** (train against dropouts/latency rather than only
-evaluating them — M3 measured graceful degradation to p=0.5 but never trained on a lossy channel);
-and the ROADMAP's richer scenarios (more cars/lanes, curriculum) — K-transfer
-already works at K=4.
+Confirmed choices: **ROS 2 Jazzy** (supported to May 2029; Humble stops in May 2027 — ADR 0012), which
+means **Python 3.12 everywhere**; **standard ROS messages only** (`nav_msgs/Odometry`,
+`ackermann_msgs/AckermannDriveStamped`), so faithfulness is checked against a *declared tolerance*
+rather than bit-for-bit; the policy **exported to numpy** so the robot image needs no torch; and
+**no end-of-life dependencies at all** (nothing vendored from `f1tenth_gym_ros`).
 
-Always run `./run.sh clearance-smoke` before training a scenario, and `--preset strict` when the claim
-is about cooperation rather than mere success.
+Work in order: (1) finish the Python 3.12 rebase and re-verify every published table on it — the M1
+gate already passes; (2) the additive `ClearanceEnv` seam (`set_decision` / `joint_action_rows` /
+`substep` / `commit_step`) with bit-identity tests; (3) one car node in lockstep; (4) the full fleet,
+the V2V relay and the gates; (5) RViz view, a rosbag and the dashboard run.
+
+Also open: richer V2V (train against dropouts/latency, not just measure them) and the ROADMAP's bigger
+scenarios. `docs/upstream-candidates.md` holds four `f1tenth_gym` findings — **nothing has been sent
+upstream**; that is a separate decision.
+
+Always run `./run.sh clearance-smoke` before training, and use `--preset strict` when the claim is
+about cooperation rather than mere success.

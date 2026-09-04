@@ -4,7 +4,7 @@
 > coordinating over vehicle-to-vehicle communication, with reinforcement learning that learns
 > *when and how* to move aside.
 
-![Stack](https://img.shields.io/badge/ROS%202-Humble%20(planned)-22314E?logo=ros&logoColor=white)
+![Stack](https://img.shields.io/badge/ROS%202-Jazzy%20(in%20progress)-22314E?logo=ros&logoColor=white)
 ![Gym](https://img.shields.io/badge/RL-f1tenth__gym-4B8BBE)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/Run-Dockerized-2496ED?logo=docker&logoColor=white)
@@ -13,7 +13,7 @@
 An emergency vehicle (EV) broadcasts its location and intent over V2V ahead of time; the ordinary
 cars around it each run a learned policy that times a **move-aside** so the EV never has to slow down.
 Originally a **2020 graduation project** on ROS Kinetic / Gazebo 7 / Python 2, it is being migrated
-to a maintained **ROS 2 Humble / Python 3** stack built on
+to a maintained **ROS 2 Jazzy / Python 3.12** stack built on
 [`f1tenth_gym`](https://github.com/f1tenth/f1tenth_gym) — **gym-first**, with the cooperative
 EV-clearing problem layered on top of the N-agent racing simulator.
 
@@ -21,7 +21,7 @@ EV-clearing problem layered on top of the N-agent racing simulator.
 
 | Line | State |
 |------|-------|
-| **v1.0.0** — ROS 2 / Python 3 (this `master`) | **in progress** (gym-first): **M0 done** (gym base), **M1 done** (`ClearanceEnv` + baselines + headroom gate), **M2 done** (PPO matches the scripted oracle on **both** EASY and HARD), **M3 done** (decentralized execution equals centralized on STRICT and HARD) |
+| **v1.0.0** — ROS 2 / Python 3 (this `master`) | **in progress**. Done: **M0** (gym base), **M1** (`ClearanceEnv` + baselines + headroom gate), **M2** (centralized PPO matches the scripted oracle), **M3** (each car decides on its own — equals the centralized policy). In progress: **M4** (a ROS 2 Jazzy demo). |
 | **v0.x** — ROS 1 Kinetic / Python 2 (legacy) | frozen at tags `v0.1.0`–`v0.3.0`; `git checkout v0.3.0` for the full Gazebo project. Removed from `master` in M1 ([ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md)); its docs are in [`docs/legacy/`](docs/legacy/) |
 
 The migration decisions and their rationale are recorded as **Architecture Decision Records** in
@@ -200,6 +200,38 @@ The view unrolls the road into a straight strip (the lanes are frenet offsets, s
 scenario's natural frame), colours each cooperator by whether it has cleared the EV lane, and shows
 the ACC state — the whole mechanism at a glance: **BLOCKED — held at convoy speed** versus
 **CLEAR — sprinting**.
+
+## M4 — running it on ROS 2 (in progress)
+
+So far everything runs inside one Python program. M4 moves the cars onto **ROS 2**, the standard
+robotics middleware, so each car becomes its **own program on a real message bus** — the same shape a
+real 1/10-scale car would use.
+
+The plan in one line: **keep one simulator, add K car programs.**
+
+- One program owns the physics. It is the *same* `ClearanceEnv` that produced every number above, so
+  the results stay comparable. Nothing is re-implemented.
+- Each cooperating car gets its own ROS 2 node. It receives only its own state and its own V2V
+  messages, and publishes only its own steering/speed command.
+- The simulator swaps in those K commands and nothing else. That is the entire change — one slice of
+  one array — which is what keeps the physics honest.
+
+We target **ROS 2 Jazzy** because it is supported until **May 2029**. Humble, the older long-term
+release, stops getting updates in **May 2027**, and this whole rewrite exists to get off unsupported
+software ([ADR 0012](docs/adr/0012-target-ros2-jazzy-not-humble.md)). Jazzy ships Python 3.12, so the
+project's images moved to Python 3.12 too — one Python version everywhere means the physics is
+identical in both places.
+
+M4 is **not** trying to make the cars drive better; they already match the scripted oracle. It has to
+prove three things instead, each with a check that fails loudly if it is not true:
+
+1. the car programs read exactly the same numbers they were trained on;
+2. a recorded run replays into the plain simulator and produces the same result;
+3. no car program can see anything it should not — we publish the full ground truth on purpose and
+   then check that **no car is subscribed to it**.
+
+Full plan: [`docs/design/m4-ros2-mechanical-demo.md`](docs/design/m4-ros2-mechanical-demo.md) ·
+[ADR 0011](docs/adr/0011-m4-ros2-mechanical-demo.md).
 
 ## Training dashboard
 
