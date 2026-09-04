@@ -21,7 +21,7 @@ EV-clearing problem layered on top of the N-agent racing simulator.
 
 | Line | State |
 |------|-------|
-| **v1.0.0** — ROS 2 / Python 3 (this `master`) | **in progress** (gym-first): **M0 done** (gym base), **M1 done** (`ClearanceEnv` + baselines + headroom gate), **M2 done** (PPO matches the scripted oracle on **both** EASY and HARD) |
+| **v1.0.0** — ROS 2 / Python 3 (this `master`) | **in progress** (gym-first): **M0 done** (gym base), **M1 done** (`ClearanceEnv` + baselines + headroom gate), **M2 done** (PPO matches the scripted oracle on **both** EASY and HARD), **M3 done** (decentralized execution equals centralized on STRICT and HARD) |
 | **v0.x** — ROS 1 Kinetic / Python 2 (legacy) | frozen at tags `v0.1.0`–`v0.3.0`; `git checkout v0.3.0` for the full Gazebo project. Removed from `master` in M1 ([ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md)); its docs are in [`docs/legacy/`](docs/legacy/) |
 
 The migration decisions and their rationale are recorded as **Architecture Decision Records** in
@@ -137,6 +137,47 @@ has to be read from the V2V occupancy features — guessing collides):
 does. This is the 2020 project's "blocker" scenario — which its tabular agent could not solve —
 now solved from the V2V observation alone.
 
+## M3 — decentralizing it
+
+M2's controller is still centralized: one network reads all K cooperators and emits all their actions.
+M3 takes the joint view away — each car decides from **its own 26-feature observation** (own sensing +
+the V2V broadcasts in range), one shared network evaluated K times, **no global state at execution**
+([ADR 0009](docs/adr/0009-decentralized-execution-ippo.md)).
+
+```bash
+./run.sh clearance-smoke --m3     # is the per-agent view sufficient? (a scripted local oracle)
+./run.sh dec-smoke                # is the plumbing faithful and the view really local?
+./run.sh clearance-train-dec --preset strict --timesteps 900000 --n-envs 8
+```
+
+Because M2 already sits at the oracle ceiling, M3 is **not** an improvement claim — it is *equality
+under information restriction*, backed by gates that fail if any global state is read, plus two
+capabilities a joint controller structurally cannot have:
+
+| | M2 centralized | **M3 decentralized** |
+|---|---|---|
+| **STRICT** (convoying impossible) | 100%, 0 collisions, `t_clear` 6.13 s, **3.0 yields** | **identical — and equal to the oracle** |
+| HARD | 100%, 0 collisions, `t_clear` 6.00 s | **identical** (both reach the free-flow optimum) |
+| EASY (50 shared seeds) | 100%, 0 collisions, `t_clear` **6.00 s** | 100%, 0 collisions, `t_clear` **6.58 s** (+9.7%) |
+| same weights at K=4 | impossible (action space fixed at K) | 100%, `t_clear` 6.48 s |
+| 50% of V2V broadcasts lost | not expressible | 100%, `t_clear` 6.80 s |
+
+Each car can even run as **its own OS process**, receiving only its own observation over a pipe, and
+reproduce the in-process metrics — the end-to-end proof that nothing shared is required.
+
+The EASY row turned out to be a statement about the **scenario**, not about decentralization. Because
+the EV follows whatever is in front of it, cooperators that merely *speed up* let it through **without
+anyone yielding** — 100% success at ~95% of the oracle's return. So **success rate alone cannot tell
+cooperation from convoying; only clearance time can.** The decentralized policy was partially taking
+that shortcut on EASY (2.3 yields instead of 3.0).
+
+The **STRICT** preset ([ADR 0010](docs/adr/0010-strict-preset-removes-the-convoying-substitution.md))
+removes the substitution — a cooperator is speed-capped while still in the EV's lane, so you cannot
+outrun the ambulance in its own lane — and there the same learner yields **3.0/3.0 and matches the
+oracle exactly**. EASY and HARD keep their published numbers, and `--policy speedup` plus two gate
+checks keep the substitution permanently visible. Full analysis:
+[`docs/design/m3-decentralized-execution.md`](docs/design/m3-decentralized-execution.md).
+
 ## Watching it
 
 Training is headless, but any policy can be replayed as a top-down scene — recorded to an mp4
@@ -211,6 +252,14 @@ collaborative-autonomous-traffic-clearance/
 │   ├── clearance_eval.py      #   evaluate + log dashboard runs
 │   ├── clearance_smoke.py     #   the pre-training headroom gate
 │   ├── train.py               #   M2 PPO training + live dashboard logging
+│   ├── train_dec.py           #   M3 decentralized training (shared IPPO, optional CTDE)
+│   ├── decentralized.py       #   M3 per-car policies + the local-only enforcement view
+│   ├── obs_spec.py            #   the per-agent observation wire format
+│   ├── vec_agents.py          #   N joint envs -> N*K single-agent streams
+│   ├── central_critic.py      #   CTDE: local actor, joint critic (training only)
+│   ├── pz_env.py              #   PettingZoo ParallelEnv seam (external MARL)
+│   ├── proc_fleet.py          #   one OS process per car (the decentralization proof)
+│   ├── dec_smoke.py           #   the M3 interface + locality gate
 │   ├── play.py                #   replay a policy: mp4 or a live window
 │   ├── render2d.py            #   the top-down scene renderer
 │   ├── smoke.py               #   M0 headless smoke
@@ -230,6 +279,9 @@ collaborative-autonomous-traffic-clearance/
 | [adr/](docs/adr/) | Architecture Decision Records — the ROS 2 / Python 3 migration decisions and rationale |
 | [design/m1-clearance-env.md](docs/design/m1-clearance-env.md) | The M1 ClearanceEnv design (scenario, ACC headroom, V2V obs, reward, verification) |
 | [adr/0008](docs/adr/0008-train-with-stable-baselines3-ppo.md) | Why M2 trains with stable-baselines3 PPO on the centralized joint action |
+| [design/m3-decentralized-execution.md](docs/design/m3-decentralized-execution.md) | The M3 decentralization design, its gates, and the measured results |
+| [adr/0009](docs/adr/0009-decentralized-execution-ippo.md) | Why M3 decentralizes with a parameter-shared per-agent policy (IPPO) |
+| [adr/0010](docs/adr/0010-strict-preset-removes-the-convoying-substitution.md) | Why a STRICT preset was added: convoying must not substitute for yielding |
 | [DASHBOARD.md](docs/DASHBOARD.md) | Live training dashboard: stream metrics, compare runs across code changes |
 | [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | Plain-language guide to reading the dashboard (RL, episode, epsilon…) |
 | [legacy/](docs/legacy/) | The 2020 ROS 1 / Gazebo stack (architecture, subsystems, packages, running, RL experiments) |

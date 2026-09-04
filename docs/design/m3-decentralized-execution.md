@@ -177,11 +177,38 @@ below) — it "succeeds" without cooperating, and that is reported as a limitati
 Degradation is graceful all the way to losing half of all broadcasts — a robustness claim a joint
 controller cannot even be asked about, because its observation is the joint vector.
 
+**STRICT, 20 seeds** — the preset added in [ADR 0010](../adr/0010-strict-preset-removes-the-convoying-substitution.md),
+where a cooperator is speed-capped while still in the EV's lane, so **convoying cannot substitute for
+yielding**:
+
+| policy | success | collisions | mean `t_clear` | EV speed | return | lane changes |
+|--------|--------:|-----------:|---------------:|---------:|-------:|-------------:|
+| `naive` | 0% | 0% | — | 2.29 m/s | 31.4 | 0.0 |
+| `speedup` | **0%** | 0% | — | 2.29 m/s | 31.4 | 0.0 |
+| `ideal` (oracle) | 100% | 0% | 6.12 s | 7.31 m/s | 102.2 | 3.0 |
+| **M2 centralized** | 100% | 0% | 6.13 s | 7.296 m/s | 102.20 | **3.0** |
+| **M3 decentralized** | 100% | 0% | **6.13 s** | **7.296 m/s** | **102.20** | **3.0** |
+
+On STRICT the centralized and decentralized policies are **bit-identical, and both equal the oracle** —
+100% success, zero collisions, and **3.0 yields per episode**: every car gets out of the way, every
+episode. This is the result M3 was built to produce, and it reframes the EASY gap below.
+
 ### Verdict against the success criteria, and what the gap is
 
+- **STRICT: the criterion is met exactly** — decentralized equals centralized equals the oracle, with
+  full 3.0-yield cooperation. On the preset where success *means* cooperation, decentralization costs
+  nothing.
 - **HARD: the criterion is met** — the decentralized policy equals the centralized one exactly.
 - **EASY: the criterion is missed** — `t_clear` is **+9.7%** vs M2, against a 5% bar. Success and
   collisions are identical; the difference is 2.3 yields per episode instead of 3.0.
+
+**What the STRICT result says about the EASY gap.** The same learner, same hyper-parameters and same
+budget yields fully (3.0) and matches the oracle the moment the shortcut is removed. So the EASY gap is
+not a cost of decentralization, and not primarily a credit-assignment failure — it is the decentralized
+policy **exploiting the scenario's convoying substitution** (partially: 2.3 yields, `speedup` alone
+would be 0.0). The per-seat gradient (30/30, 25/30, 18/30) is then best read as *which* car finds the
+shortcut most attractive — the one furthest from the EV, whose yield pays off latest — rather than as
+evidence that the shared reward cannot be learned from.
 
 The cause was diagnosed rather than tuned around. Per-seat behaviour over 30 episodes: car 1 (nearest
 the EV) yields **30/30**, car 2 **25/30**, car 3 **18/30** — monotone in distance from the EV, which is

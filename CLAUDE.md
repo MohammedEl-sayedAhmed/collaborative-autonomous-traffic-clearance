@@ -28,13 +28,29 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
     102.3 where `random` collides 60% of the time — i.e. it learned to read the V2V occupancy and
     merge to the *free* side. Exactly K=3 lane changes, no oscillation. Also added a **top-down scene renderer**
     (`caatc/render2d.py`) + replay tool (`caatc/play.py`): record an mp4 headless, or a live window.
+  - **M3 — done:** decentralized execution (ADR 0009). Each car decides from its own 26-feature view,
+    one shared network evaluated K times, **no global state at execution** (`caatc/train_dec.py`,
+    parameter-shared IPPO over `caatc/vec_agents.py`; optional CTDE via `--central-critic`, where the
+    actor still reads only its own view). Both decision gates pass
+    (`./run.sh clearance-smoke --m3`, `./run.sh dec-smoke`) — including K separate OS processes, each
+    seeing only its own car's observation, reproducing the in-process metrics. **On STRICT and HARD the
+    decentralized policy equals the centralized one exactly** (STRICT: 100% success, 0 collisions,
+    `t_clear` 6.13 s, 3.0 yields = the oracle). On EASY it is +9.7% on `t_clear`.
+  - **The EASY gap is a scenario artifact, not a decentralization cost** (ADR 0010): the EV's ACC law
+    follows whatever is ahead, so cooperators that merely SPEED UP let it through without yielding —
+    100% success at ~95% of the oracle's return. **Success rate cannot distinguish cooperation from
+    convoying; only clearance time can.** The **STRICT** preset caps a cooperator's speed while it is
+    still in the EV's lane, which removes the substitution — and there the same learner yields 3.0/3.0
+    and matches the oracle. EASY/HARD are untouched so published numbers stay valid;
+    `--policy speedup` + two gate checks keep the substitution visible.
 - Architectural decisions are recorded in **`docs/adr/`**. Improvement ideas in **`ROADMAP.md`**.
 
 ## Repository map
 - `caatc/` — the v1.0.0 Python 3 package (RL on `f1tenth_gym`): `clearance_env.py` (M1 env),
   `scenario.py`, `frenet.py`, `controllers.py`, `baselines.py`, `clearance_eval.py`,
   `clearance_smoke.py` (headroom gate), `train.py` (M2 PPO), `play.py` + `render2d.py` (watch a
-  rollout), `smoke.py` (M0), `tests/`.
+  rollout), `smoke.py` (M0), `tests/`; M3: `train_dec.py`, `decentralized.py`, `obs_spec.py`,
+  `vec_agents.py`, `central_critic.py`, `pz_env.py`, `proc_fleet.py`, `dec_smoke.py`.
 - `docker/` — `gym.Dockerfile` (Py3 dev image), `gym-test.Dockerfile` (pytest),
   `gym-train.Dockerfile` (stable-baselines3 + CPU torch), `gym-view.Dockerfile` (X11 for a window).
 - `run.sh` — the containerized runner (v1.0.0 only: `gym-*`, `clearance-*`, `dashboard`, `thesis`).
@@ -54,6 +70,9 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
 - **v1.0.0 (gym):** `./run.sh gym-build` · `./run.sh gym-smoke`
 - **M1:** `./run.sh clearance-smoke` (headroom gate) · `./run.sh gym-test` (unit tests) ·
   `./run.sh clearance-eval --policy naive|random|ideal --preset easy|hard`
+- **M3:** `./run.sh clearance-smoke --m3` (is the local view sufficient?) · `./run.sh dec-smoke`
+  (plumbing + locality) · `./run.sh clearance-train-dec --preset easy|hard|strict --timesteps N`
+  (`--central-critic` for CTDE) · presets are `easy|hard|strict` everywhere
 - **M2:** `./run.sh train-build` · `./run.sh clearance-train --preset easy --timesteps 300000 --n-envs 8`
   · `./run.sh clearance-watch [--model <zip>|--policy ideal] [--mode human]` (needs `./run.sh view-build`
   for a window) — never train unless `clearance-smoke` passes.
@@ -74,8 +93,15 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
 - The network here is flaky — retry git pushes/pulls and Docker image builds.
 
 ## Next step
-**M3 — decentralize.** Both presets are solved centrally (M2). The open work, in rough order: move
-from one centralized joint policy to **CTDE / per-agent policies** (the env already
-anticipates a PettingZoo-parallel obs mode) so execution is decentralized like the thesis intends;
-then richer V2V (intention sharing, dropouts) and the **ROS 2 Humble mechanical demo** (ADR 0005).
-Always run `./run.sh clearance-smoke` before training a scenario.
+**M4 — the ROS 2 Humble mechanical demo** (the second half of ADR 0005): bring a trained policy up on
+ROS 2 Humble, mirroring the thesis's split of SUMO-for-RL and Gazebo-for-mechanics. Design it with an
+ADR and confirm the open forks with the owner first, as M1 and M3 were.
+
+Also open, in rough priority order: **richer V2V** (train against dropouts/latency rather than only
+evaluating them — M3 measured graceful degradation to p=0.5 but never trained on a lossy channel);
+**closing the EASY gap** if it is still wanted (the CTDE escalation exists behind
+`--central-critic`); and the ROADMAP's richer scenarios (more cars/lanes, curriculum) — K-transfer
+already works at K=4.
+
+Always run `./run.sh clearance-smoke` before training a scenario, and `--preset strict` when the claim
+is about cooperation rather than mere success.
