@@ -194,8 +194,11 @@ def main(argv=None):
         if not a.no_log:
             w = RunWriter(runs_dir, f"{label}-eval", cfg, mode="eval",
                           total_episodes=len(records))
-            w.meta["config"]["algo"] = "ippo-shared"
+            # record what actually ran: a CTDE evaluation archived as plain IPPO
+            # would make the dashboard comparison wrong in the one place it matters
+            w.meta["config"]["algo"] = "ctde-shared" if a.central_critic else "ippo-shared"
             w.meta["config"]["decentralized"] = True
+            w.meta["config"]["central_critic"] = bool(a.central_critic)
             for r in records:
                 w.episode({
                     "episode": r["episode"], "cum_reward": round(r["cum_reward"], 4),

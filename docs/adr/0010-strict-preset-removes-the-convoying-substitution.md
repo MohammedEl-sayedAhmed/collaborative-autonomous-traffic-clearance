@@ -50,8 +50,10 @@ Measured over 20 seeds:
 | STRICT | `ideal` | 100% | 6.12 s | 7.31 m/s (unchanged) |
 
 The headroom gate gains two STRICT checks — *convoying cannot succeed* and *yielding still succeeds* —
-so the property is enforced rather than assumed, and `--preset strict` is available everywhere
-(`clearance-eval`, `clearance-smoke`, `clearance-train`, `clearance-train-dec`, `dec-smoke`).
+so the property is enforced rather than assumed. `--preset strict` is accepted by every command that
+takes a preset — `clearance-eval`, `clearance-train`, `clearance-train-dec`, `dec-smoke` and
+`clearance-watch`. `clearance-smoke` takes no `--preset`: it gates *all* presets in one run, and its
+STRICT block is part of that fixed sequence.
 
 ## Consequences
 

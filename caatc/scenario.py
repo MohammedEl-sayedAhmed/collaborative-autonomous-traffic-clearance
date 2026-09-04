@@ -246,9 +246,14 @@ def strict_preset(**overrides) -> ScenarioConfig:
     the scenario the project is actually about. EASY and HARD are left untouched so
     the published M2/M3 numbers stay valid and comparable.
     """
-    base = ScenarioConfig(preset="strict")
-    base = replace(base, ev_lane_speed_cap=base.coop_speed)
-    return replace(base, **overrides)
+    # Apply the overrides FIRST, then derive the cap from the resulting cruise
+    # speed -- deriving it from the default would silently desync the two (e.g.
+    # strict_preset(coop_speed=3.0) would cap at 2.0 and throttle even a policy
+    # that never speeds up). An explicit ev_lane_speed_cap override still wins.
+    base = replace(ScenarioConfig(preset="strict"), **overrides)
+    if "ev_lane_speed_cap" not in overrides:
+        base = replace(base, ev_lane_speed_cap=base.coop_speed)
+    return base
 
 
 EASY_PRESET = easy_preset()

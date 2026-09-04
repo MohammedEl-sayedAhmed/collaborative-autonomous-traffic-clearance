@@ -140,15 +140,33 @@ def check_process_fleet(cfg: ScenarioConfig, episodes: int = 4,
                         model_path: Optional[str] = None, tol: float = 1e-6) -> bool:
     """K real OS processes, one per car, must reproduce the in-process metrics.
 
-    Compared on episode *metrics* rather than on identical action sequences: across
-    processes, BLAS reduction order can flip an argmax on a near-tie, and a flaky
-    gate is worse than no gate.
+    With ``model_path`` the workers run that trained policy and the in-process
+    reference is the same policy; without one, both sides run the scripted local
+    oracle. Compared on episode *metrics* rather than on identical action sequences:
+    across processes, BLAS reduction order can flip an argmax on a near-tie, and a
+    flaky gate is worse than no gate.
     """
     from .proc_fleet import ProcessFleet
 
+    # The in-process reference must be the SAME policy the workers run, or this
+    # compares two different policies and fails for the wrong reason. (It did:
+    # with --model the fleet ran the model while the reference stayed the scripted
+    # oracle -- invisible until a model was actually passed.)
+    if model_path:
+        from stable_baselines3 import PPO
+
+        from .decentralized import SharedPolicySquad
+        from .obs_spec import feature_count
+
+        model = PPO.load(model_path, device="cpu")
+        pad = int(model.observation_space.shape[0]) - int(feature_count(cfg))
+        make_reference = lambda seed: SharedPolicySquad(model, joint_pad=pad, seed=seed)
+    else:
+        make_reference = lambda seed: LocalSquad()
+
     env = ClearanceEnv(cfg)
     try:
-        local = [run_episode(env, LocalSquad(), seed=s) for s in range(episodes)]
+        local = [run_episode(env, make_reference(s), seed=s) for s in range(episodes)]
         fleet = ProcessFleet(cfg, model_path=model_path)
         try:
             remote = [run_episode(env, fleet, seed=s) for s in range(episodes)]
