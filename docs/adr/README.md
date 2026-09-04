@@ -26,3 +26,4 @@ from its legacy ROS 1 / Python 2 stack to a maintained ROS 2 / Python 3 one.
 | [0006](0006-keep-thesis-as-private-submodule.md) | Keep the thesis as a private git submodule | Accepted |
 | [0007](0007-m1-clearance-env-design.md) | M1 scenario — ACC-governed multi-lane move-aside (ClearanceEnv) | Accepted |
 | [0008](0008-train-with-stable-baselines3-ppo.md) | M2 — train the ClearanceEnv with stable-baselines3 PPO | Accepted |
+| [0009](0009-decentralized-execution-ippo.md) | M3 — decentralized execution via a parameter-shared per-agent policy (IPPO) | Proposed |

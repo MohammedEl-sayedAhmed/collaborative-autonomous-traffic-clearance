@@ -48,6 +48,11 @@ case "${1:-help}" in
   view-build)                          # M2: build the viewing image (adds the X11 libs a window needs)
     command -v docker >/dev/null 2>&1 || { echo "docker is required -- see README.md (Prerequisites)"; exit 1; }
     docker build -t caatc-view -f docker/gym-view.Dockerfile . ;;
+  dec-smoke)                           # M3: decentralization gate (interfaces + locality)
+    shift || true; dev caatc-train python -m caatc.dec_smoke "$@" ;;
+  clearance-train-dec)                 # M3: train the DECENTRALIZED policy (shared IPPO)
+    shift || true; dev caatc-train python -m caatc.train_dec "$@" ;;
+
   clearance-watch)                     # M2: WATCH a rollout -- mp4 by default, or a live window
     shift || true
     # Parse the two flags that pick the image/branch, accepting BOTH "--flag value"
@@ -117,6 +122,9 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
     clearance-train   M2 train PPO on the env, logging live to the dashboard
                         (--preset easy|hard --timesteps N --n-envs N --seed N)
     view-build        M2 build the viewing image (X11 libs for a live window)
+    dec-smoke         M3 decentralization gate: per-agent views, locality, plumbing
+    clearance-train-dec  M3 train the decentralized policy (parameter-shared IPPO)
+                        (--preset easy|hard --timesteps N --n-envs N)
     clearance-watch   M2 watch a rollout: records an mp4 (no display needed), or
                         --mode human for a live window (needs view-build)
                         (--policy naive|random|ideal | --model <.zip> --preset easy|hard)

@@ -388,8 +388,13 @@ class ClearanceEnv(gym.Env):
         else:
             out += [0.0] * (6 + cfg.num_lanes)
 
-        # M nearest neighbors (other traffic; excludes self and EV)
-        neigh = [c for k, c in enumerate(cars) if k != 0 and k != (1 + j)]
+        # M nearest neighbours (other traffic; excludes self and the EV), gated to
+        # what this car could actually hear: without the gate the nearest-M sort
+        # fills its slots from anywhere on the road, which would make a
+        # "decentralized" policy quietly dependent on out-of-range cars (ADR 0009).
+        gate = cfg.neighbor_gate
+        neigh = [c for k, c in enumerate(cars)
+                 if k != 0 and k != (1 + j) and abs(c["s"] - s) <= gate]
         neigh.sort(key=lambda c: abs(c["s"] - s))
         for m in range(cfg.num_neighbors):
             if m < len(neigh):
@@ -417,14 +422,40 @@ class ClearanceEnv(gym.Env):
                 return 0.0
         return 1.0
 
+    # -- per-agent views (the seam decentralized execution is built on) -------
+    @property
+    def obs_features(self) -> int:
+        """Width F of ONE cooperator's observation (independent of K)."""
+        return self._F
+
+    def per_agent_obs(self, j: int, cars: Optional[List[dict]] = None) -> np.ndarray:
+        """Cooperator ``j``'s own observation: ``(F,)`` float32, clipped.
+
+        This is what a decentralized policy is allowed to see -- its own sensing
+        plus the V2V broadcasts in range. Nothing here is joint state.
+        """
+        if cars is None:
+            cars = self._cars(self._last_obs)
+        vec = np.asarray(self._per_coop_obs(j, cars), dtype=np.float32)
+        return np.clip(vec, -10.0, 10.0)
+
+    def per_agent_obs_all(self, cars: Optional[List[dict]] = None) -> np.ndarray:
+        """All cooperators' own observations stacked: ``(K, F)`` float32."""
+        if cars is None:
+            cars = self._cars(self._last_obs)
+        return np.stack([self.per_agent_obs(j, cars)
+                         for j in range(self.cfg.num_cooperators)])
+
     def _build_obs(self, obs, cars: Optional[List[dict]] = None) -> np.ndarray:
+        """The centralized (M2) observation: the per-agent views concatenated.
+
+        Kept bit-identical to the pre-M3 implementation -- clipping is elementwise,
+        so clipping each agent's slice and concatenating equals concatenating and
+        then clipping (asserted by test_per_agent_obs_matches_joint_slice).
+        """
         if cars is None:
             cars = self._cars(obs)
-        vec: List[float] = []
-        for j in range(self.cfg.num_cooperators):
-            vec += self._per_coop_obs(j, cars)
-        arr = np.asarray(vec, dtype=np.float32)
-        return np.clip(arr, -10.0, 10.0)
+        return self.per_agent_obs_all(cars).reshape(-1)
 
     # -- info -----------------------------------------------------------------
     def _info(self, obs, cars: Optional[List[dict]] = None, *,

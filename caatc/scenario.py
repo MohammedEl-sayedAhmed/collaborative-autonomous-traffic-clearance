@@ -12,7 +12,7 @@ lanes**; first trainable preset = **EASY**.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -75,6 +75,11 @@ class ScenarioConfig:
 
     # -- observation ----------------------------------------------------------
     v2v_range: float = 25.0        # EV broadcast range gate (m)
+    # Range gate for the M-nearest-neighbour block. None -> v2v_range. Without a
+    # gate the "local" observation is not local: the nearest-M sort would fill its
+    # slots from anywhere on the road, so a car far outside communication range
+    # would still be visible to a decentralized policy (ADR 0009, fork 2).
+    neighbor_range: Optional[float] = None
     num_neighbors: int = 2         # M nearest cooperators included per obs
     clear_window: float = 6.0      # +/- s window for left_clear / right_clear (m)
 
@@ -91,6 +96,11 @@ class ScenarioConfig:
     seed: int = 12345
 
     # -- derived --------------------------------------------------------------
+    @property
+    def neighbor_gate(self) -> float:
+        """Effective neighbour range (m); defaults to the V2V broadcast range."""
+        return self.v2v_range if self.neighbor_range is None else self.neighbor_range
+
     @property
     def substeps(self) -> int:
         """Physics steps per high-level (wrapper) step."""
