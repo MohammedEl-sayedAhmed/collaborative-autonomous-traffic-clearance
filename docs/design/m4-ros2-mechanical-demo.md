@@ -7,8 +7,7 @@ publishing the drive command that actually moves its car.
 
 This is the second half of [ADR 0005](../adr/0005-phase-migration-gym-first.md)'s split: the thesis used
 SUMO for the RL results and Gazebo for a mechanical proof; we use `f1tenth_gym` for the results and
-ROS 2 for the mechanical proof — on a stack that is not end-of-life. Status: **proposed** — three forks
-open at the end. To be recorded as **ADR 0011**, which supersedes ADR 0005's *"via `f1tenth_gym_ros`
+ROS 2 for the mechanical proof — on a stack that is not end-of-life. Status: **accepted** (2026-09-04) — all three forks confirmed (see the end). To be recorded as **ADR 0011**, which supersedes ADR 0005's *"via `f1tenth_gym_ros`
 (1–2 cars)"* clause and nothing else in it.
 
 M3 proved decentralized execution with a Python facade (`LocalOnlyView`) and a pipe harness
@@ -35,9 +34,10 @@ demo is the by-product**.
   bridge constructs `F110Env` from f1tenth_gym's *dev* branch, whose config surface differs from what
   `clearance_env.py` passes — so taking their bridge means taking their gym, which means re-baselining
   every published table. **We keep the wire, not the engine.**
-- **Two modes, two claims.** *Lockstep* barriers every substep on an integer index — an equality test,
-  never a tolerance — and exists **for the gate, not for realism**: it is what makes bit-identity with
-  `python -m caatc.clearance_eval` attainable. *Async* is the honest demo, with command age, drops and
+- **Two modes, two claims.** *Lockstep* barriers every substep on an integer index and exists **for
+  the gate, not for realism**: it removes timing as a variable so the only remaining difference between
+  the ROS run and `python -m caatc.clearance_eval` is the wire's precision (fork 2), which is then
+  *measured* against a pre-declared tolerance rather than assumed away. *Async* is the honest demo, with command age, drops and
   real-time factor measured and published.
 - **The deployed policy is an exported actor, not a pickle.** `ippo-strict.zip` → a ~12 k-parameter
   `.npz` + `.json` run in numpy, so the ROS image carries **no torch and no SB3**. The CTDE actor is
@@ -222,31 +222,45 @@ gate checks are ~40% of the work.
    invalidates the published numbers. M4's charter is exactly *the same physics, now over ROS, decided
    per car*. The `Plant` seam is built and deliberately **not** used twice in M4.
 
-## Open forks — confirm before implementing
+## Open forks — CONFIRMED (2026-09-04)
 
-1. **Where the physics interpreter lives.** *Recommended: **(A)** one `caatc-ros` image on `ros:humble`
-   with `ClearanceEnv` in-process, gated by `check_env_fingerprint`.* Reserve **(B)**: physics stays in
-   `caatc-gym` (3.11) as a sidecar behind a `Plant` protocol over a unix socket, with a thin `rclpy`
-   shim. A is one image and one process boundary fewer; the only thing B buys is exact identity with
-   the published tables — which A either delivers (making B waste) or *provably* fails to deliver
-   (making B one day's work that changes no number, since the lockstep barrier is untimed). So: design
-   B, don't build it on speculation, and never pay for identity by re-baselining the tables.
-2. **The parity wire.** *Recommended: **(A)** dual publication* — float64 `caatc_msgs` carry the loop,
-   while `nav_msgs/Odometry` and `ackermann_msgs/AckermannDriveStamped` are published alongside as the
-   ROS-tool and hardware-facing record, and `--wire standard` runs the loop on the float32 contract and
-   **reports** the divergence. **(B)** standard messages only, with a tolerance. Every
-   `AckermannDrive` field is float32, `Odometry` carries no steering angle and only a quaternion
-   heading, and both `delta` and `theta` are consumed every substep — so B forfeits bit-identity in the
-   7th digit, 100×/s, over ~1,400 substeps, in a scenario whose outcomes are threshold events. A keeps
-   the strict claim *and* turns the hardware-shaped wire's cost into a published number instead of a
-   caveat. Cost: ~6 small `.msg` files and two extra publishers.
-3. **The policy runtime in the ROS image.** *Recommended: **(A)** export to `.npz` + `.json` and run it
-   in numpy.* **(B)** `PPO.load` with torch + SB3 inside the ROS image. A removes ~1 GB from the image
-   on a documented-flaky network, removes cross-version pickle rot, deletes the `joint_pad` contract
-   (the joint half was never deployable anyway), makes observation-layout drift impossible via a
-   recorded layout hash, and is the artifact a Jetson wants. Honest cost: it **is** a second numerical
-   path — hence a test asserting identical argmax on 10 000 real-rollout observations
-   (`|Δlogits| ≤ 1e-5`), with the `.zip` path kept for cross-checking.
+The owner's instruction was explicit: **"I want everything to be adapted on ROS 2 even if this requires
+too much rework."** All three forks resolve toward the ROS-native option, and two of them override the
+recommendation above. What that costs is stated here rather than discovered later.
+
+1. **Where the physics interpreter lives → one interpreter everywhere: `caatc-gym` is rebased on
+   Python 3.10** *(overrides the recommendation, which was to keep 3.11 and measure)*. `rclpy` is built
+   against the distro interpreter, so ROS pins 3.10; rather than run two Pythons or a sidecar, the whole
+   stack moves to 3.10. **Consequence, accepted:** every published table must be re-verified on the new
+   interpreter — the M1 headroom gate, M2's EASY/HARD numbers, M3's STRICT/HARD/EASY numbers and the
+   K-transfer and dropout columns. Any drift is **re-baselined and documented**, never silently
+   absorbed. This is done *first*, before a line of ROS code, so nothing is built on an unverified base.
+2. **The parity wire → standard ROS messages only** *(overrides the recommendation of dual
+   publication)*. `nav_msgs/Odometry` and `ackermann_msgs/AckermannDriveStamped` carry the loop; no
+   custom float64 twin. This is the idiomatic, hardware-facing choice and it is what a real 1/10 car
+   speaks. **Consequence, accepted and important:** every `AckermannDrive` field is float32 and
+   `Odometry` carries no steering angle and only a quaternion heading, while `delta` and `theta` are
+   consumed every substep — so **bit-identity is no longer attainable**, and M4's faithfulness gates
+   become *tolerance* gates:
+   - `check_obs_identity` and `check_lockstep_replay` assert agreement within a **declared, published
+     tolerance** instead of bit-equality, and the *measured* divergence is reported every run.
+   - The tolerance is fixed **before** the runs, derived from the wire (float32 ≈ 6 significant digits
+     on state, one quaternion round trip on heading), and a run that needs a looser tolerance than
+     declared **fails** rather than having the bar moved.
+   - `check_published_parity` therefore reports *outcome* equality (success, collisions, yields) plus a
+     divergence table on `t_clear`, not bit-identity. Outcome equality is the claim; the digits are the
+     measurement.
+   The honest framing shifts from "the published numbers carry over verbatim" to "**the ROS deployment
+   reproduces the published outcomes within a measured tolerance, and here is the divergence**" —
+   which is the claim a hardware-facing system can actually make.
+3. **The policy runtime → exported and run without an ML framework in the robot image.** Read as the
+   ROS-native reading of the same instruction: the deployed node is a plain ROS 2 node with numpy, not a
+   training stack in a robot container — the artifact a Jetson would run. It is the heavier option
+   (export tooling plus a parity test asserting identical argmax on 10 000 real observations), which is
+   the trade the instruction accepts. The `.zip` path is kept in `caatc-train` for cross-checking.
+
+*(If fork 3 was meant the other way — keep torch/SB3 inside the ROS image — say so and it is a small
+change: the node's policy loader is one class behind one interface.)*
 
 *(Design produced by a 4-proposal judged workflow — angles: port `f1tenth_gym_ros`, a thin bridge over
 `ClearanceEnv`, Gazebo mechanical fidelity, a deployment shell toward hardware — then synthesized. The

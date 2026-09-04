@@ -1,6 +1,6 @@
 # 0011. M4 — the ROS 2 Humble mechanical demo: one plant, K deployed car nodes
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-09-04
 - **Deciders:** Mohammed El-sayed Ahmed
 - **Supersedes:** the *"via `f1tenth_gym_ros` (1–2 cars)"* clause of
@@ -75,12 +75,27 @@ Build M4 as **one plant, K deployed car nodes, a vendored contract**, per
   the allowlisted topics reproduces the actions exactly; and the **headroom carries over** (`naive` and
   `speedup` must still fail on STRICT through the full graph).
 
-Status is **proposed** pending the owner's confirmation of the three forks in the design doc (where the
-physics interpreter lives; the parity wire; the policy runtime).
+**All three forks confirmed (2026-09-04)**, on the owner's explicit instruction to adapt everything to
+ROS 2 even at the cost of rework — two of them against the recommendation:
+
+1. **One interpreter everywhere:** `caatc-gym` is rebased on **Python 3.10** (the distro's, which
+   `rclpy` is built against) instead of keeping 3.11 or adding a sidecar. Every published table is
+   re-verified on the new interpreter *first*, before any ROS code, and any drift is re-baselined and
+   documented rather than silently absorbed.
+2. **Standard ROS messages only:** `nav_msgs/Odometry` + `ackermann_msgs/AckermannDriveStamped` carry
+   the loop, with no custom float64 twin. **This gives up bit-identity** (float32 fields, no steering
+   angle in `Odometry`, a quaternion heading round trip) so M4's faithfulness gates become
+   **tolerance** gates with the tolerance declared *before* the runs and the divergence published every
+   run; a run needing a looser tolerance fails rather than moving the bar. The claim becomes *outcome*
+   equality plus a measured divergence table — which is the claim a hardware-facing system can make.
+3. **No ML framework in the robot image:** the actor is exported and run in numpy, guarded by a parity
+   test against the `.zip` on 10 000 real observations.
 
 ## Consequences
 
-- **Positive:** the decentralization claim is re-proven on a *real* bus with real serialization,
+- **Positive (as confirmed):** one interpreter across the whole stack, and a wire a real 1/10 car
+  already speaks — the deployed node is a plain ROS 2 node with numpy. The decentralization claim is
+  re-proven on a *real* bus with real serialization,
   ordering and timing, by gates that fail if the transport changed the plant or if a node can see what
   it should not — and a `rosbag2` replay gate that keeps working after every plant swap, including onto
   hardware. The published numbers stay valid **by construction** (one plant, one array slice of
@@ -90,7 +105,9 @@ physics interpreter lives; the parity wire; the policy runtime).
   and side traffic stay scripted and the referee is an oracle. Lockstep is not real-time by design. We
   own a bridge (~6 small messages and six nodes) rather than adopting one, and a cross-interpreter
   numeric divergence is possible (detected before anything is built on it, with a documented ladder).
-  Honest cost: **8–10 focused working days**, zero training compute.
+  Honest cost: **8–10 focused working days** plus the re-verification of every published table on
+  Python 3.10 (fork 1) — zero training compute unless a table has to be re-baselined. Fork 2 costs the
+  bit-identity claim, replacing it with a measured tolerance.
 - **Neutral:** ADR 0005's phase decision stands and is being honoured; only its bridge clause is
   superseded. `caatc/plant.py` is built as the seam for a future 3D or hardware plant and deliberately
   **not** used twice in M4 — that is M5, with its own ADR, gates and re-baselining budget.
