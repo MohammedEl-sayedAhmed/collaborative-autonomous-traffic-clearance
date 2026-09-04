@@ -158,7 +158,7 @@ capabilities a joint controller structurally cannot have:
 |---|---|---|
 | **STRICT** (convoying impossible) | 100%, 0 collisions, `t_clear` 6.13 s, **3.0 yields** | **identical — and equal to the oracle** |
 | HARD | 100%, 0 collisions, `t_clear` 6.00 s | **identical** (both reach the free-flow optimum) |
-| EASY (50 shared seeds) | 100%, 0 collisions, `t_clear` **6.00 s** | 100%, 0 collisions, `t_clear` **6.58 s** (+9.7%) |
+| EASY (50 shared seeds) | 100%, 0 collisions, `t_clear` **6.00 s** | 100%, 0 collisions, `t_clear` 6.58 s (+9.7%) — **6.02 s (+0.33%) with `--central-critic`** |
 | same weights at K=4 | impossible (action space fixed at K) | 100%, `t_clear` 6.48 s |
 | 50% of V2V broadcasts lost | not expressible | 100%, `t_clear` 6.80 s |
 
@@ -175,7 +175,12 @@ The **STRICT** preset ([ADR 0010](docs/adr/0010-strict-preset-removes-the-convoy
 removes the substitution — a cooperator is speed-capped while still in the EV's lane, so you cannot
 outrun the ambulance in its own lane — and there the same learner yields **3.0/3.0 and matches the
 oracle exactly**. EASY and HARD keep their published numbers, and `--policy speedup` plus two gate
-checks keep the substitution permanently visible. Full analysis:
+checks keep the substitution permanently visible.
+
+Two independent fixes each close the EASY gap, which is what makes the diagnosis credible: removing
+the shortcut (STRICT), **or** giving the critic the joint state during training while the actor still
+sees only its own view (`--central-critic`, which reaches 6.02 s and 3.0 yields with the shortcut still
+available). Full analysis:
 [`docs/design/m3-decentralized-execution.md`](docs/design/m3-decentralized-execution.md).
 
 ## Watching it

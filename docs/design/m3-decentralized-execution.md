@@ -193,6 +193,17 @@ On STRICT the centralized and decentralized policies are **bit-identical, and bo
 100% success, zero collisions, and **3.0 yields per episode**: every car gets out of the way, every
 episode. This is the result M3 was built to produce, and it reframes the EASY gap below.
 
+**EASY with the central critic** (`--central-critic`: the actor still reads only its own 26 features,
+the critic reads the joint vector during training), 20 seeds:
+
+| policy on EASY | success | collisions | mean `t_clear` | EV speed | return | lane changes |
+|----------------|--------:|-----------:|---------------:|---------:|-------:|-------------:|
+| M3 decentralized, shared reward (IPPO) | 100% | 0% | 6.44 s | 7.01 m/s | 101.68 | 2.4 |
+| **M3 decentralized, central critic (CTDE)** | 100% | 0% | **6.02 s** | **7.42 m/s** | **102.26** | **3.0** |
+| M2 centralized (reference) | 100% | 0% | 6.00 s | 7.43 m/s | 102.29 | 3.0 |
+
+**+0.33% against M2** — inside the 5% criterion — and full 3.0-yield cooperation.
+
 ### Verdict against the success criteria, and what the gap is
 
 - **STRICT: the criterion is met exactly** — decentralized equals centralized equals the oracle, with
@@ -202,13 +213,28 @@ episode. This is the result M3 was built to produce, and it reframes the EASY ga
 - **EASY: the criterion is missed** — `t_clear` is **+9.7%** vs M2, against a 5% bar. Success and
   collisions are identical; the difference is 2.3 yields per episode instead of 3.0.
 
-**What the STRICT result says about the EASY gap.** The same learner, same hyper-parameters and same
-budget yields fully (3.0) and matches the oracle the moment the shortcut is removed. So the EASY gap is
-not a cost of decentralization, and not primarily a credit-assignment failure — it is the decentralized
-policy **exploiting the scenario's convoying substitution** (partially: 2.3 yields, `speedup` alone
-would be 0.0). The per-seat gradient (30/30, 25/30, 18/30) is then best read as *which* car finds the
-shortcut most attractive — the one furthest from the EV, whose yield pays off latest — rather than as
-evidence that the shared reward cannot be learned from.
+**Two independent interventions, each sufficient — which is what settles the diagnosis.** The EASY gap
+had two contributing causes, and removing *either* one closes it:
+
+1. **Remove the shortcut** (STRICT): the same learner, same hyper-parameters, same budget yields
+   3.0/3.0 and matches the oracle. So the gap was partly the policy *exploiting* the convoying
+   substitution.
+2. **Improve credit assignment** (CTDE on EASY): with the shortcut still available, a centralized
+   critic alone takes the policy to 3.0 yields and +0.33% of M2. So the gap was also genuinely a
+   shared-reward credit-assignment effect.
+
+That both work is stronger evidence than either alone, and it vindicates the per-seat measurement
+(30/30, 25/30, 18/30) as a real credit-assignment signature rather than only a shortcut preference:
+the distal car both benefits most from free-riding *and* has the most delayed contribution, and each
+fix addresses one of those.
+
+*(For the record: after the STRICT result the expectation stated here was that the central critic would
+**not** help much, since STRICT appeared to explain the gap on its own. The measurement contradicted
+that — CTDE closes it with the shortcut still present. The interpretation above is the corrected one.)*
+
+**So the criterion is now met on all three presets** — STRICT and HARD with plain IPPO, EASY with the
+central critic. The escalation is therefore *adopted*, not merely available: `--central-critic` is the
+recommended setting on presets that still admit the substitution.
 
 The cause was diagnosed rather than tuned around. Per-seat behaviour over 30 episodes: car 1 (nearest
 the EV) yields **30/30**, car 2 **25/30**, car 3 **18/30** — monotone in distance from the EV, which is

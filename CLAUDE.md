@@ -35,7 +35,8 @@ stack); now being migrated to a maintained **ROS 2 Humble / Python 3** stack bui
     (`./run.sh clearance-smoke --m3`, `./run.sh dec-smoke`) — including K separate OS processes, each
     seeing only its own car's observation, reproducing the in-process metrics. **On STRICT and HARD the
     decentralized policy equals the centralized one exactly** (STRICT: 100% success, 0 collisions,
-    `t_clear` 6.13 s, 3.0 yields = the oracle). On EASY it is +9.7% on `t_clear`.
+    `t_clear` 6.13 s, 3.0 yields = the oracle). On EASY plain IPPO is +9.7% on `t_clear`, and **`--central-critic` closes it to +0.33% with 3.0
+    yields** — so the escalation is adopted, not merely available.
   - **The EASY gap is a scenario artifact, not a decentralization cost** (ADR 0010): the EV's ACC law
     follows whatever is ahead, so cooperators that merely SPEED UP let it through without yielding —
     100% success at ~95% of the oracle's return. **Success rate cannot distinguish cooperation from
@@ -99,8 +100,7 @@ ADR and confirm the open forks with the owner first, as M1 and M3 were.
 
 Also open, in rough priority order: **richer V2V** (train against dropouts/latency rather than only
 evaluating them — M3 measured graceful degradation to p=0.5 but never trained on a lossy channel);
-**closing the EASY gap** if it is still wanted (the CTDE escalation exists behind
-`--central-critic`); and the ROADMAP's richer scenarios (more cars/lanes, curriculum) — K-transfer
+and the ROADMAP's richer scenarios (more cars/lanes, curriculum) — K-transfer
 already works at K=4.
 
 Always run `./run.sh clearance-smoke` before training a scenario, and `--preset strict` when the claim
