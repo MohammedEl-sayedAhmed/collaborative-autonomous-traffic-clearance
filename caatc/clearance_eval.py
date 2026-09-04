@@ -173,7 +173,8 @@ def default_runs_dir() -> str:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Evaluate a ClearanceEnv policy and log it.")
-    ap.add_argument("--policy", default="ideal", choices=["naive", "random", "ideal"])
+    ap.add_argument("--policy", default="ideal",
+                    choices=["naive", "random", "speedup", "ideal"])
     ap.add_argument("--preset", default="easy", choices=["easy", "hard"])
     ap.add_argument("--episodes", type=int, default=20)
     ap.add_argument("--seed", type=int, default=0)

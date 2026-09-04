@@ -17,7 +17,7 @@ from typing import Optional
 
 import numpy as np
 
-from .clearance_env import STAY, MERGE_LEFT, MERGE_RIGHT
+from .clearance_env import STAY, MERGE_LEFT, MERGE_RIGHT, SPEED_UP
 
 
 class NaiveHold:
@@ -45,6 +45,30 @@ class RandomPolicy:
 
     def __call__(self, env) -> np.ndarray:
         return self.rng.integers(0, 5, size=env.cfg.num_cooperators)
+
+
+class SpeedUpOnly:
+    """Never change lane; just accelerate -- the *degenerate* strategy.
+
+    It exists to be measured. Because the EV's adaptive-cruise law follows whatever
+    is in front of it, a convoy that speeds up to ``coop_speed_max`` lets the EV
+    through without anyone yielding: on both presets this reaches **100% success**
+    and ~95% of the oracle's return while never cooperating.
+
+    So success rate alone cannot distinguish cooperation from convoying -- clearance
+    time is the metric that separates them (oracle ~6.1 s vs ~10.6 s here). Keeping
+    this baseline in the band makes that substitution visible instead of letting a
+    learner discover it quietly, which is exactly what a decentralized policy with
+    weak credit assignment tends to do.
+    """
+
+    name = "speedup"
+
+    def reset(self):
+        pass
+
+    def __call__(self, env) -> np.ndarray:
+        return np.full(env.cfg.num_cooperators, SPEED_UP, dtype=int)
 
 
 class IdealCooperator:
@@ -99,12 +123,14 @@ class IdealCooperator:
 
 
 def make_policy(name: str, seed: int = 0):
-    """Factory: ``"naive" | "random" | "ideal"`` -> a policy instance."""
+    """Factory: ``"naive" | "random" | "speedup" | "ideal"`` -> a policy instance."""
     name = name.lower()
     if name == "naive":
         return NaiveHold()
     if name == "random":
         return RandomPolicy(seed=seed)
+    if name == "speedup":
+        return SpeedUpOnly()
     if name == "ideal":
         return IdealCooperator()
-    raise ValueError(f"unknown policy '{name}' (naive|random|ideal)")
+    raise ValueError(f"unknown policy '{name}' (naive|random|speedup|ideal)")

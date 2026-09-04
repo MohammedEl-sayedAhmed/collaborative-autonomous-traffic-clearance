@@ -31,7 +31,7 @@ import numpy as np
 from .scenario import easy_preset, hard_preset
 from .clearance_env import ClearanceEnv
 from .clearance_eval import run_episode
-from .baselines import NaiveHold, RandomPolicy, IdealCooperator
+from .baselines import NaiveHold, RandomPolicy, IdealCooperator, SpeedUpOnly
 from .decentralized import LocalOnlyView, LocalSquad
 
 # thresholds
@@ -102,6 +102,20 @@ def run_gate(easy_seeds: int = 10, hard_seeds: int = 8, mono_seeds: int = 3) -> 
     # guard the training signal itself: the cooperative reward must rank ideal above
     # naive (a sign/weight bug would otherwise pass every physics-based check).
     g.check("cooperative return ideal > naive", i_ret > n_ret, f"{i_ret:.1f} > {n_ret:.1f}")
+
+    # -- 2b. the degenerate strategy -----------------------------------------
+    # The EV follows whatever is in front of it, so a convoy that merely speeds up
+    # lets it through without anyone yielding. That reaches 100% success, which
+    # means SUCCESS RATE CANNOT distinguish cooperation from convoying -- only
+    # clearance time can. Keep it in the band so a learner cannot find it quietly.
+    speedup = [run_episode(env, SpeedUpOnly(), seed=s) for s in range(easy_seeds)]
+    u_succ, _u_coll, u_spd, _u_prog, u_ret = _rates(speedup)
+    print(f"    speedup (never yields): success={u_succ:.2f} ev_speed={u_spd:.2f} "
+          f"return={u_ret:.2f}")
+    g.check("cooperating beats convoying on clearance time",
+            i_spd > u_spd * 1.3, f"ideal {i_spd:.2f} vs speedup {u_spd:.2f} m/s")
+    g.check("cooperating beats convoying on return", i_ret > u_ret,
+            f"{i_ret:.1f} > {u_ret:.1f}")
 
     # -- 3. monotonicity -----------------------------------------------------
     print(f"\nMonotonicity ({mono_seeds} seeds/point):")

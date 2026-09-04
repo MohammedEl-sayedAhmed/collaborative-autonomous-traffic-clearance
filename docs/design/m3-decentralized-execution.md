@@ -135,6 +135,80 @@ extend along that axis. Both new gates exit non-zero on failure.
 - **Structural:** `test_executor_touches_no_global_state` (the policy runs against `LocalOnlyView`),
   and `proc_fleet` reproducing in-process metrics within tolerance.
 
+
+## Results (measured)
+
+**EASY, paired on 50 shared seeds** (every policy sees the identical episodes):
+
+| policy | success | collisions | mean `t_clear` | EV speed | return | lane changes |
+|--------|--------:|-----------:|---------------:|---------:|-------:|-------------:|
+| `naive` (all STAY) | 0% | 0% | — | 2.29 m/s | 31.3 | 0.0 |
+| `speedup` (never yields) | **100%** | 0% | 10.61 s | 4.18 m/s | 97.6 | 0.0 |
+| `ideal` (privileged oracle) | 100% | 0% | 6.13 s | 7.30 m/s | 102.2 | 3.0 |
+| **M2 centralized** (joint action) | 100% | 0% | **6.00 s** | 7.43 m/s | 102.29 | 3.0 |
+| **M3 decentralized** (own obs only) | 100% | 0% | 6.58 s | 6.87 m/s | 101.54 | 2.3 |
+
+**HARD, 20 seeds:** the decentralized policy reaches **exactly** the centralized result — 100%
+success, 0 collisions, `t_clear` 6.00 s, 7.4308 m/s, return 102.264, 3.0 lane changes. The metrics are
+bit-identical because both policies attain the *free-flow optimum*: no car ever blocks the EV, so the
+EV runs the same unblocked trajectory. Their action sequences differ (verified), and the networks are
+different shapes (19,472 params on `(78,)`/`MultiDiscrete` vs 12,166 on `(26,)`/`Discrete`) — the
+equality is in the outcome, not the mechanism.
+
+**Capability column 1 — K-transfer** (the *same* weights, at a K it never trained on; M2's joint
+policy structurally cannot do this, its action space is fixed at K=3):
+
+| K | success | collisions | `t_clear` | lane changes |
+|---|--------:|-----------:|----------:|-------------:|
+| 2 | 100% | 0% | 10.62 s | **0.0** |
+| 3 (trained) | 100% | 0% | 6.44 s | 2.4 |
+| 4 | 100% | 0% | 6.48 s | 2.2 |
+
+K=4 transfers cleanly. **K=2 does not**: with 0.0 lane changes it has fallen back on convoying (see
+below) — it "succeeds" without cooperating, and that is reported as a limitation, not a win.
+
+**Capability column 2 — per-car V2V dropout** (each car's broadcast lost with probability p, K=3):
+
+| p | 0.0 | 0.1 | 0.3 | 0.5 |
+|---|----:|----:|----:|----:|
+| success | 100% | 100% | 100% | 100% |
+| `t_clear` | 6.44 s | 6.44 s | 6.56 s | 6.80 s |
+
+Degradation is graceful all the way to losing half of all broadcasts — a robustness claim a joint
+controller cannot even be asked about, because its observation is the joint vector.
+
+### Verdict against the success criteria, and what the gap is
+
+- **HARD: the criterion is met** — the decentralized policy equals the centralized one exactly.
+- **EASY: the criterion is missed** — `t_clear` is **+9.7%** vs M2, against a 5% bar. Success and
+  collisions are identical; the difference is 2.3 yields per episode instead of 3.0.
+
+The cause was diagnosed rather than tuned around. Per-seat behaviour over 30 episodes: car 1 (nearest
+the EV) yields **30/30**, car 2 **25/30**, car 3 **18/30** — monotone in distance from the EV, which is
+the signature of **shared-reward credit assignment**, not of uniform under-training: the further ahead
+a car is, the longer the delay between its yield and the EV's payoff, and the more its contribution is
+masked by the others' yields.
+
+Raising γ was tried and made it **worse**, informatively: at γ=0.999 the policy stopped yielding
+altogether (0.0 lane changes, `t_clear` 10.6 s) because the terminal success bonus is then valued
+whenever it arrives. That exposed a property of the **scenario**, not of the learner:
+
+> **The scenario admits a degenerate strategy.** Since the EV's adaptive-cruise law follows whatever is
+> in front of it, cooperators that merely *speed up* let it through without anyone yielding: on both
+> presets `speedup` reaches **100% success** and ~95% of the oracle's return. **Success rate therefore
+> cannot distinguish cooperation from convoying** — only clearance time can. The M1 gate never showed
+> this because it compared all-STAY against ideal and nothing in between.
+
+That baseline is now part of `baselines.py` and of the headroom gate (`cooperating beats convoying`, on
+speed and on return), so the substitution is permanently visible and a future scenario change is
+checked against it. Whether to *remove* the substitution — a tighter `T_max`, a heavier blocking
+penalty, or a speed cap while in the EV's lane — is a scenario change that would invalidate M2's
+published numbers, so it belongs to M4 and to the owner, not to a quiet edit here.
+
+**The recorded escalation is therefore indicated for EASY**, on demonstrated need rather than on
+aesthetics: the reserve central-critic variant (actor reads only its own F features, critic reads the
+joint vector) targets exactly this credit-assignment gap while remaining deployable per-agent.
+
 ## Implementation plan (ordered, staged with decision gates)
 
 1. **Stage 0 — the premise** (half a day, no compute): `obs_spec.py`; `per_agent_obs*` + the
