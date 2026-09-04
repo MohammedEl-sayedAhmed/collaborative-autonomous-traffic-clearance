@@ -41,28 +41,44 @@ def _agent_space(joint_obs_space: spaces.Box, features: int) -> spaces.Box:
     return spaces.Box(low=low, high=high, shape=(features,), dtype=joint_obs_space.dtype)
 
 
-def make_agent_split(venv, num_cooperators: int, features: int):
-    """Build an ``AgentSplitVecEnv`` (imported lazily to keep SB3 optional)."""
+def make_agent_split(venv, num_cooperators: int, features: int,
+                     critic_sees_joint: bool = False):
+    """Build an ``AgentSplitVecEnv`` (imported lazily to keep SB3 optional).
+
+    With ``critic_sees_joint`` each stream's observation becomes
+    ``concat(ego (F,), joint (K*F,))``. Only the *critic* reads the joint half (see
+    ``central_critic.py``); the actor slices off its own view, so execution stays
+    decentralized. This is CTDE: centralized training, decentralized execution.
+    """
     from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
     class AgentSplitVecEnv(VecEnv):
         """``N`` joint envs presented as ``N*K`` single-agent streams."""
 
-        def __init__(self, venv, K: int, F: int):
+        def __init__(self, venv, K: int, F: int, critic_sees_joint: bool = False):
             self.venv = venv
             self.K = K
             self.F = F
+            self.critic_sees_joint = critic_sees_joint
+            self.stream_dim = F + (K * F if critic_sees_joint else 0)
             self.n_scenarios = venv.num_envs
             super().__init__(
                 num_envs=venv.num_envs * K,
-                observation_space=_agent_space(venv.observation_space, F),
+                observation_space=_agent_space(venv.observation_space, self.stream_dim),
                 action_space=spaces.Discrete(5),
             )
             self.render_mode = None
 
         # -- shape helpers ---------------------------------------------------
         def _split_obs(self, obs: np.ndarray) -> np.ndarray:
-            return np.asarray(obs).reshape(self.n_scenarios * self.K, self.F)
+            joint = np.asarray(obs).reshape(self.n_scenarios, self.K * self.F)
+            ego = joint.reshape(self.n_scenarios * self.K, self.F)
+            if not self.critic_sees_joint:
+                return ego
+            # every stream of a scenario carries the SAME joint half (the critic's
+            # view); the actor never reads past the first F features.
+            tail = np.repeat(joint, self.K, axis=0)
+            return np.concatenate([ego, tail], axis=1).astype(ego.dtype)
 
         def _fold_actions(self, actions) -> np.ndarray:
             return np.asarray(actions).reshape(self.n_scenarios, self.K)
@@ -74,9 +90,12 @@ def make_agent_split(venv, num_cooperators: int, features: int):
                 for j in range(self.K):
                     sub = dict(info)
                     if terminal is not None:
-                        # each car bootstraps from ITS OWN final view
-                        sub["terminal_observation"] = np.asarray(terminal).reshape(
-                            self.K, self.F)[j]
+                        # each car bootstraps from ITS OWN final view (plus the
+                        # scenario's joint half when the critic needs it)
+                        joint = np.asarray(terminal).reshape(self.K * self.F)
+                        own = joint.reshape(self.K, self.F)[j]
+                        sub["terminal_observation"] = (
+                            np.concatenate([own, joint]) if self.critic_sees_joint else own)
                     if j != 0:
                         # count the scenario's episode once, on stream 0, so the
                         # logged return stays on the team scale
@@ -141,4 +160,4 @@ def make_agent_split(venv, num_cooperators: int, features: int):
         def render(self, mode: Optional[str] = None):
             return None
 
-    return AgentSplitVecEnv(venv, num_cooperators, features)
+    return AgentSplitVecEnv(venv, num_cooperators, features, critic_sees_joint)
