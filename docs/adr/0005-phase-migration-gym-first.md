@@ -4,6 +4,13 @@
 - **Date:** 2026-08-24
 - **Deciders:** Mohammed El-sayed Ahmed
 
+> **Superseded in part by [ADR 0011](0011-m4-ros2-mechanical-demo.md) (2026-09-04):** the *phase*
+> decision below — gym-first, then a ROS 2 mechanical demo — **stands**. Only the route to it changes:
+> the mechanical demo is *not* built on `f1tenth_gym_ros` (a Foxy/EOL bridge capped at 1–2 agents whose
+> Humble branch would drag in a different f1tenth_gym and re-baseline every published table). M4 keeps
+> that project's assets, topic conventions and launch pattern, vendored at a pinned SHA, and runs one
+> `ClearanceEnv` as the only physics with K ROS 2 nodes — one per car.
+
 ## Context and problem statement
 
 The v1.0.0 rewrite spans two concerns: the **RL research** (cooperative
