@@ -207,3 +207,52 @@ def test_make_squad():
         make_squad("learned-dec")          # needs a model
     with pytest.raises(ValueError):
         make_squad("nonsense")
+
+
+# -- the STRICT preset: convoying must not be a substitute for yielding ---------
+def test_strict_preset_blocks_convoying():
+    """On EASY, 'speed up and never yield' reaches 100% success -- so success rate
+    cannot prove cooperation. STRICT caps a car's speed while it is still in the
+    EV's lane, so only getting out of the way clears the road."""
+    from caatc.baselines import NaiveHold, SpeedUpOnly
+    from caatc.scenario import strict_preset
+
+    easy, strict = easy_preset(), strict_preset()
+    assert easy.ev_lane_speed_cap is None
+    assert strict.ev_lane_speed_cap == strict.coop_speed
+
+    e_easy, e_strict = ClearanceEnv(easy), ClearanceEnv(strict)
+    try:
+        up_easy = summarize([run_episode(e_easy, SpeedUpOnly(), seed=s) for s in range(4)])
+        up_strict = summarize([run_episode(e_strict, SpeedUpOnly(), seed=s) for s in range(4)])
+        id_strict = summarize([run_episode(e_strict, IdealCooperator(), seed=s) for s in range(4)])
+        naive_strict = summarize([run_episode(e_strict, NaiveHold(), seed=s) for s in range(4)])
+    finally:
+        e_easy.close(); e_strict.close()
+
+    assert up_easy["success_rate"] == 1.0, "the degenerate strategy must still work on EASY"
+    assert up_strict["success_rate"] == 0.0, "STRICT must make convoying fail"
+    assert id_strict["success_rate"] == 1.0, "STRICT must keep yielding viable"
+    # with the cap, never yielding is exactly as bad as never moving
+    assert abs(up_strict["mean_ev_speed"] - naive_strict["mean_ev_speed"]) < 0.05
+
+
+def test_the_cap_only_applies_inside_the_ev_lane():
+    """A car that has already yielded must be free to accelerate again."""
+    from caatc.scenario import strict_preset
+
+    cfg = strict_preset()
+    env = ClearanceEnv(cfg)
+    try:
+        env.reset(seed=0)
+        # merge every cooperator out, then ask them all to speed up
+        for _ in range(12):
+            env.step(np.full(cfg.num_cooperators, MERGE_LEFT, dtype=int))
+        for _ in range(20):
+            env.step(np.full(cfg.num_cooperators, 3, dtype=int))   # SPEED_UP
+        cars = env._cars(env._last_obs)[1:1 + cfg.num_cooperators]
+        assert all(int(c["lane"]) != cfg.ev_lane for c in cars), "they should have moved"
+        assert max(c["v"] for c in cars) > cfg.coop_speed + 0.5, \
+            "outside the EV lane the cap must not apply"
+    finally:
+        env.close()

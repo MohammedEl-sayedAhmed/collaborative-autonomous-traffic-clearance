@@ -28,7 +28,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from .scenario import easy_preset, hard_preset
+from .scenario import easy_preset, hard_preset, strict_preset
 from .clearance_env import ClearanceEnv
 from .clearance_eval import run_episode
 from .baselines import NaiveHold, RandomPolicy, IdealCooperator, SpeedUpOnly
@@ -145,6 +145,26 @@ def run_gate(easy_seeds: int = 10, hard_seeds: int = 8, mono_seeds: int = 3) -> 
     g.check("HARD random collides substantially", r_coll >= HARD_RANDOM_COLLISION_MIN, f"{r_coll:.2f}")
     g.check("HARD ideal never collides", i_coll == 0.0, f"{i_coll:.2f}")
     envh.close()
+
+    # -- 5. STRICT: convoying must not work at all ---------------------------
+    # On EASY/HARD "speed up and never yield" succeeds (see check 2b), so those
+    # presets cannot prove cooperation on their own. STRICT caps a cooperator's
+    # speed while it is still in the EV's lane, which removes the substitution:
+    # here the ONLY way to clear the road is to get out of it.
+    print(f"\nSTRICT preset ({hard_seeds} seeds):")
+    cfgs = strict_preset()
+    envs = ClearanceEnv(cfgs)
+    try:
+        s_up = [run_episode(envs, SpeedUpOnly(), seed=s) for s in range(hard_seeds)]
+        s_id = [run_episode(envs, IdealCooperator(), seed=s) for s in range(hard_seeds)]
+    finally:
+        envs.close()
+    u_succ2, _uc, u_spd2, _up, _ur = _rates(s_up)
+    i_succ2, _ic, i_spd2, _ip, _ir = _rates(s_id)
+    print(f"    speedup: success={u_succ2:.2f} ev_speed={u_spd2:.2f}")
+    print(f"    ideal:   success={i_succ2:.2f} ev_speed={i_spd2:.2f}")
+    g.check("STRICT: convoying cannot succeed", u_succ2 <= NAIVE_SUCCESS_MAX, f"{u_succ2:.2f}")
+    g.check("STRICT: yielding still succeeds", i_succ2 >= IDEAL_SUCCESS_MIN, f"{i_succ2:.2f}")
 
     return g.passed()
 
