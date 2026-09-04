@@ -94,10 +94,14 @@ class SharedPolicySquad:
     name = "learned-dec"
 
     def __init__(self, model, deterministic: bool = True, dropout: float = 0.0,
-                 seed: int = 0):
+                 seed: int = 0, joint_pad: int = 0):
+        """``joint_pad`` > 0 for a central-critic model, which was trained on
+        ``concat(ego, joint)``: the joint half is unavailable at execution and the
+        actor ignores it, so it is zero-filled."""
         self.model = model
         self.deterministic = deterministic
         self.dropout = float(dropout)
+        self.joint_pad = int(joint_pad)
         self.rng = np.random.default_rng(seed)
 
     def reset(self) -> None:
@@ -118,6 +122,9 @@ class SharedPolicySquad:
 
     def __call__(self, env) -> np.ndarray:
         obs = self._drop(env.per_agent_obs_all(), env.cfg)
+        if self.joint_pad:
+            obs = np.concatenate(
+                [obs, np.zeros((obs.shape[0], self.joint_pad), dtype=obs.dtype)], axis=1)
         actions, _state = self.model.predict(obs, deterministic=self.deterministic)
         return np.asarray(actions, dtype=int).reshape(-1)
 

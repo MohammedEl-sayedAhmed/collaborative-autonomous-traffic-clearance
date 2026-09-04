@@ -155,7 +155,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Render/record a ClearanceEnv rollout.")
     ap.add_argument("--policy", default="ideal", choices=["naive", "random", "ideal"])
     ap.add_argument("--model", default=None, help="path to a trained SB3 .zip (overrides --policy)")
-    ap.add_argument("--preset", default="easy", choices=["easy", "hard"])
+    ap.add_argument("--preset", default="easy", choices=["easy", "hard", "strict"])
     ap.add_argument("--episodes", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--mode", default="video", choices=["video", "human", "human_fast"],

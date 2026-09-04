@@ -309,7 +309,7 @@ def evaluate(model, cfg: ScenarioConfig, episodes: int, seed: int = 0,
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Train PPO on caatc/clearance-v0 (M2).")
-    ap.add_argument("--preset", default="easy", choices=["easy", "hard"])
+    ap.add_argument("--preset", default="easy", choices=["easy", "hard", "strict"])
     ap.add_argument("--timesteps", type=int, default=150_000)
     ap.add_argument("--n-envs", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)

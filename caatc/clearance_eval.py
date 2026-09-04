@@ -21,7 +21,8 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from .scenario import ScenarioConfig, EASY_PRESET, HARD_PRESET, easy_preset, hard_preset
+from .scenario import (ScenarioConfig, EASY_PRESET, HARD_PRESET, STRICT_PRESET,
+                       easy_preset, hard_preset, strict_preset)
 from .clearance_env import ClearanceEnv
 from .baselines import make_policy
 
@@ -59,7 +60,9 @@ def preset_config(preset: str, **overrides) -> ScenarioConfig:
         return easy_preset(**overrides)
     if preset == "hard":
         return hard_preset(**overrides)
-    raise ValueError(f"unknown preset '{preset}' (easy|hard)")
+    if preset == "strict":
+        return strict_preset(**overrides)
+    raise ValueError(f"unknown preset '{preset}' (easy|hard|strict)")
 
 
 def run_episode(env: ClearanceEnv, policy: Callable, seed: Optional[int] = None) -> Dict:
@@ -175,7 +178,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Evaluate a ClearanceEnv policy and log it.")
     ap.add_argument("--policy", default="ideal",
                     choices=["naive", "random", "speedup", "ideal"])
-    ap.add_argument("--preset", default="easy", choices=["easy", "hard"])
+    ap.add_argument("--preset", default="easy", choices=["easy", "hard", "strict"])
     ap.add_argument("--episodes", type=int, default=20)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--runs-dir", default=None, help="dashboard runs dir (default: <repo>/saved_variables/runs)")

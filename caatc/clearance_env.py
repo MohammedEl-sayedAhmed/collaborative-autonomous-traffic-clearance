@@ -286,9 +286,15 @@ class ClearanceEnv(gym.Env):
 
             for j in range(K):
                 c = cars[1 + j]
+                target_speed = float(self.target_speed[j])
+                if cfg.ev_lane_speed_cap is not None and int(c["lane"]) == cfg.ev_lane:
+                    # you cannot outrun the ambulance in its own lane: while still
+                    # in the EV's lane a cooperator is capped, so speeding up is no
+                    # substitute for getting out of the way (STRICT preset).
+                    target_speed = min(target_speed, cfg.ev_lane_speed_cap)
                 act[1 + j] = coop_lowlevel(
                     cfg, self.frame, c["s"], c["d"], c["theta"], c["v"],
-                    int(self.target_lane[j]), float(self.target_speed[j]),
+                    int(self.target_lane[j]), target_speed,
                 )
             for h in range(cfg.num_occupants):
                 c = cars[1 + K + h]

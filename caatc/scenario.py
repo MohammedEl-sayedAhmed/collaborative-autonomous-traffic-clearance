@@ -49,6 +49,15 @@ class ScenarioConfig:
     coop_speed_max: float = 4.0    # SPEED_UP cap
     coop_speed_min: float = 0.0    # SLOW_DOWN floor
     coop_speed_delta: float = 1.0  # SPEED_UP / SLOW_DOWN increment (m/s)
+    # Speed cap that applies ONLY while a cooperator is still in the EV's lane
+    # (None = no cap). Without it the scenario admits a degenerate strategy: since
+    # the EV's ACC law follows whatever is ahead of it, a convoy that merely speeds
+    # up lets the EV through without anyone yielding, reaching 100% success at ~95%
+    # of the oracle's return -- so success rate cannot distinguish cooperation from
+    # convoying (found in M3; see docs/design/m3-decentralized-execution.md). With
+    # the cap you cannot outrun the ambulance in its own lane: the only way through
+    # is to get out of the way.
+    ev_lane_speed_cap: Optional[float] = None
 
     # -- start layout (in frenet) --------------------------------------------
     ev_start_s: float = 0.0        # EV arclength at reset (center lane)
@@ -88,7 +97,7 @@ class ScenarioConfig:
     car_width: float = 0.31
 
     # -- preset ---------------------------------------------------------------
-    preset: str = "easy"           # "easy" | "hard"
+    preset: str = "easy"           # "easy" | "hard" | "strict"
     # HARD: for each cooperator, one adjacent side lane is blocked by a scripted
     # occupant so the free side must be read from V2V occupancy. Seeded per env.
     hard_block_sides: List[int] = field(default_factory=list)  # +1 left, -1 right (d is left-positive)
@@ -230,5 +239,23 @@ def hard_preset(**overrides) -> ScenarioConfig:
     return replace(base, hard_block_sides=sides)
 
 
+def strict_preset(**overrides) -> ScenarioConfig:
+    """STRICT: EASY geometry, but a car in the EV's lane cannot speed up.
+
+    This removes the convoying substitution, so **only yielding clears the road** --
+    the scenario the project is actually about. EASY and HARD are left untouched so
+    the published M2/M3 numbers stay valid and comparable.
+    """
+    # Apply the overrides FIRST, then derive the cap from the resulting cruise
+    # speed -- deriving it from the default would silently desync the two (e.g.
+    # strict_preset(coop_speed=3.0) would cap at 2.0 and throttle even a policy
+    # that never speeds up). An explicit ev_lane_speed_cap override still wins.
+    base = replace(ScenarioConfig(preset="strict"), **overrides)
+    if "ev_lane_speed_cap" not in overrides:
+        base = replace(base, ev_lane_speed_cap=base.coop_speed)
+    return base
+
+
 EASY_PRESET = easy_preset()
 HARD_PRESET = hard_preset()
+STRICT_PRESET = strict_preset()

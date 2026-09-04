@@ -18,6 +18,7 @@ from typing import List, Optional
 
 import numpy as np
 
+from .obs_spec import feature_count
 from .scenario import ScenarioConfig
 
 
@@ -35,9 +36,17 @@ def _worker(conn, cfg: ScenarioConfig, model_path: Optional[str], agent_index: i
         from stable_baselines3 import PPO
 
         model = PPO.load(model_path, device="cpu")
+        # A central-critic model was trained on concat(ego, joint). The joint half
+        # is exactly what a worker must NOT have, and the actor ignores it, so it is
+        # zero-filled here -- same contract as SharedPolicySquad's joint_pad.
+        pad = int(model.observation_space.shape[0]) - int(feature_count(cfg))
 
         def policy(obs):                  # noqa: F811 - deliberate rebind
-            action, _ = model.predict(obs.reshape(1, -1), deterministic=True)
+            row = obs.reshape(1, -1)
+            if pad > 0:
+                row = np.concatenate(
+                    [row, np.zeros((1, pad), dtype=row.dtype)], axis=1)
+            action, _ = model.predict(row, deterministic=True)
             return int(np.asarray(action).reshape(-1)[0])
     else:
         from .decentralized import LocalIdealCooperator
