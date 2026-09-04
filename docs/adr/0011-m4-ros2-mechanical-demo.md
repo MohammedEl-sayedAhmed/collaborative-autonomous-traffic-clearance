@@ -1,4 +1,4 @@
-# 0011. M4 — the ROS 2 Humble mechanical demo: one plant, K deployed car nodes
+# 0011. M4 — the ROS 2 Jazzy mechanical demo: one plant, K deployed car nodes
 
 - **Status:** accepted
 - **Date:** 2026-09-04
@@ -29,13 +29,16 @@ simulator that silently disagreed with `ClearanceEnv` would poison all of them.*
 
 ## Considered options
 
-1. **One `ClearanceEnv` as the only physics; K ROS 2 car nodes; vendor the f1tenth *contract* but not
-   its engine** — **chosen**. ROS replaces exactly rows `1..K` of the per-substep action array.
+1. **One `ClearanceEnv` as the only physics; K ROS 2 car nodes; follow the f1tenth topic *conventions*
+   while vendoring nothing** — **chosen**. ROS replaces exactly rows `1..K` of the per-substep action
+   array. Every ROS dependency comes from the target LTS's own package set.
 2. **Port `f1tenth_gym_ros` Foxy→Humble and extend it to N agents** — rejected as the spine: days of
    work to land behind a branch that already exists, on an upstream that would drag in its own gym and
-   re-baseline the tables. **Kept from it:** the assets, the topic conventions (`/{ns}/odom`,
-   `/{ns}/drive`), the distro-parametric Dockerfile and the Foxglove-first launch pattern, vendored at
-   a pinned SHA and never `colcon`-built.
+   re-baseline the tables. **Kept from it:** only the topic *conventions* (`/{ns}/odom`, `/{ns}/drive`) and the idea of a
+   distro-parametric Dockerfile — names and a pattern, not code. On the owner's instruction to depend on
+   nothing end-of-life, **nothing is vendored from it**: the car and road are RViz markers generated
+   from `ClearanceEnv`'s own parameters and `scenario.centerline_xy`, so no asset can drift from an
+   unmaintained upstream.
 3. **A second physics engine (`gz sim` Fortress or Gazebo Classic)** — rejected: it lands the
    "maintainable demo" milestone on two expiring dependencies; f1tenth's `mu`/`C_Sf`/`C_Sr` are
    single-track *tire-model* coefficients with no analogue in a rolling-cylinder contact, so a
@@ -54,7 +57,7 @@ simulator that silently disagreed with `ClearanceEnv` would poison all of them.*
 
 ## Decision
 
-Build M4 as **one plant, K deployed car nodes, a vendored contract**, per
+Build M4 as **one plant, K deployed car nodes, no end-of-life dependencies**, per
 [`../design/m4-ros2-mechanical-demo.md`](../design/m4-ros2-mechanical-demo.md):
 
 - **One `ClearanceEnv`** on the pinned `f1tenth_gym v1.0.0`, re-expressed over an *additive* seam
@@ -78,7 +81,7 @@ Build M4 as **one plant, K deployed car nodes, a vendored contract**, per
 **All three forks confirmed (2026-09-04)**, on the owner's explicit instruction to adapt everything to
 ROS 2 even at the cost of rework — two of them against the recommendation:
 
-1. **One interpreter everywhere:** `caatc-gym` is rebased on **Python 3.10** (the distro's, which
+1. **One interpreter everywhere:** `caatc-gym` is rebased on **Python 3.12** (the distro's, which
    `rclpy` is built against) instead of keeping 3.11 or adding a sidecar. Every published table is
    re-verified on the new interpreter *first*, before any ROS code, and any drift is re-baselined and
    documented rather than silently absorbed.
@@ -106,7 +109,7 @@ ROS 2 even at the cost of rework — two of them against the recommendation:
   own a bridge (~6 small messages and six nodes) rather than adopting one, and a cross-interpreter
   numeric divergence is possible (detected before anything is built on it, with a documented ladder).
   Honest cost: **8–10 focused working days** plus the re-verification of every published table on
-  Python 3.10 (fork 1) — zero training compute unless a table has to be re-baselined. Fork 2 costs the
+  Python 3.12 (fork 1) — zero training compute unless a table has to be re-baselined. Fork 2 costs the
   bit-identity claim, replacing it with a measured tolerance.
 - **Neutral:** ADR 0005's phase decision stands and is being honoured; only its bridge clause is
   superseded. `caatc/plant.py` is built as the seam for a future 3D or hardware plant and deliberately

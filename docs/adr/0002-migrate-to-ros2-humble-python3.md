@@ -4,6 +4,11 @@
 - **Date:** 2026-08-24
 - **Deciders:** Mohammed El-sayed Ahmed
 
+> **Distro superseded by [ADR 0012](0012-target-ros2-jazzy-not-humble.md) (2026-09-04):** the decision
+> to leave ROS Kinetic / Python 2 for a supported ROS 2 LTS and Python 3 **stands**. Only the distro
+> changes: **Jazzy** (Ubuntu 24.04, Python 3.12, LTS to May 2029) replaces **Humble**, whose EOL is
+> May 2027 — eight months after the project's first ROS 2 code would have shipped on it.
+
 ## Context and problem statement
 
 The project runs on **ROS Kinetic (EOL 2021), Gazebo 7, and Python 2 (EOL 2020)**.

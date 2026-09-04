@@ -19,7 +19,7 @@ from its legacy ROS 1 / Python 2 stack to a maintained ROS 2 / Python 3 one.
 | # | Title | Status |
 |---|-------|--------|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions in ADRs | Accepted |
-| [0002](0002-migrate-to-ros2-humble-python3.md) | Migrate from ROS Kinetic / Python 2 to ROS 2 Humble / Python 3 | Accepted |
+| [0002](0002-migrate-to-ros2-humble-python3.md) | Migrate from ROS Kinetic / Python 2 to ROS 2 / Python 3 | Accepted *(distro superseded by [0012](0012-target-ros2-jazzy-not-humble.md))* |
 | [0003](0003-refactor-in-place-preserve-legacy-with-tags.md) | Refactor in place; preserve the legacy stack via SemVer tags | Accepted |
 | [0004](0004-adopt-f1tenth-gym-for-rl.md) | Adopt f1tenth_gym as the RL platform | Accepted |
 | [0005](0005-phase-migration-gym-first.md) | Phase the migration gym-first, then a ROS 2 mechanical demo | Accepted *(bridge clause superseded by [0011](0011-m4-ros2-mechanical-demo.md))* |
@@ -28,4 +28,5 @@ from its legacy ROS 1 / Python 2 stack to a maintained ROS 2 / Python 3 one.
 | [0008](0008-train-with-stable-baselines3-ppo.md) | M2 — train the ClearanceEnv with stable-baselines3 PPO | Accepted |
 | [0009](0009-decentralized-execution-ippo.md) | M3 — decentralized execution via a parameter-shared per-agent policy (IPPO) | Accepted |
 | [0010](0010-strict-preset-removes-the-convoying-substitution.md) | A STRICT preset that removes the convoying substitution | Accepted |
-| [0011](0011-m4-ros2-mechanical-demo.md) | M4 — the ROS 2 Humble mechanical demo: one plant, K deployed car nodes | Proposed |
+| [0011](0011-m4-ros2-mechanical-demo.md) | M4 — the ROS 2 Jazzy mechanical demo: one plant, K deployed car nodes | Accepted |
+| [0012](0012-target-ros2-jazzy-not-humble.md) | Target ROS 2 Jazzy, not Humble (LTS to 2029) | Accepted |

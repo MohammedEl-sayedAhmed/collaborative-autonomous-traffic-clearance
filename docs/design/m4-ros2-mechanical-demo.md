@@ -1,4 +1,4 @@
-# M4 — the ROS 2 Humble mechanical demo
+# M4 — the ROS 2 Jazzy mechanical demo
 
 The v1.0.0 milestone that moves the *executor* out of Python and onto a real message bus: **one
 `ClearanceEnv` as the only physics in the system**, and **K independent ROS 2 nodes — one per
@@ -18,7 +18,7 @@ disagreed with `ClearanceEnv` would poison every number in `m1-clearance-env.md`
 `m3-decentralized-execution.md` and ADRs 0008/0009/0010, so **faithfulness is the primary gate and the
 demo is the by-product**.
 
-## Approach — one plant, K deployed car nodes, a vendored contract
+## Approach — one plant, K deployed car nodes, no end-of-life dependencies
 
 - **Exactly one physics authority.** One `ClearanceEnv` on the pinned `f1tenth_gym v1.0.0`, inside one
   node. No Gazebo, no `gz sim`, no second vehicle model, no re-derived lane geometry, ACC law, reward
@@ -28,12 +28,17 @@ demo is the by-product**.
   loop, so `ClearanceEnv.step` is re-expressed over an additive seam (`set_decision` /
   `joint_action_rows` / `substep` / `commit_step`) and the ROS bridge runs *the same loop*, with one
   substitution.
-- **Adopt the f1tenth contract; refuse its engine.** Vendor `f1tenth_gym_ros` at a pinned SHA for its
-  assets and conventions (URDF/meshes, `/{ns}/odom`, `/{ns}/drive`, the distro-parametric Dockerfile,
-  the Foxglove-first launch pattern) and **never `colcon build` a line of its Python**: its Humble
-  bridge constructs `F110Env` from f1tenth_gym's *dev* branch, whose config surface differs from what
-  `clearance_env.py` passes — so taking their bridge means taking their gym, which means re-baselining
-  every published table. **We keep the wire, not the engine.**
+- **Adopt the naming conventions; depend on nothing end-of-life.** We follow the f1tenth topic
+  conventions (`/car{j}/odom`, `/car{j}/drive`) because they are what the ecosystem and a real 1/10 car
+  already speak — but a *convention is a name, not a dependency*. **Nothing is vendored from
+  `f1tenth_gym_ros`**: it is a Foxy-era project, and its Humble branch constructs `F110Env` from
+  f1tenth_gym's *dev* branch, whose config surface differs from what `clearance_env.py` passes — so
+  adopting any of it risks dragging in a different gym and re-baselining every published table. The
+  car's visual model is a handful of RViz markers sized from `ClearanceEnv`'s own
+  `params["length"]/["width"]`, and the road is markers generated from `scenario.centerline_xy` — so
+  **no scenario constant is written twice** and there is no asset to keep in sync with an unmaintained
+  upstream. Every ROS dependency is a package maintained for the target LTS: `rclpy`, `nav_msgs`,
+  `ackermann_msgs`, `tf2_ros`, `visualization_msgs`, `rosbag2`, `rviz2`.
 - **Two modes, two claims.** *Lockstep* barriers every substep on an integer index and exists **for
   the gate, not for realism**: it removes timing as a variable so the only remaining difference between
   the ROS run and `python -m caatc.clearance_eval` is the wire's precision (fork 2), which is then
@@ -90,12 +95,11 @@ ros2/src/caatc_ros/           # ament_python
   caatc_ros/{clearance_bridge,car_node,v2v_relay,scene_view,ros_gate,bag_replay}.py
   launch/clearance_demo.launch.py     # 1 bridge + 1 relay + K car nodes + view + foxglove
   config/{easy,hard,strict}.yaml
-  vendor/f1tenth_gym_ros/             # pinned SHA: assets + contract only, never colcon-built
 docker/ros.Dockerfile                 # -> caatc-ros  (ros:humble, no torch, no SB3)
 ```
 
 `run.sh` gains: `ros-build`, `ros-ws-build`, `ros-fingerprint`, `ros-smoke`, `ros-demo`, `ros-gate`,
-`ros-replay`, `export-policy`.
+`ros-replay`, `export-policy`. The ROS image is distro-parametric (`ARG ROS_DISTRO=jazzy`).
 
 **The three-way role split** — labelled in the launch files *and* in bag metadata, so a reader can tell
 the deliverable from the scaffolding:
@@ -152,7 +156,9 @@ marked:
 12. `check_peer_sufficiency` — the digest carries everything the 26-vector needs, so the observation is
     reassemblable from broadcasts alone.
 13. `check_timing` — measured rates, command age, drops and real-time factor, published not asserted.
-14. `check_vendor_pin` — the vendored assets match their pinned SHA.
+14. `check_no_eol_deps` — every ROS dependency resolves from the target LTS's own package
+    set, and nothing is vendored from an unmaintained upstream. Fails if a dependency is
+    added that the distro does not support.
 
 ## Success criteria
 
@@ -207,7 +213,7 @@ gate checks are ~40% of the work.
 ## Risks
 
 1. **Cross-interpreter numeric drift.** `rclpy` is compiled against the distro interpreter, so the ROS
-   image is Python 3.10 while `caatc-gym` is 3.11; a numba/LLVM or numpy difference could move the last
+   image is Python 3.12 while `caatc-gym` is 3.11; a numba/LLVM or numpy difference could move the last
    bits and break check 5b. *Detected at M4.0(b), before anything is built on it.* Ladder: pin
    numpy/numba/llvmlite/scipy identically and re-check → fork 1's sidecar (restores identity **by
    construction**, and the untimed lockstep barrier cannot notice) → only as the owner's explicit call,
@@ -229,7 +235,7 @@ too much rework."** All three forks resolve toward the ROS-native option, and tw
 recommendation above. What that costs is stated here rather than discovered later.
 
 1. **Where the physics interpreter lives → one interpreter everywhere: `caatc-gym` is rebased on
-   Python 3.10** *(overrides the recommendation, which was to keep 3.11 and measure)*. `rclpy` is built
+   Python 3.12** *(overrides the recommendation, which was to keep 3.11 and measure)*. `rclpy` is built
    against the distro interpreter, so ROS pins 3.10; rather than run two Pythons or a sidecar, the whole
    stack moves to 3.10. **Consequence, accepted:** every published table must be re-verified on the new
    interpreter — the M1 headroom gate, M2's EASY/HARD numbers, M3's STRICT/HARD/EASY numbers and the
