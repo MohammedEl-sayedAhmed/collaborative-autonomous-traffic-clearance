@@ -182,7 +182,7 @@ def run_gate(preset: str = "easy", model: Optional[str] = None) -> bool:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="M3 interface + locality gate.")
-    ap.add_argument("--preset", default="easy", choices=["easy", "hard"])
+    ap.add_argument("--preset", default="easy", choices=["easy", "hard", "strict"])
     ap.add_argument("--model", default=None,
                     help="optional trained policy for the process-fleet check")
     a = ap.parse_args(argv)
