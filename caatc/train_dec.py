@@ -74,14 +74,18 @@ def train(cfg: ScenarioConfig, timesteps: int, n_envs: int, seed: int, label: st
             writer.meta["config"]["central_critic"] = bool(central_critic)
         callback = _make_callback(writer, vec.num_envs) if writer else None
         if central_critic:
-            from .central_critic import make_split_policy_class
+            # A module-level policy class (not one built by a factory), so the saved
+            # model references it by import path. A dynamically created class gets
+            # pickled by value and then only loads under the exact Python that wrote
+            # it -- a 3.11-written model segfaulted on 3.12.
+            from .central_critic import SplitActorCriticPolicy
 
-            policy_cls = make_split_policy_class(features_of(cfg))
             model = PPO(
-                policy_cls, vec, seed=seed, verbose=verbose,
+                SplitActorCriticPolicy, vec, seed=seed, verbose=verbose,
                 n_steps=n_steps, batch_size=batch_size, ent_coef=ent_coef,
                 learning_rate=learning_rate, gamma=gamma,
-                policy_kwargs={"net_arch": {"pi": [64, 64], "vf": [64, 64]}},
+                policy_kwargs={"ego_dim": features_of(cfg),
+                               "net_arch": {"pi": [64, 64], "vf": [64, 64]}},
             )
         else:
             model = PPO(

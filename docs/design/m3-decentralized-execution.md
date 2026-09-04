@@ -199,10 +199,22 @@ the critic reads the joint vector during training), 20 seeds:
 | policy on EASY | success | collisions | mean `t_clear` | EV speed | return | lane changes |
 |----------------|--------:|-----------:|---------------:|---------:|-------:|-------------:|
 | M3 decentralized, shared reward (IPPO) | 100% | 0% | 6.44 s | 7.01 m/s | 101.68 | 2.4 |
-| **M3 decentralized, central critic (CTDE)** | 100% | 0% | **6.02 s** | **7.42 m/s** | **102.26** | **3.0** |
+| **M3 decentralized, central critic (CTDE)** | 100% | 0% | **6.12 s** | **7.32 m/s** | **102.08** | 2.0 |
 | M2 centralized (reference) | 100% | 0% | 6.00 s | 7.43 m/s | 102.29 | 3.0 |
 
-**+0.33% against M2** — inside the 5% criterion — and full 3.0-yield cooperation.
+**+1.9% against M2** — inside the 5% criterion — versus +7.3% for the shared-reward learner on the same
+20 seeds.
+
+> **Re-baselined 2026-09-04.** The first CTDE run (on Python 3.11) measured 6.02 s / 7.42 m/s / 102.26
+> with 3.0 yields. That model file turned out to be unloadable on Python 3.12 — the policy class had
+> been built inside a factory function, so it was pickled *by value* and only loaded under the exact
+> interpreter that wrote it (it segfaulted rather than erroring). The class is now defined at module
+> level and the model was **retrained on Python 3.12**; the numbers above are that run. The conclusion
+> is unchanged — a centralized critic closes most of the gap — but the margin is +1.9%, not +0.33%.
+>
+> One detail worth keeping: this run clears **faster** than the shared-reward learner while yielding
+> **fewer** times (2.0 vs 2.4). So the mechanism is not "yield three times" but "yield early enough" —
+> a car that moves aside before the EV arrives is worth more than a car that moves aside late.
 
 ### Verdict against the success criteria, and what the gap is
 
@@ -220,7 +232,7 @@ had two contributing causes, and removing *either* one closes it:
    3.0/3.0 and matches the oracle. So the gap was partly the policy *exploiting* the convoying
    substitution.
 2. **Improve credit assignment** (CTDE on EASY): with the shortcut still available, a centralized
-   critic alone takes the policy to 3.0 yields and +0.33% of M2. So the gap was also genuinely a
+   critic alone takes the policy to within +1.9% of M2 (from +7.3% on the same seeds). So the gap was also genuinely a
    shared-reward credit-assignment effect.
 
 That both work is stronger evidence than either alone, and it vindicates the per-seat measurement

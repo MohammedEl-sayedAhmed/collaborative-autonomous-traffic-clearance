@@ -35,8 +35,7 @@ stack); now being migrated to a maintained **ROS 2 Jazzy / Python 3.12** stack b
     (`./run.sh clearance-smoke --m3`, `./run.sh dec-smoke`) — including K separate OS processes, each
     seeing only its own car's observation, reproducing the in-process metrics. **On STRICT and HARD the
     decentralized policy equals the centralized one exactly** (STRICT: 100% success, 0 collisions,
-    `t_clear` 6.13 s, 3.0 yields = the oracle). On EASY plain IPPO is +9.7% on `t_clear`, and **`--central-critic` closes it to +0.33% with 3.0
-    yields** — so the escalation is adopted, not merely available.
+    `t_clear` 6.13 s, 3.0 yields = the oracle). On EASY plain IPPO is +9.7% on `t_clear`, and **`--central-critic` closes it to +1.9%** — so the escalation is adopted, not merely available.
   - **The EASY gap is a scenario artifact, not a decentralization cost** (ADR 0010): the EV's ACC law
     follows whatever is ahead, so cooperators that merely SPEED UP let it through without yielding —
     100% success at ~95% of the oracle's return. **Success rate cannot distinguish cooperation from

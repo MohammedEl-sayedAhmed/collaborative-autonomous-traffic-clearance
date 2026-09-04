@@ -19,6 +19,12 @@ RUN pip install --no-cache-dir pytest
 # pettingzoo is an OPTIONAL dependency: only caatc/pz_env.py (the standard-API
 # seam for external MARL algorithms, ADR 0009 fork 3) uses it, and it is here so
 # that adapter's API-conformance tests actually run.
-RUN pip install --no-cache-dir "pettingzoo>=1.24,<2"
+# pettingzoo is pinned BELOW 1.25 and gymnasium is repeated in the same command on
+# purpose. Newer pettingzoo requires gymnasium 1.x, and pip will happily upgrade
+# gymnasium to satisfy it -- which silently breaks the pin f1tenth_gym and caatc
+# both declare (gymnasium <0.30). Naming gymnasium here forces the resolver to
+# either find a compatible pettingzoo or FAIL LOUDLY, instead of moving our
+# simulator onto a different API behind our back.
+RUN pip install --no-cache-dir "pettingzoo>=1.24,<1.25" "gymnasium==0.29.1"
 
 CMD ["python", "-m", "caatc.train", "--help"]
