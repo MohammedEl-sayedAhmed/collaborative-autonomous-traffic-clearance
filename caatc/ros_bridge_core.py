@@ -1,0 +1,437 @@
+"""The bridge's brain: one ``ClearanceEnv``, driven one tick at a time, with no ROS in it.
+
+A ROS 2 bridge node is a thin shell around ``BridgeCore``: it publishes what
+``state()`` returns, hands incoming commands to ``offer_drive`` / ``offer_decision``,
+and calls ``advance`` once ``ready()`` says every command for the tick is in. The
+core applies the contract: decisions once per boundary from the tick loop, the
+boundary snapshot before anything moves, first copy wins, duplicates and stale
+commands counted apart, the seam's own rules on rows it did not build, and a
+record complete enough for an exact replay (``replay``).
+
+``run_lockstep_inprocess`` wires a ``BridgeCore`` to ``NodeCore`` objects directly,
+emulating the wire (heading through a quaternion, drive fields to float32), so
+the whole protocol is tested in an ordinary test before any message bus exists.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+from .clearance_env import ClearanceEnv
+from .decentralized import LocalIdealCooperator
+from .obs_spec import feature_count
+from .ros_geometry import quat_to_yaw, yaw_to_quat
+from .ros_node_core import CarSample, NodeCore, ProtocolError
+from .ros_tick import episode_start_tick
+from .scenario import ScenarioConfig
+
+STATE_FIELDS = ("x", "y", "theta", "v", "delta", "s", "d", "lane")
+
+
+def cars_to_array(cars: List[dict]) -> np.ndarray:
+    """``env.cars`` -> ``(N, 8)`` float64 in the record's field order."""
+    return np.array([[float(c[k]) for k in STATE_FIELDS] for c in cars], dtype=np.float64)
+
+
+@dataclass
+class BridgeState:
+    episode: int
+    tick: int
+    start_tick: int
+    stamp_tick: int          # start_tick + tick: what goes into the message stamps
+    boundary: bool
+    cars: List[dict]
+
+
+@dataclass
+class StepOutcome:
+    done: bool
+    committed: Optional[tuple]
+    terminated: bool
+    truncated: bool
+    episode_over: bool
+
+
+@dataclass
+class Record:
+    """Everything an exact replay and the checks need, for one episode."""
+    meta: dict
+    cars_state: List[np.ndarray] = field(default_factory=list)     # T+1 x (N, 8)
+    rows_applied: List[np.ndarray] = field(default_factory=list)   # T x (N, 2)
+    wire: List[np.ndarray] = field(default_factory=list)           # T x (K, 2) float32, NaN if simulator-driven
+    speed_before_rule: List[np.ndarray] = field(default_factory=list)  # T x (K,)
+    done: List[bool] = field(default_factory=list)
+    republishes: List[int] = field(default_factory=list)
+    boundary_ticks: List[int] = field(default_factory=list)
+    decisions: List[np.ndarray] = field(default_factory=list)      # B x (K,)
+    obs_t: List[np.ndarray] = field(default_factory=list)          # B x (K, F) float32
+    node_obs: List[np.ndarray] = field(default_factory=list)       # B x (K, F) float32, NaN if simulator-driven
+    node_frame: List[np.ndarray] = field(default_factory=list)     # B x (K, 4): s, d, lane, tangent
+    commit_ticks: List[int] = field(default_factory=list)
+    rewards: List[float] = field(default_factory=list)
+    terminated: List[bool] = field(default_factory=list)
+    truncated: List[bool] = field(default_factory=list)
+    commit_obs: List[np.ndarray] = field(default_factory=list)
+    infos: List[dict] = field(default_factory=list)
+
+    def save(self, path: str) -> None:
+        def st(xs, dtype=None):
+            return np.asarray(xs) if dtype is None else np.asarray(xs, dtype=dtype)
+        np.savez_compressed(
+            path, meta=json.dumps(self.meta),
+            cars_state=np.stack(self.cars_state), rows_applied=np.stack(self.rows_applied),
+            wire=np.stack(self.wire), speed_before_rule=np.stack(self.speed_before_rule),
+            done=st(self.done, bool), republishes=st(self.republishes, np.int64),
+            boundary_ticks=st(self.boundary_ticks, np.int64), decisions=np.stack(self.decisions),
+            obs_t=np.stack(self.obs_t), node_obs=np.stack(self.node_obs), node_frame=np.stack(self.node_frame),
+            commit_ticks=st(self.commit_ticks, np.int64), rewards=st(self.rewards, np.float64),
+            terminated=st(self.terminated, bool), truncated=st(self.truncated, bool),
+            commit_obs=np.stack(self.commit_obs), infos=json.dumps(self.infos),
+        )
+
+    @classmethod
+    def load(cls, path: str) -> "Record":
+        g = np.load(path)
+        rec = cls(meta=json.loads(str(g["meta"])))
+        rec.cars_state = list(g["cars_state"]); rec.rows_applied = list(g["rows_applied"])
+        rec.wire = list(g["wire"]); rec.speed_before_rule = list(g["speed_before_rule"])
+        rec.done = [bool(x) for x in g["done"]]; rec.republishes = [int(x) for x in g["republishes"]]
+        rec.boundary_ticks = [int(x) for x in g["boundary_ticks"]]; rec.decisions = list(g["decisions"])
+        rec.obs_t = list(g["obs_t"]); rec.node_obs = list(g["node_obs"]); rec.node_frame = list(g["node_frame"])
+        rec.commit_ticks = [int(x) for x in g["commit_ticks"]]; rec.rewards = [float(x) for x in g["rewards"]]
+        rec.terminated = [bool(x) for x in g["terminated"]]; rec.truncated = [bool(x) for x in g["truncated"]]
+        rec.commit_obs = list(g["commit_obs"]); rec.infos = json.loads(str(g["infos"]))
+        return rec
+
+
+Fallback = Callable[[np.ndarray, ScenarioConfig], int]
+
+
+class BridgeCore:
+    """The plant and the referee, one tick at a time."""
+
+    PER_TICK_TIMEOUT_S = 5.0
+    FIRST_TICK_TIMEOUT_S = 30.0
+    REPUBLISH_PERIOD_S = 0.2
+
+    def __init__(self, cfg: ScenarioConfig, ros_cars: Sequence[int],
+                 fallback: Optional[Fallback] = None, versions: Optional[dict] = None,
+                 wire_dtype=np.float32):
+        """``wire_dtype`` is float32, what AckermannDrive carries. Tests pass float64 to
+        show the protocol itself is exact when the wire is not the limit."""
+        K = cfg.num_cooperators
+        self.ros_cars = sorted(set(int(i) for i in ros_cars))
+        for i in self.ros_cars:
+            if not 1 <= i <= K:
+                raise ValueError(f"car {i} is not a cooperator (1..{K})")
+        self.cfg = cfg
+        self.env = ClearanceEnv(cfg)
+        self.fallback: Fallback = fallback if fallback is not None else LocalIdealCooperator()
+        self.versions = dict(versions or {})
+        self.episode = -1
+        self.tick = 0
+        self.start_tick = 0
+        self._end_tick = 0
+        self.record: Optional[Record] = None
+        self.duplicate_commands = 0
+        self.stale_commands = 0
+        self._republishes_this_tick = 0
+        self.wire_dtype = wire_dtype
+        self._pending_drive: Dict[int, Tuple[np.floating, np.floating]] = {}
+        self._pending_decision: Dict[int, dict] = {}
+        self._obs_t: Optional[np.ndarray] = None
+        self._episode_over = True
+
+    # -- episodes -----------------------------------------------------------------
+    def begin_episode(self, seed: int) -> BridgeState:
+        cfg = self.cfg
+        self.episode += 1
+        self.start_tick = episode_start_tick(self.episode, self._end_tick)
+        self.tick = 0
+        self._pending_drive.clear(); self._pending_decision.clear()
+        self._republishes_this_tick = 0
+        self._episode_over = False
+        self.env.reset(seed=seed)
+        self.record = Record(meta=dict(
+            preset=cfg.preset, cfg=asdict(cfg), seed=int(seed), episode=self.episode,
+            start_tick=self.start_tick, ros_cars=list(self.ros_cars), versions=self.versions,
+            aborted=False, abort_reason="", feature_count=feature_count(cfg),
+        ))
+        self.record.cars_state.append(cars_to_array(self.env.cars))
+        self._snapshot()
+        return self.state()
+
+    def _snapshot(self) -> None:
+        """The boundary snapshot: what checks 3 and 4 compare against, taken BEFORE anything moves."""
+        self._obs_t = self.env.per_agent_obs_all()
+
+    @property
+    def stamp_tick(self) -> int:
+        return self.start_tick + self.tick
+
+    @property
+    def boundary(self) -> bool:
+        return self.env.substeps_done == 0
+
+    def state(self) -> BridgeState:
+        return BridgeState(self.episode, self.tick, self.start_tick, self.stamp_tick, self.boundary, self.env.cars)
+
+    # -- incoming commands ---------------------------------------------------------
+    def _classify(self, car: int, episode: int, tick: int) -> str:
+        if car not in self.ros_cars:
+            raise ProtocolError(f"a command for car {car}, which is not ROS-driven ({self.ros_cars})")
+        key, now = (int(episode), int(tick)), (self.episode, self.tick)
+        if key == now:
+            return "current"
+        if key < now:
+            self.stale_commands += 1
+            return "stale"
+        raise ProtocolError(f"a command for {key} arrived while the bridge is at {now}: that cannot happen in lockstep")
+
+    def offer_drive(self, car: int, episode: int, tick: int, steer: float, speed: float) -> str:
+        cls = self._classify(car, episode, tick)
+        if cls != "current":
+            return cls
+        if car in self._pending_drive:
+            self.duplicate_commands += 1
+            return "duplicate"
+        self._pending_drive[car] = (self.wire_dtype(steer), self.wire_dtype(speed))
+        return "accepted"
+
+    def offer_decision(self, car: int, episode: int, tick: int, action: int, obs: np.ndarray,
+                       s: float, d: float, lane: int, tangent: float) -> str:
+        cls = self._classify(car, episode, tick)
+        if cls != "current":
+            return cls
+        if not self.boundary:
+            raise ProtocolError(f"a decision for tick {tick}, which is not a step boundary")
+        if car in self._pending_decision:
+            self.duplicate_commands += 1
+            return "duplicate"
+        obs = np.asarray(obs, dtype=np.float32)
+        if obs.shape != (feature_count(self.cfg),):
+            raise ProtocolError(f"decision obs has shape {obs.shape}, expected ({feature_count(self.cfg)},)")
+        self._pending_decision[car] = dict(action=int(action), obs=obs, s=float(s), d=float(d),
+                                           lane=int(lane), tangent=float(tangent))
+        return "accepted"
+
+    def ready(self) -> bool:
+        if self._episode_over:
+            return False
+        have_drive = all(i in self._pending_drive for i in self.ros_cars)
+        have_dec = (not self.boundary) or all(i in self._pending_decision for i in self.ros_cars)
+        return have_drive and have_dec
+
+    def missing(self) -> List[str]:
+        out = [f"/car{i}/drive" for i in self.ros_cars if i not in self._pending_drive]
+        if self.boundary:
+            out += [f"/car{i}/decision" for i in self.ros_cars if i not in self._pending_decision]
+        return out
+
+    def note_republish(self) -> None:
+        self._republishes_this_tick += 1
+
+    # -- the tick ------------------------------------------------------------------
+    def advance(self) -> StepOutcome:
+        if not self.ready():
+            raise ProtocolError(f"not ready: missing {self.missing()}")
+        env, cfg, rec = self.env, self.cfg, self.record
+        K = cfg.num_cooperators
+        boundary = self.boundary
+        if boundary != (self.tick % cfg.substeps == 0):
+            raise ProtocolError(f"the seam and the tick disagree on the step boundary at tick {self.tick}")
+
+        if boundary:
+            decisions = np.zeros(K, dtype=np.int64)
+            node_obs = np.full((K, feature_count(cfg)), np.nan, dtype=np.float32)
+            node_frame = np.full((K, 4), np.nan, dtype=np.float64)
+            for i in self.ros_cars:
+                dec = self._pending_decision[i]
+                env.set_decision(i - 1, dec["action"])
+                decisions[i - 1] = dec["action"]
+                node_obs[i - 1] = dec["obs"]
+                node_frame[i - 1] = (dec["s"], dec["d"], dec["lane"], dec["tangent"])
+            for j in range(K):
+                if (1 + j) not in self.ros_cars:
+                    a = int(self.fallback(self._obs_t[j], cfg))
+                    env.set_decision(j, a)
+                    decisions[j] = a
+            rec.boundary_ticks.append(self.tick)
+            rec.decisions.append(decisions)
+            rec.obs_t.append(self._obs_t.copy())
+            rec.node_obs.append(node_obs)
+            rec.node_frame.append(node_frame)
+
+        rows = env.joint_action_rows()
+        wire = np.full((K, 2), np.nan, dtype=self.wire_dtype)
+        for i in self.ros_cars:
+            s32, v32 = self._pending_drive[i]
+            rows[i] = (float(s32), float(v32))     # exactly the value that was on the wire
+            wire[i - 1] = (s32, v32)
+        speed_before = rows[1:1 + K, 1].copy()
+        done = env.substep(rows)
+        rec.rows_applied.append(env.rows_applied.copy())
+        rec.wire.append(wire)
+        rec.speed_before_rule.append(speed_before)
+        rec.done.append(bool(done))
+        rec.republishes.append(self._republishes_this_tick)
+        rec.cars_state.append(cars_to_array(env.cars))
+
+        committed = None
+        terminated = truncated = False
+        if done or env.substeps_done == cfg.substeps:
+            committed = env.commit_step()
+            _obs, reward, terminated, truncated, info = committed
+            rec.commit_ticks.append(self.tick)
+            rec.rewards.append(float(reward))
+            rec.terminated.append(bool(terminated))
+            rec.truncated.append(bool(truncated))
+            rec.commit_obs.append(np.asarray(_obs, dtype=np.float32))
+            rec.infos.append({k: (None if v is None else (bool(v) if isinstance(v, (bool, np.bool_)) else float(v)))
+                              for k, v in info.items()})
+            if done and not (terminated or truncated):
+                self.abort("the seam ended a step early without ending the episode")
+                raise ProtocolError("the seam ended a step early without ending the episode")
+
+        self.tick += 1
+        self._pending_drive.clear(); self._pending_decision.clear()
+        self._republishes_this_tick = 0
+        over = bool(terminated or truncated)
+        if over:
+            self._episode_over = True
+            self._end_tick = self.start_tick + self.tick
+            self.record.meta["end_tick"] = self._end_tick
+            self.record.meta["duplicate_commands"] = self.duplicate_commands
+            self.record.meta["stale_commands"] = self.stale_commands
+        elif env.substeps_done == 0:
+            self._snapshot()
+        return StepOutcome(bool(done), committed, bool(terminated), bool(truncated), over)
+
+    def abort(self, reason: str) -> None:
+        self._episode_over = True
+        if self.record is not None:
+            self.record.meta["aborted"] = True
+            self.record.meta["abort_reason"] = reason
+            self.record.meta["abort_tick"] = self.tick
+            self.record.meta["missing"] = self.missing()
+
+    # -- the episode's metrics, in run_episode's shape --------------------------------
+    def episode_metrics(self) -> dict:
+        rec = self.record
+        infos = rec.infos
+        last = infos[-1]
+        speeds = [i["ev_v"] for i in infos]
+        # the same arithmetic run_episode uses: a running float sum. Python 3.12's
+        # sum() is compensated and can differ from it in the last bit.
+        total = 0.0
+        for r in rec.rewards:
+            total += r
+        return {
+            "success": bool(last["success"]), "collision": bool(last["collision"]),
+            "t_clear": last["t_clear"], "ev_progress": float(last["ev_progress"]),
+            "ev_mean_speed": float(np.mean(speeds)) if speeds else 0.0,
+            "lane_changes": int(last["lane_changes"]), "cum_reward": float(total),
+            "num_steps": int(last["step"]), "sim_time": float(last["sim_time"]),
+        }
+
+    def close(self) -> None:
+        self.env.close()
+
+
+# -- the exact replay (check 5a) -----------------------------------------------------
+@dataclass
+class ReplayReport:
+    exact: bool
+    ticks: int
+    first_diff_tick: Optional[int] = None
+    max_state_diff: float = 0.0
+    reason: str = ""
+
+
+def replay(rec: Record) -> ReplayReport:
+    """Replay a record into a fresh ``ClearanceEnv`` and demand bit-for-bit equality."""
+    cfg = ScenarioConfig(**rec.meta["cfg"])
+    env = ClearanceEnv(cfg)
+    T = len(rec.rows_applied)
+    boundaries = {t: b for b, t in enumerate(rec.boundary_ticks)}
+    commits = {t: c for c, t in enumerate(rec.commit_ticks)}
+    K = cfg.num_cooperators
+
+    def diff(t: int, reason: str) -> ReplayReport:
+        got = cars_to_array(env.cars)
+        want = rec.cars_state[t]
+        return ReplayReport(False, T, t, float(np.max(np.abs(got - want))), reason)
+
+    try:
+        env.reset(seed=rec.meta["seed"])
+        if not np.array_equal(cars_to_array(env.cars), rec.cars_state[0]):
+            return diff(0, "the state after reset differs")
+        for t in range(T):
+            if t in boundaries:
+                for j in range(K):
+                    env.set_decision(j, int(rec.decisions[boundaries[t]][j]))
+            env.joint_action_rows()
+            try:
+                done = env.substep(rec.rows_applied[t])
+            except ValueError as e:
+                return diff(t, f"substep refused the recorded rows at tick {t}: {e}")
+            if done != rec.done[t]:
+                return diff(t + 1, f"done flag differs at tick {t}")
+            if not np.array_equal(env.rows_applied, rec.rows_applied[t]):
+                return diff(t + 1, f"the plant applied different rows at tick {t}")
+            if not np.array_equal(cars_to_array(env.cars), rec.cars_state[t + 1]):
+                return diff(t + 1, f"the state differs after tick {t}")
+            if done or env.substeps_done == cfg.substeps:
+                obs, r, te, tr, info = env.commit_step()
+                c = commits.get(t)
+                if c is None:
+                    return ReplayReport(False, T, t, 0.0, f"a commit at tick {t} that the record does not have")
+                same = (np.array_equal(np.asarray(obs, np.float32), rec.commit_obs[c]) and float(r) == rec.rewards[c]
+                        and bool(te) == rec.terminated[c] and bool(tr) == rec.truncated[c])
+                if not same:
+                    return ReplayReport(False, T, t, 0.0, f"the commit at tick {t} differs")
+        return ReplayReport(True, T)
+    finally:
+        env.close()
+
+
+# -- the in-process harness: the protocol without a bus ----------------------------------
+def run_lockstep_inprocess(cfg: ScenarioConfig, seed: int, ros_cars: Sequence[int],
+                           node_policy=None, emulate_wire: bool = True,
+                           republish_every: int = 0, bridge: Optional[BridgeCore] = None,
+                           nodes: Optional[Dict[int, NodeCore]] = None) -> BridgeCore:
+    """Run one episode with ``NodeCore`` objects standing in for the ROS car nodes.
+
+    ``emulate_wire`` sends the heading through a quaternion and the drive through
+    float32, exactly as the messages would. ``republish_every`` > 0 re-offers every
+    tick's state that many extra times, to exercise the duplicate handling.
+    """
+    if bridge is None:
+        bridge = BridgeCore(cfg, ros_cars, wire_dtype=np.float32 if emulate_wire else np.float64)
+    if nodes is None:
+        nodes = {i: NodeCore(cfg, i, node_policy) for i in bridge.ros_cars}
+    st = bridge.begin_episode(seed)
+    while True:
+        for _ in range(1 + republish_every):
+            for i, node in nodes.items():
+                samples = {}
+                for c in st.cars:
+                    theta = quat_to_yaw(*yaw_to_quat(c["theta"])) if emulate_wire else c["theta"]
+                    samples[c["i"]] = CarSample(c["x"], c["y"], theta, c["v"])
+                out = node.on_tick(st.episode, st.tick, samples, own_delta=st.cars[i]["delta"])
+                if out.decision is not None:
+                    dec = out.decision
+                    bridge.offer_decision(i, dec.episode, dec.tick, dec.action, dec.obs, dec.s, dec.d, dec.lane, dec.tangent)
+                if emulate_wire:
+                    bridge.offer_drive(i, st.episode, st.tick, float(out.steer), float(out.speed))
+                else:
+                    bridge.offer_drive(i, st.episode, st.tick, out.steer_intent, out.speed_intent)
+            if republish_every:
+                bridge.note_republish()
+        res = bridge.advance()
+        if res.episode_over:
+            return bridge
+        st = bridge.state()

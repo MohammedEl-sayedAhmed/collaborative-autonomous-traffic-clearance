@@ -34,7 +34,7 @@ from .controllers import coop_lowlevel, ev_control
 from .obs_spec import per_coop_obs, side_clear
 
 # discrete action ids (mirror the 2020 project's 5-action set)
-from .actions import STAY, MERGE_LEFT, MERGE_RIGHT, SPEED_UP, SLOW_DOWN  # noqa: E402,F401  (re-exported)
+from .actions import STAY, MERGE_LEFT, MERGE_RIGHT, SPEED_UP, SLOW_DOWN, apply_decision  # noqa: E402,F401  (re-exported)
 
 # The base env ray-casts a 1080-beam lidar per car per 100 Hz physics step. We
 # never use scans (our road has no walls; car-car collisions come from GJK, not
@@ -294,26 +294,11 @@ class ClearanceEnv(gym.Env):
             raise IndexError(f"cooperator index {j} not in 0..{cfg.num_cooperators - 1}")
         if self._substeps_done > 0:
             raise RuntimeError("decisions are taken at the step boundary: commit_step() first")
-        a = int(a)
-        changed = 0
-        if a == MERGE_LEFT:
-            new = min(self.target_lane[j] + 1, cfg.num_lanes - 1)
-            changed = int(new != self.target_lane[j])
-            self.target_lane[j] = new
-        elif a == MERGE_RIGHT:
-            new = max(self.target_lane[j] - 1, 0)
-            changed = int(new != self.target_lane[j])
-            self.target_lane[j] = new
-        elif a == SPEED_UP:
-            self.target_speed[j] = min(
-                self.target_speed[j] + cfg.coop_speed_delta, cfg.coop_speed_max
-            )
-        elif a == SLOW_DOWN:
-            self.target_speed[j] = max(
-                self.target_speed[j] - cfg.coop_speed_delta, cfg.coop_speed_min
-            )
-        elif a != STAY:
-            raise ValueError(f"unknown decision {a} (expected 0..4)")
+        lane, speed, changed = apply_decision(
+            cfg, int(self.target_lane[j]), float(self.target_speed[j]), a
+        )
+        self.target_lane[j] = lane
+        self.target_speed[j] = speed
         self._changes_this_step += changed
         self._lane_changes += changed
         return changed
