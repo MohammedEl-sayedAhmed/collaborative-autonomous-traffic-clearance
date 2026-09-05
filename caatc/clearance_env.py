@@ -159,10 +159,12 @@ class ClearanceEnv(gym.Env):
 
         # -- episode state -----------------------------------------------------
         self._last_obs: Dict = {}
+        self._cars_now: List[dict] = []   # == self._cars(self._last_obs), cached
         self._step_count = 0
         self._prev_ev_s = self.cfg.ev_start_s
         self._lane_changes = 0
         self._t_clear = None
+        self._begin_step()
 
     # -- state reading --------------------------------------------------------
     def _cars(self, obs) -> List[dict]:
@@ -222,120 +224,239 @@ class ClearanceEnv(gym.Env):
         self.target_lane = np.full(K, cfg.ev_lane, dtype=int)
         self.target_speed = np.full(K, cfg.coop_speed, dtype=float)
         cars = self._cars(obs)
+        self._cars_now = cars
         self._step_count = 0
         self._prev_ev_s = cars[0]["s"]
         self._lane_changes = 0
         self._t_clear = None
+        self._begin_step()
 
         return (
             self._build_obs(obs, cars),
             self._info(obs, cars, collided=False, success=False, blocked_frac=0.0),
         )
 
-    # -- action decode --------------------------------------------------------
-    def _apply_action(self, action) -> int:
-        cfg = self.cfg
-        changes = 0
-        action = np.asarray(action).reshape(-1)
-        for j in range(cfg.num_cooperators):
-            a = int(action[j])
-            if a == MERGE_LEFT:
-                new = min(self.target_lane[j] + 1, cfg.num_lanes - 1)
-                changes += int(new != self.target_lane[j])
-                self.target_lane[j] = new
-            elif a == MERGE_RIGHT:
-                new = max(self.target_lane[j] - 1, 0)
-                changes += int(new != self.target_lane[j])
-                self.target_lane[j] = new
-            elif a == SPEED_UP:
-                self.target_speed[j] = min(
-                    self.target_speed[j] + cfg.coop_speed_delta, cfg.coop_speed_max
-                )
-            elif a == SLOW_DOWN:
-                self.target_speed[j] = max(
-                    self.target_speed[j] - cfg.coop_speed_delta, cfg.coop_speed_min
-                )
-            # STAY: no change
-        return changes
+    # -- the seam: decisions, rows, one tick at a time, commit -----------------
+    #
+    # ``step()`` is this protocol run in-process:
+    #
+    #     set_decision(j, a) for every cooperator      # the 10 Hz decision
+    #     repeat up to cfg.substeps times:
+    #         rows = joint_action_rows()               # what the env WOULD apply
+    #         done = substep(rows)                     # one 100 Hz physics tick
+    #     obs, reward, terminated, truncated, info = commit_step()
+    #
+    # A ROS bridge runs the same loop, with one substitution: it overwrites rows
+    # 1..K with the cooperators' own drive commands before calling substep(). Row 0
+    # (the emergency vehicle), the occupant rows, the ACC law, the reward, the
+    # termination rules and the metrics are the same code either way -- which is
+    # what keeps the published numbers comparable (ADR 0011).
 
-    # -- step -----------------------------------------------------------------
-    def step(self, action):
+    def _begin_step(self) -> None:
+        """Reset the per-step accumulators (called by reset() and commit_step())."""
+        self._changes_this_step = 0
+        self._substeps_done = 0
+        self._blocked_steps = 0
+        self._collided = False
+        self._success = False
+        self._done_this_step = False
+        self._rows_fresh = False
+        self._ev_row: Optional[np.ndarray] = None
+        self._occ_rows: Optional[np.ndarray] = None
+        self._blocked_now = False
+        self._rows_applied: Optional[np.ndarray] = None
+
+    @property
+    def cars(self) -> List[dict]:
+        """Every car's current state, ``[EV, K cooperators, H occupants]``.
+
+        Privileged (it is the whole scenario): for the plant, the referee and the
+        renderer -- never for a policy, which sees only ``per_agent_obs``.
+        """
+        return self._cars_now
+
+    @property
+    def substeps_done(self) -> int:
+        """Physics ticks taken in the current (uncommitted) step."""
+        return self._substeps_done
+
+    @property
+    def rows_applied(self) -> Optional[np.ndarray]:
+        """The ``[steer, speed]`` rows the physics actually received last tick."""
+        return self._rows_applied
+
+    def set_decision(self, j: int, a: int) -> int:
+        """Record cooperator ``j``'s high-level decision for the coming step.
+
+        A decision is taken at the step boundary and holds for ``cfg.substeps``
+        physics ticks -- exactly what one row of the ``MultiDiscrete`` action means.
+        Returns 1 if it changed the car's target lane (the oscillation penalty and
+        the ``lane_changes`` metric count these), else 0.
+        """
+        cfg = self.cfg
+        if not 0 <= j < cfg.num_cooperators:
+            raise IndexError(f"cooperator index {j} not in 0..{cfg.num_cooperators - 1}")
+        if self._substeps_done > 0:
+            raise RuntimeError("decisions are taken at the step boundary: commit_step() first")
+        a = int(a)
+        changed = 0
+        if a == MERGE_LEFT:
+            new = min(self.target_lane[j] + 1, cfg.num_lanes - 1)
+            changed = int(new != self.target_lane[j])
+            self.target_lane[j] = new
+        elif a == MERGE_RIGHT:
+            new = max(self.target_lane[j] - 1, 0)
+            changed = int(new != self.target_lane[j])
+            self.target_lane[j] = new
+        elif a == SPEED_UP:
+            self.target_speed[j] = min(
+                self.target_speed[j] + cfg.coop_speed_delta, cfg.coop_speed_max
+            )
+        elif a == SLOW_DOWN:
+            self.target_speed[j] = max(
+                self.target_speed[j] - cfg.coop_speed_delta, cfg.coop_speed_min
+            )
+        elif a != STAY:
+            raise ValueError(f"unknown decision {a} (expected 0..4)")
+        self._changes_this_step += changed
+        self._lane_changes += changed
+        return changed
+
+    def joint_action_rows(self) -> np.ndarray:
+        """The ``(num_agents, 2)`` ``[steer, speed]`` rows the env would apply next.
+
+        Row 0 is the EV under its adaptive-cruise law, rows ``1..K`` the cooperators
+        under ``coop_lowlevel`` from the decisions recorded so far, the rest HARD's
+        occupants. A pure function of the current state; call it once per tick. A
+        bridge overwrites rows ``1..K`` and hands the array to ``substep``.
+        """
         cfg = self.cfg
         K = cfg.num_cooperators
-        changes = self._apply_action(action)
-        self._lane_changes += changes
+        cars = self._cars_now
+        act = np.zeros((cfg.num_agents, 2), dtype=np.float64)
 
-        collided = False
-        success = False
-        blocked_steps = 0
-        substeps_done = 0
-        obs = self._last_obs
-        cars = self._cars(obs)
+        ev = cars[0]
+        others = [(c["s"], c["d"], c["v"]) for c in cars[1:]]
+        steer, speed, blocked = ev_control(
+            cfg, self.frame, ev["s"], ev["d"], ev["theta"], ev["v"], others
+        )
+        act[0] = (steer, speed)
 
-        for _ in range(cfg.substeps):
-            act = np.zeros((cfg.num_agents, 2), dtype=np.float64)
-
-            ev = cars[0]
-            others = [(c["s"], c["d"], c["v"]) for c in cars[1:]]
-            steer, speed, blocked = ev_control(
-                cfg, self.frame, ev["s"], ev["d"], ev["theta"], ev["v"], others
+        for j in range(K):
+            c = cars[1 + j]
+            target_speed = float(self.target_speed[j])
+            if cfg.ev_lane_speed_cap is not None and int(c["lane"]) == cfg.ev_lane:
+                # you cannot outrun the ambulance in its own lane: while still
+                # in the EV's lane a cooperator is capped, so speeding up is no
+                # substitute for getting out of the way (STRICT preset).
+                target_speed = min(target_speed, cfg.ev_lane_speed_cap)
+            act[1 + j] = coop_lowlevel(
+                cfg, self.frame, c["s"], c["d"], c["theta"], c["v"],
+                int(self.target_lane[j]), target_speed,
             )
-            act[0] = (steer, speed)
-            if blocked:
-                blocked_steps += 1
+        for h in range(cfg.num_occupants):
+            c = cars[1 + K + h]
+            act[1 + K + h] = coop_lowlevel(
+                cfg, self.frame, c["s"], c["d"], c["theta"], c["v"],
+                int(self._occ_lane[h]), cfg.coop_speed,
+            )
 
-            for j in range(K):
-                c = cars[1 + j]
-                target_speed = float(self.target_speed[j])
-                if cfg.ev_lane_speed_cap is not None and int(c["lane"]) == cfg.ev_lane:
-                    # you cannot outrun the ambulance in its own lane: while still
-                    # in the EV's lane a cooperator is capped, so speeding up is no
-                    # substitute for getting out of the way (STRICT preset).
-                    target_speed = min(target_speed, cfg.ev_lane_speed_cap)
-                act[1 + j] = coop_lowlevel(
-                    cfg, self.frame, c["s"], c["d"], c["theta"], c["v"],
-                    int(self.target_lane[j]), target_speed,
-                )
-            for h in range(cfg.num_occupants):
-                c = cars[1 + K + h]
-                act[1 + K + h] = coop_lowlevel(
-                    cfg, self.frame, c["s"], c["d"], c["theta"], c["v"],
-                    int(self._occ_lane[h]), cfg.coop_speed,
-                )
+        # remembered so substep() can hold the line on what a bridge may change
+        self._ev_row = act[0].copy()
+        self._occ_rows = act[1 + K:].copy()
+        self._blocked_now = bool(blocked)
+        self._rows_fresh = True
+        return act
 
-            obs, _r, inner_term, _trunc, _info = self.inner.step(act)
-            self._last_obs = obs
-            substeps_done += 1
-            self._draw()  # no-op unless a render_mode was requested
-            cars = self._cars(obs)  # reused next iteration and after the loop
-            if self.scene_hook is not None:
-                self.scene_hook(cars, {
-                    "sim_time": (self._step_count + substeps_done / cfg.substeps) * cfg.dt,
-                    "ev_blocked": bool(blocked),
-                    "ev_v": cars[0]["v"],
-                    "ev_progress": min(cars[0]["s"] / cfg.s_goal, 1.0),
-                    "lane_changes": self._lane_changes,
-                })
+    def substep(self, rows) -> bool:
+        """Advance the physics by ONE tick with ``rows``; True when the step is over.
 
-            if np.any(np.asarray(self.inner.collisions) > 0):
-                collided = True
-                break
-            if cars[0]["s"] >= cfg.s_goal:
-                success = True
-                break
-            if inner_term:
-                # the inner env considers the episode over (its own ego-collision
-                # path); stop stepping a done env. Our collision check above owns
-                # the outcome, so no extra flag is set here.
-                break
+        The referee's rules live here, so no car node can route around them:
 
+        * ``rows`` must descend from ``joint_action_rows()`` of THIS tick. Row 0 (the
+          EV) and the occupant rows must be untouched -- **only rows 1..K may differ**.
+        * cooperator speeds are clipped to ``[coop_speed_min, coop_speed_max]`` and,
+          on STRICT, capped while the car is still in the EV's lane.
+
+        For rows the env built itself both rules are no-ops, which is what keeps
+        ``step()`` bit-identical to the pre-seam implementation. Returns True once
+        the step is over (collision, goal, or the inner env finished): the caller
+        must then ``commit_step()`` and not tick again.
+        """
+        cfg = self.cfg
+        K = cfg.num_cooperators
+        if not self._rows_fresh:
+            raise RuntimeError("call joint_action_rows() before each substep()")
+        if self._done_this_step:
+            raise RuntimeError("this step is over: call commit_step()")
+        if self._substeps_done >= cfg.substeps:
+            raise RuntimeError(f"a step holds {cfg.substeps} substeps: call commit_step()")
+        rows = np.array(rows, dtype=np.float64, copy=True)
+        if rows.shape != (cfg.num_agents, 2):
+            raise ValueError(f"rows must be ({cfg.num_agents}, 2), got {rows.shape}")
+        if not np.array_equal(rows[0], self._ev_row):
+            raise ValueError("row 0 is the emergency vehicle's: the plant owns it")
+        if not np.array_equal(rows[1 + K:], self._occ_rows):
+            raise ValueError("occupant rows are the plant's: only rows 1..K may be replaced")
+
+        cars = self._cars_now
+        for j in range(K):
+            v = float(np.clip(rows[1 + j, 1], cfg.coop_speed_min, cfg.coop_speed_max))
+            if cfg.ev_lane_speed_cap is not None and int(cars[1 + j]["lane"]) == cfg.ev_lane:
+                v = min(v, cfg.ev_lane_speed_cap)
+            rows[1 + j, 1] = v
+        self._rows_fresh = False
+        self._rows_applied = rows
+
+        obs, _r, inner_term, _trunc, _info = self.inner.step(rows)
+        self._last_obs = obs
+        self._substeps_done += 1
+        if self._blocked_now:
+            self._blocked_steps += 1
+        self._draw()  # no-op unless a render_mode was requested
+        cars = self._cars(obs)
+        self._cars_now = cars
+        if self.scene_hook is not None:
+            self.scene_hook(cars, {
+                "sim_time": (self._step_count + self._substeps_done / cfg.substeps) * cfg.dt,
+                "ev_blocked": self._blocked_now,
+                "ev_v": cars[0]["v"],
+                "ev_progress": min(cars[0]["s"] / cfg.s_goal, 1.0),
+                "lane_changes": self._lane_changes,
+            })
+
+        if np.any(np.asarray(self.inner.collisions) > 0):
+            self._collided = True
+            self._done_this_step = True
+        elif cars[0]["s"] >= cfg.s_goal:
+            self._success = True
+            self._done_this_step = True
+        elif inner_term:
+            # the inner env considers the episode over (its own ego-collision
+            # path); stop stepping a done env. Our collision check above owns
+            # the outcome, so no extra flag is set here.
+            self._done_this_step = True
+        return self._done_this_step
+
+    def commit_step(self):
+        """Close the step: the shared reward, termination and the next observation.
+
+        Returns the Gymnasium 5-tuple exactly as ``step()`` does, then opens the
+        next step.
+        """
+        cfg = self.cfg
+        if self._substeps_done == 0:
+            raise RuntimeError("commit_step() needs at least one substep()")
+        obs, cars = self._last_obs, self._cars_now
+        collided, success = self._collided, self._success
+        changes = self._changes_this_step
         self._step_count += 1
 
         ev_s = cars[0]["s"]
         ev_v = cars[0]["v"]
         progress = ev_s - self._prev_ev_s
         self._prev_ev_s = ev_s
-        blocked_frac = blocked_steps / max(1, substeps_done)
+        blocked_frac = self._blocked_steps / max(1, self._substeps_done)
 
         # -- shared cooperative reward ----------------------------------------
         reward = cfg.w_progress * progress
@@ -352,13 +473,27 @@ class ClearanceEnv(gym.Env):
         terminated = bool(collided or success)
         truncated = bool((not terminated) and self._step_count >= cfg.max_steps)
 
-        return (
+        result = (
             self._build_obs(obs, cars),
             float(reward),
             terminated,
             truncated,
             self._info(obs, cars, collided=collided, success=success, blocked_frac=blocked_frac),
         )
+        self._begin_step()
+        return result
+
+    # -- step -----------------------------------------------------------------
+    def step(self, action):
+        """One 10 Hz decision step -- the seam protocol above, run in-process."""
+        cfg = self.cfg
+        action = np.asarray(action).reshape(-1)
+        for j in range(cfg.num_cooperators):
+            self.set_decision(j, action[j])
+        for _ in range(cfg.substeps):
+            if self.substep(self.joint_action_rows()):
+                break
+        return self.commit_step()
 
     # -- observation ----------------------------------------------------------
     def _per_coop_obs(self, j: int, cars: List[dict]) -> List[float]:
