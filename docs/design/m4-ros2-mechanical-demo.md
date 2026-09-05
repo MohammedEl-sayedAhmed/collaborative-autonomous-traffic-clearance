@@ -2,8 +2,9 @@
 
 M4 moves the cars' decision-making out of one Python program and onto a real message bus: **one
 `ClearanceEnv` as the only physics in the system**, and **K independent ROS 2 nodes, one per
-cooperating car**, each subscribing to its own state and its own V2V digest and nothing else, and
-publishing the drive command that actually moves its car.
+cooperating car**, each publishing the drive command that actually moves its car. From M4.2 on, a
+node subscribes to its own state and its own V2V digest and nothing else; in M4.1 it still hears the
+other cars' raw odometry (see the contract).
 
 This is the second half of [ADR 0005](../adr/0005-phase-migration-gym-first.md)'s split: the thesis
 used SUMO for the learning results and Gazebo for a mechanical proof; we use `f1tenth_gym` for the
@@ -82,8 +83,10 @@ Three consequences, stated up front:
 2. **It is the first time the shared policy runs as K copies in K separate processes.** Training
    shared one set of weights; deployment loads K independent copies. `proc_fleet.py` goes from
    verification tool to production architecture.
-3. **The simulator sits behind an interface** (`caatc/plant.py`, one implementation in M4), so a 3D
-   simulator or real hardware later is a swap plus its own checked milestone, not a rewrite.
+3. **The simulator sits behind a small interface**: the four seam calls on `ClearanceEnv`
+   (`set_decision`, `joint_action_rows`, `substep`, `commit_step`). A separate `Plant` protocol with
+   a second implementation (a 3D simulator, real hardware) is M5 work with its own checks, not part
+   of M4.
 
 ### What M4 does not claim
 
@@ -100,7 +103,7 @@ real-time rates, on physics **identical** to the published results.
 Two ROS packages; build results live in a named volume (`caatc-ros-ws`), never in the tree:
 
 ```
-ros2/src/caatc_msgs/          # ament_cmake (rosidl): V2VDigest, Decision (the two things with no standard message)
+ros2/src/caatc_msgs/          # ament_cmake (rosidl): Episode, Decision, Broadcast, V2VDigest (what no standard message carries)
 ros2/src/caatc_ros/           # ament_python
   caatc_ros/{clearance_bridge,car_node,v2v_relay,scene_view,ros_gate,bag_replay}.py
   launch/clearance_demo.launch.py     # 1 bridge + 1 relay + K car nodes + view
@@ -110,8 +113,9 @@ docker/ros.Dockerfile                 # -> caatc-ros  (ros:jazzy, no torch, no S
 ```
 
 The car state and the drive command use **standard messages** (`nav_msgs/Odometry`,
-`ackermann_msgs/AckermannDriveStamped`, choice 2 below). Only the V2V digest and the decision need
-custom messages, because nothing standard carries them.
+`sensor_msgs/JointState`, `ackermann_msgs/AckermannDriveStamped`, choice 2 below). Four small custom
+messages carry what nothing standard does: the episode run-control, a car's decision with the
+observation it read, and (M4.2) the V2V broadcast and digest.
 
 `run.sh` gains: `ros-build`, `ros-ws-build`, `ros-fingerprint`, `ros-smoke`, `ros-demo`, `ros-gate`,
 `ros-replay`, `export-policy`.
@@ -138,39 +142,63 @@ ones in bold:
    **IDENTICAL** (the M1 to M3 tables carry over as they are) or **DIFFERENT** (the difference is
    measured and *published*). The **only** check allowed to report a difference instead of failing,
    and it says which it did.
-2. `check_graph`: the nodes, topics and message types match the declared contract; rates within ±10%.
-3. `check_frame_agreement`: each car's own `(s, d, lane, tangent)`, computed from the exported road,
-   agrees with the bridge's within the declared tolerance. Catches drift in the exported road for free.
-4. **`check_obs_identity`**: the observation each car node acts on agrees with `env.per_agent_obs(j)`
-   at the same tick, within the declared tolerance, over at least 200 decision instants × 3 presets,
-   with the measured difference printed. *The most important single check*: it shows the deployed
-   policy reads the same 26 numbers it was trained on.
-5. **`check_lockstep_replay`** (inside the image): replay the recorded rows into a fresh `ClearanceEnv`
-   in the same image and demand the same per-tick states within tolerance and the same `run_episode`
-   outcome. **`check_published_parity`** (across images): `summarize()` gives the published M2 / M3
-   outcomes on shared seeds, plus a difference table on `t_clear`. Two checks of very different
-   difficulty on purpose: (5a) must pass unconditionally; (5b) is the cross-image one, and check 1
-   already predicts its verdict.
+2. `check_graph`: the set of nodes, topics and message types equals the declared contract, and each
+   node reports the interpreter and numpy version it runs on (they must match check 1). In lockstep
+   the count is what is checked: exactly one distinct (episode, tick) per topic per tick, re-publishes
+   not counted. The "rates within ±10%" clause applies to the async mode only (check 13).
+3. `check_frame_agreement`: each car's own `(s, d, lane, tangent)`, carried in its Decision, agrees
+   with the bridge's `env.cars[i]` at the same tick: `s`, `d` and `tangent` exact, `lane` equal. In
+   M4.1 both sides build the road from the same `scenario.centerline_xy`, so this proves the odometry
+   round trip; it becomes a test of an exported road in M4.2. Headings are always compared through
+   `wrap_to_pi`.
+4. **`check_obs_identity`**: `Decision.obs` from car `i` equals the bridge's snapshot
+   `obs_t[i - 1]` (taken at the step boundary, *before* any `set_decision` or `substep`) on every
+   element except `heading_err`, which may differ by at most one float32 unit (the heading went
+   through a quaternion); over at least 200 decision instants × 3 presets, with the per-element
+   difference printed. *The most important single check*: it shows the deployed policy reads the
+   same 26 numbers it was trained on. It is a lockstep, zero-loss check by definition.
+5. **`check_lockstep_replay`** (inside the image): replay the record into a fresh `ClearanceEnv` in
+   the same image and demand **exactly** the same per-tick states and the same episode outcome, bit
+   for bit (the replay procedure is in the contract; a divergence surfaces as the tick and the size of
+   the first difference, not as a tolerance). **`check_published_parity`** (ROS run vs the headless
+   run, same seed): the same success, collisions and yields, `t_clear` within one decision step, and
+   the EV's `s` at the same tick within one EV tick; the number of ticks on which the two states
+   differ, and the first such tick, are printed. Two checks of very different difficulty on purpose:
+   (5a) must pass unconditionally; (5b) is where the float32 wire could show, and check 1 already
+   predicts whether the images agree.
 6. `check_decision_agreement`: the ROS action sequence equals `SharedPolicySquad`'s on the same
    observations; any mismatch must be a near tie (`|logit margin| < 1e-6`), and the count is printed.
    Not exact equality, for the reason `dec_smoke` already documents: a different order of floating-point
    operations across processes can flip an argmax on a near tie, and a flaky check is worse than none.
-7. **`check_subscription_hygiene`**: each car node's set of subscriptions **equals** the allow-list,
-   and `/caatc/ground_truth` has **zero** car-node subscribers. The ground truth is published *on
-   purpose*, so "nobody is listening to it" becomes something we can check. `LocalOnlyView` could never
-   do that.
+7. **`check_subscription_hygiene`**: each car node's set of subscriptions **equals** its allow-list,
+   and `/caatc/ground_truth` has **zero** subscribers in any `/car*` namespace. The ground truth is
+   published *on purpose*, so "nobody is listening to it" becomes something we can check.
+   `LocalOnlyView` could never do that. How it is sampled matters: `ros_gate` is a node that runs for
+   the whole episode, waits until every `/car{i}/agent` is visible, then samples
+   `get_subscriber_names_and_types_by_node` and `get_subscriptions_info_by_topic` every 100 ms and
+   unions the results; car nodes stay alive until the bridge has published `Episode.ENDED` and the
+   gate has taken its last sample; the set of node names must equal the declared node set (so no
+   helper node can carry an extra subscription); a transient `_NODE_NAME_UNKNOWN_` entry is re-sampled
+   and fails only if it persists. The check is per DDS participant, so "K distinct process ids" is what
+   covers a fleet composed in one process. **In M4.1 this check tests plumbing, not locality**, because
+   the M4.1 allow-list carries every car's raw odometry; locality is tested by check 9 in M4.1 and by
+   checks 7 and 8 together from M4.2 on.
 8. **`check_bag_replay`**: record a `rosbag2`, then replay **only** the allow-listed topics into a fresh
    car node and demand the recorded action sequence exactly. A policy with any hidden input cannot
    pass, and this keeps working after every simulator swap, including onto hardware. Strictly stronger
    than `proc_fleet`.
-9. `check_locality_injection`: a car out of range at 40 m and at 45 m must leave the digest and the 26
-   numbers unchanged; a car at 20 m must change them (the two-sided form `dec_smoke` uses).
+9. `check_locality_injection` (pulled forward into M4.1, because it is the one locality check that
+   works against a raw-odometry allow-list): feed the node's observation builder odometry with a peer
+   at 40 m and at 45 m; the 26 numbers must be identical; a peer at 20 m must change them (the
+   two-sided form `dec_smoke` uses). In M4.2 the same check runs on the relay's digest.
 10. **`check_headroom_carryover`**: through the full ROS graph on STRICT, `naive` and `speedup` must
     still **fail** while `ippo-strict` succeeds ≥ 95% with 3.0 yields. If DDS timing quietly lets the
     fast convoy through, the scenario got easier in transit and the demo proves nothing.
 11. `check_constraint_placement`: a car commanding `coop_speed_max` while in the EV's lane must still
     get at most `ev_lane_speed_cap` in the simulator. Fails if anyone moves the cap into the car node.
-    (The seam already enforces this: `substep()` clips and caps rows 1..K.)
+    (The seam already enforces this: `substep()` clips and caps rows 1..K.) The record keeps the
+    speed before and after the plant's rule and the number of ticks on which the rule changed it;
+    that count is this check's evidence.
 12. `check_peer_sufficiency`: the digest carries everything the 26 numbers need, so the observation can
     be rebuilt from broadcasts alone.
 13. `check_timing`: measured rates, command age, drops and the real-time factor, published, not
@@ -220,13 +248,18 @@ required); RViz being slow on the integrated GPU.
    passes the M1 headroom gate. The 3.12.3 vs 3.12.14 patch-level difference between the two images
    changes nothing.
    **Stop point 1:** passed on both counts.
-2. **M4.1, one car, lockstep** (about 1 to 1.5 days). The bridge plus **one** car node running the
-   hand-written local policy (no torch, no custom-message risk), rows `2..K` still driven by the
-   simulator. Checks 2, 3, 4, 5a.
+2. **M4.1, one car, lockstep** (about 1 to 1.5 days). First the pure-Python groundwork the contract
+   needs: the observation builder moved out of the env into `obs_spec.per_coop_obs` (done, with a
+   test that the two paths agree to the bit), the action constants in their own module so a node
+   never imports the simulator (done), integer tick stamps (done), and the `Episode` / `Decision`
+   messages (done). Then the bridge plus **one** car node running the hand-written local policy (no
+   torch; the only custom messages are `Episode` and `Decision`, already built into the image), rows
+   `2..K` still driven by the simulator. Checks 2, 3, 4, 5a, 9.
    **Stop point 2:** observation agreement and in-image replay agreement on one car, or the transport
    is wrong and nothing built on top could be trusted.
-3. **M4.2, the fleet, the radio, the constraint** (about 2 days). K car nodes, `v2v_relay`, side-traffic
-   broadcasts, `caatc_msgs`, the exported policy. Checks 5b, 6, 7, 9, 10, 11, 12.
+3. **M4.2, the fleet, the radio, the constraint** (about 2 days). K car nodes, `v2v_relay` with the
+   `Broadcast` / `V2VDigest` messages, side-traffic broadcasts, the exported policy. Checks 5b, 6, 7,
+   10, 11, 12.
 4. **M4.3, the evidence and the picture** (about 1.5 days). `rosbag2` and check 8; `scene_view`; the
    RViz layout; `write_run` to the dashboard; the mp4s.
 5. **M4.4, the two measured variants** (about 1 day). The float32 wire's effect; the async delay and
@@ -252,7 +285,7 @@ volume, DDS in Docker, simulated time, launch files) and that the 14 checks are 
 3. **Scope creep into "a real robot" or a second simulator.** `AckermannDriveStamped`, `/tf` and URDF
    all invite odometry noise, `gz sim` and `f1tenth_system`, and each of those changes the dynamics and
    invalidates the published numbers. M4's charter is exactly *the same physics, now over ROS, decided
-   per car*. The `Plant` interface is built and deliberately **not** used twice in M4.
+   per car*. The seam is the only plant interface in M4; a second implementation is M5.
 
 ## The three open questions, decided on 2026-09-04
 
@@ -296,103 +329,193 @@ first plan. What that costs is written here rather than found out later.
 ## M4.1 contract: topics, messages, the lockstep tick
 
 This is the exact agreement between the bridge and a car node. Both sides are written against it,
-and the checks test it. K=3 cooperators; in M4.1 only car 1 is driven over ROS, rows 2..3 stay with
-the simulator. The agent order is the env's: index 0 is the EV, 1..K the cooperators, then HARD's
-side traffic.
+and the checks test it. It was reviewed adversarially before any node was written, and the problems
+found (an off-by-one between two indices, float time stamps, no episode identity, double-applied
+decisions, and a dozen unspecified details) are fixed below.
+
+### Two indices, two names
+
+The env numbers cars in **agent order**: `i = 0` is the EV, `i = 1..K` are the cooperators, then
+HARD's side traffic. Topics, `Decision.car`, `Odometry.child_frame_id` and the rows of the action
+array all use `i`. The env's seam and observation calls take the **cooperator index** `j = i - 1`
+(`set_decision(j, a)`, `per_agent_obs(j)`, `obs_spec.per_coop_obs(cfg, frame, j, cars)`,
+`target_lane[j]`). The contract always writes `i` for the agent index and `j = i - 1` for the
+cooperator index. The bridge asserts `1 <= i <= K` on every Decision and Drive it accepts. K=3; in
+M4.1 only `i = 1` is driven over ROS, rows 2..3 stay with the simulator.
 
 ### Topics
 
 | topic | type | from → to | when |
 |---|---|---|---|
-| `/clock` | `rosgraph_msgs/Clock` | bridge → all | every tick; simulated time = tick × 0.01 s |
+| `/caatc/episode` | `caatc_msgs/Episode` | bridge → all | every tick (with the state), and once more with `state = ENDED` |
 | `/car{i}/odom` | `nav_msgs/Odometry` | bridge → all, for every car i | every tick |
 | `/car{i}/joint_states` | `sensor_msgs/JointState` | bridge → all, for every car i | every tick; `name = ["steering"]`, `position = [delta]` |
-| `/car{j}/drive` | `ackermann_msgs/AckermannDriveStamped` | car node j → bridge | every tick |
-| `/car{j}/decision` | `caatc_msgs/Decision` | car node j → bridge | every step boundary (tick % 10 == 0) |
-| `/caatc/ground_truth` | `std_msgs/Float64MultiArray` | bridge → nobody | every tick; every car's `(x, y, theta, v, delta, s, d, lane)`; published **so that check 7 can prove no car node listens to it** |
+| `/car{i}/drive` | `ackermann_msgs/AckermannDriveStamped` | car node i → bridge | every tick |
+| `/car{i}/decision` | `caatc_msgs/Decision` | car node i → bridge | every step boundary (`tick % cfg.substeps == 0`) |
+| `/clock` | `rosgraph_msgs/Clock` | bridge → tools (rosbag2, RViz, TF) | every tick; **not** for car nodes |
+| `/caatc/ground_truth` | `std_msgs/Float64MultiArray` | bridge → nobody | every tick; published **only so check 7 can prove no car node listens to it**; no check reads it |
 
-`Odometry`: `header.stamp` = the tick's simulated time, `header.frame_id = "map"`,
-`child_frame_id = "car{i}"`, `pose.pose.position = (x, y, 0)`, `pose.pose.orientation` = the yaw
-quaternion of `theta` (`z = sin(theta/2)`, `w = cos(theta/2)`), `twist.twist.linear.x = v` (the
-single-track model's longitudinal speed). All float64, so position and speed cross the wire exactly;
-only the heading goes through a quaternion. The steering angle is not part of `Odometry`, so it
-travels as a `JointState`, which is what a real car's steering servo reports.
+**Fields.** `Odometry`: `header.stamp` = the tick's stamp (below), `header.frame_id = "map"`,
+`child_frame_id = "car{i}"`, `pose.pose.position = (x, y, 0)`, `pose.pose.orientation =
+(0, 0, sin(theta/2), cos(theta/2))`, `twist.twist.linear.x = v` (the single-track model's
+longitudinal speed); covariances and everything else zero. All float64, so position and speed cross
+the wire exactly; only the heading goes through a quaternion, and it comes back **modulo 2 pi** (the
+simulator keeps `theta` in `[0, 2 pi)`, the quaternion returns `(-pi, pi]`), which is harmless
+because every consumer goes through `wrap_to_pi`. `JointState`: same stamp, `header.frame_id =
+"car{i}"`, one joint. `AckermannDriveStamped`: `header.stamp` = the Odometry stamp of the tick the
+command is **for**, echoed verbatim; `header.frame_id = "car{i}"`; `drive.steering_angle`,
+`drive.speed`; the other three drive fields zero. Both drive fields are **float32** by the message
+definition, and the value is rounded on the wire, not at assignment, so a node that logs "what I
+sent" must round explicitly: `np.float32(steer), np.float32(speed)`. `Episode`: see the message
+file; `start_tick` is where this episode's tick 0 sits on the simulated clock. `Decision`: the bridge
+keys it on `(episode, tick)`; `header.stamp` is informational; `car = i`; `obs` is exactly
+`np.clip(np.asarray(per_coop_obs(cfg, frame, i - 1, cars), np.float32), -10, 10)` (length
+`feature_count(cfg)`), the same array the policy was given; `s, d, lane, tangent` are the node's own
+road-frame values at that tick, for check 3. `/caatc/ground_truth`: `data = [stamp_tick, then 8 values
+per car in agent order: x, y, wrap_to_pi(theta), v, delta, s, d, lane]`, with `layout.dim` labels
+`car` and `field`.
 
-`AckermannDriveStamped`: `header.stamp` = the simulated time of the tick the command is **for**;
-`drive.steering_angle`, `drive.speed`. Both fields are **float32** by the message definition. That
-rounding is the one place where the ROS run cannot equal the headless run bit for bit.
+**Stamps are integers.** A tick's stamp is `tick_to_stamp(start_tick + tick, cfg.sim_hz)` from
+`caatc/ros_tick.py`: `sec = T // 100`, `nanosec = (T % 100) * 10_000_000` at 100 Hz, never a float
+product (`tick * 0.01` mis-encodes 1.7% of ticks, including step boundaries). The first episode starts
+at 1.000 s (stamp 0 is "unset" to tf2 and RViz), each later episode one simulated second after the
+previous one ended, so simulated time never runs backwards within a bridge process. A node never
+builds a stamp: it echoes the Odometry stamp into its Drive and Decision headers and derives the tick
+as `stamp_to_tick(sec, nanosec) - episode.start_tick`, which refuses a stamp that is not on a tick.
 
-Car node j may subscribe to **only**: `/car{j}/odom`, `/car{j}/joint_states` (its own sensors),
-`/car0/odom` (the EV's broadcast) and `/car{k}/odom` for every other car k (the peers' broadcasts;
-in M4.1 the "radio" is these topics directly, in M4.2 the relay replaces them with `/car{j}/v2v`).
-That set is its allow-list; check 7 demands equality with it. Range limiting happens inside the node
-with the same numbers the env uses (`v2v_range` for the EV block, `neighbor_gate` for neighbours,
-`clear_window` for the side-lane flags).
+**Clocks.** Bridge and car nodes run with `use_sim_time = false`. The bridge's re-publish period and
+its timeouts use a steady wall clock (`time.monotonic()`); with simulated time they would never fire,
+because simulated time only advances when the bridge advances a tick. A car node never subscribes to
+`/clock` (with `use_sim_time = true`, rclpy would add that subscription and break check 7). `/clock`
+exists for tools only.
+
+**The car node's allow-list (M4.1):** `/caatc/episode`, `/car{i}/odom`, `/car{i}/joint_states` (its
+own sensors), `/car0/odom` (the EV's broadcast) and `/car{k}/odom` for every other car k, HARD's side
+traffic included. Nothing else. Check 7 demands equality with this set. Range limiting happens inside
+the node with the env's own numbers, in the shared `per_coop_obs`. **This allow-list is interim and
+wider than M4.2's**: it carries every car's exact position at any distance, so in M4.1 the
+decentralised property rests on the node's own code, weaker than M3's `LocalOnlyView`. M4.2 replaces
+the raw odometry topics with `/car{i}/v2v`, the relay's range-, loss- and delay-filtered digest, and
+only then do checks 7 and 8 test locality rather than plumbing. Check 9 covers locality in M4.1.
+
+**Configuration identity.** Both processes take the same `preset` parameter and build
+`preset_config(preset)` with defaults, so `num_agents` (7 on HARD, from `hard_block_sides`, which
+`cfg.seed = 12345` fixes), the road, the lanes and every range are identical on both sides. The
+bridge's `--seed` is only the `reset` seed and is published in `Episode.seed`. The fallback policy for
+simulator-driven cooperators is `LocalIdealCooperator()` with default arguments on the boundary
+snapshot `obs_t[j]`, the same policy `dec_smoke` uses as its reference, and the same the M4.1 node
+runs. Both sides read these settings from `config/{preset}.yaml`.
+
+**What the node builds from the messages.** A `cars` list of length `num_agents` **indexed by agent
+id** (never in arrival order): entry `k` from `/car{k}/odom` with `s, d = frame.project(x, y)`,
+`lane = lane_of(cfg, d)`, `v = twist.linear.x`; its own entry additionally with `theta =
+quat_to_yaw(orientation)` and `delta = joint_states.position[0]`. `per_coop_obs` reads exactly
+`s, d, v, lane, theta, delta` of self and `s, d, v, lane` of every other car; the side flags scan every
+other car including the EV (`clear_window` is a geometric window, not a radio gate). Neighbour ties on
+`|Δs|` fall back to agent order (a stable sort), which is why the list must be in agent order.
 
 ### The lockstep tick
 
 ```
-bridge                                          car node j
-------                                          ----------
-reset(seed) → tick 0 state
-publish clock, odom×N, joint_states×N,
-  ground_truth  (all stamped tick t)
-                                                wait until own odom, own joint_states, and
-                                                every other car's odom carry stamp t
-                                                if t % 10 == 0:
-                                                    obs  = the same 26 numbers the env builds
-                                                    a    = policy(obs)
-                                                    apply a to own target_lane / target_speed
-                                                         (same clamping rules as env.set_decision)
-                                                    publish Decision(tick=t, car=j, action=a, obs)
-                                                row = coop_lowlevel(cfg, frame, s, d, theta, v,
-                                                                    target_lane, target_speed)
-                                                publish Drive(stamp=t, steer, speed)
-wait for Drive(t) from every ROS car
-  (and Decision(t) when t % 10 == 0);
-  time out loudly after 5 s
-if t % 10 == 0: env.set_decision(j, a) for ROS cars,
-  and for simulator-driven cars from their fallback policy
+bridge                                              car node i  (j = i - 1)
+------                                              ----------------------
+reset(seed) → tick 0 state; publish Episode(RUNNING,
+  start_tick), Odometry×N, JointState×N,
+  ground_truth, /clock, all stamped tick 0
+                                                    on EVERY callback: latest_stamp[topic] = stamp;
+                                                      complete = every required topic carries the newest
+                                                      stamp, and Episode for it is known
+                                                    if not complete: wait (another callback will re-check)
+                                                    tick = stamp_to_tick(stamp) - episode.start_tick
+                                                    if (episode, tick) == last handled: re-publish the
+                                                      cached Drive (and Decision) and do nothing else
+                                                    if episode changed or tick == 0: reset target_lane =
+                                                      cfg.ev_lane, target_speed = cfg.coop_speed, clear cache
+                                                    if tick % cfg.substeps == 0:
+                                                        obs = clip(float32(per_coop_obs(cfg, frame, j, cars)))
+                                                        a   = policy(obs)
+                                                        apply a to own targets (env.set_decision's rules)
+                                                        cache and publish Decision(episode, tick, car=i,
+                                                          action=a, obs, s, d, lane, tangent)
+                                                    row = coop_lowlevel(cfg, frame, s, d, theta, v,
+                                                                        target_lane, target_speed)
+                                                    cache and publish Drive(stamp echoed, steer, speed)
+at the boundary, BEFORE anything else:
+  obs_t = env.per_agent_obs_all(); cars_t = env.cars   (the snapshot checks 3 and 4 compare against)
+wait for Drive(episode, tick) from every ROS car,
+  and Decision(episode, tick) at a boundary;
+  first copy wins; a later copy for the same key is
+  counted as duplicate_commands and ignored; a copy
+  for an older key is counted as stale_commands and
+  dropped; a newer key aborts the run
+  re-publish the tick's state every 200 ms (wall clock)
+  while waiting; abort after 5 s per tick
+  (30 s for tick 0, to cover DDS discovery)
+at the boundary, once, from this loop (never from a
+  callback): env.set_decision(i - 1, decision[i].action)
+  for ROS cars; env.set_decision(j, LocalIdealCooperator()(obs_t[j], cfg))
+  for the simulator-driven cooperators
 rows = env.joint_action_rows()
-rows[j] = (steer, speed) from Drive(t)   # float32 → float64, exactly as received
-done = env.substep(rows)                 # the plant clips speeds and applies the STRICT cap
-record rows_applied, and at boundaries the decisions and observations
-if done or (t+1) % 10 == 0: commit_step() → reward, flags, info
-if terminated or truncated: episode over → write the record, stop publishing
-else: t += 1, publish the new state
+rows[i] = (float64(drive.steering_angle), float64(drive.speed))  for ROS cars
+done = env.substep(rows)        # the plant clips speeds and applies the STRICT cap
+record (see below)
+assert (tick % substeps == 0) == (substeps_done was 0)   # the seam and the tick agree on boundaries
+if done or env.substeps_done == cfg.substeps: obs, r, terminated, truncated, info = env.commit_step()
+  if done and not (terminated or truncated): abort loudly (the seam ended a step early)
+if terminated or truncated: publish Episode(ENDED) and the final state; write the record;
+  next episode (new seed, start_tick = previous end + 100) or stop
+else: tick += 1; publish the new state
 ```
 
-Rules that make it robust:
+**On a timeout the bridge aborts**: it writes the partial record with `aborted: true`, the tick and
+the missing topics, exits non-zero, and `ros-gate` fails. It **never** substitutes the simulator's own
+row for a missing command; that would silently turn a dead node into a simulator-driven car and every
+check would still pass. `stale_commands` must be 0 in a healthy lockstep run; `duplicate_commands` is
+expected to be non-zero whenever a re-publish happened, and is not a fault.
 
-- **Stamps are the key.** The bridge accepts a command only if its stamp equals the current tick's
-  time. An older command is dropped and counted (`stale_commands`). A newer one cannot happen in
-  lockstep and is an error.
-- **Discovery is not assumed.** Until the matching command arrives, the bridge re-publishes the
-  current tick's state every 200 ms. A node treats a repeated tick as idempotent: it re-publishes the
-  same command (and the same decision). So a node that starts late, or a subscription that connects
-  late, cannot hang the run or skip a tick.
-- **Default QoS** (reliable, volatile, depth 10) everywhere. Nothing is latched.
-- **The plant owns the rules.** The node computes its row with `coop_lowlevel` from its own targets.
-  `substep()` clips the speed to the allowed range and, on STRICT, caps it while the car is still in
-  the EV's lane. The node does not need to know about the cap, and cannot get around it.
-- **One code path for the observation.** The 26 numbers are built by one function,
-  `per_coop_obs(cfg, frame, j, cars)`, that both the env and the node call. The node fills the
-  `cars` list from the odom messages; the env fills it from the simulator. A test asserts the env's
-  `step()` did not change by a bit when it moved to that function.
+**Who runs the Python.** Every node is started as `python3 -m caatc_ros.<node>` with the image's
+venv interpreter (`/opt/venv/bin/python3`, first on `PATH`, `VIRTUAL_ENV` set). `ros2 run` console
+scripts and `ros2 launch` `Node(...)` actions would run `/usr/bin/python3`, which has a different
+numpy and no simulator; a launch file therefore uses `ExecuteProcess` with the explicit interpreter.
+Each node logs `sys.executable` and `numpy.__version__` at start-up, and check 2 fails if they differ
+from check 1's fingerprint.
+
+### The record, and the exact replay (check 5a)
+
+Per episode: `preset`, `asdict(cfg)`, `seed`, `episode`, `start_tick`, the list of ROS-driven cars,
+the image fingerprint (check 1's versions). Per tick: `rows_applied` (`num_agents × 2` float64, from
+`env.rows_applied`), the wire values `(float32 steer, float32 speed)` per ROS car, the speed before
+and after the plant's clip/cap rule, `done`, the number of re-publishes. Per boundary: the tick, the
+decisions of **all K** cooperators (ROS and fallback), `obs_t` (`K × F` float32), each received
+`Decision.obs`, and the node's `s, d, lane, tangent`. Per commit: the 5-tuple (`obs`, `reward`,
+`terminated`, `truncated`, `info`). Floats are stored losslessly (`.npz`), never rounded the way the
+dashboard writer rounds.
+
+Replay: `env = ClearanceEnv(preset_config(preset)); env.reset(seed)`; at every boundary
+`env.set_decision(j, decisions[t][j])` for all j; every tick `env.joint_action_rows()` then
+`env.substep(rows_applied[t])` (row 0 and the side-traffic rows are asserted inside `substep`; the
+cooperator rows are re-clipped, which is a no-op on already-applied values); `commit_step()` when
+`done` or after `cfg.substeps` ticks; compare `env.cars` to the recorded state and each commit 5-tuple
+**exactly**. The first tick where the state differs is reported with the size of the difference; a
+`ValueError` from `substep` (the recomputed EV row no longer matching) is caught and reported the same
+way, so a cross-image difference shows up as a measurement, not as an ownership error.
 
 ### Declared tolerances (fixed before any run)
 
 | what | tolerance | why |
 |---|---|---|
-| observation (check 4), per element | ≤ 2e-6 absolute | the heading goes through a quaternion (≤ 1 ulp of float64), which can flip the last bit of a float32 element near magnitude 8 |
-| the row the plant applied vs the node's float64 intent | ≤ float32 rounding: `|x| × 6e-8 + 1e-9` | `AckermannDrive` fields are float32 |
-| replay inside the image (check 5a) | **exact** | the recorded `rows_applied` are replayed through `substep()`, so the trajectory is bit for bit the same |
-| ROS run vs the headless run, same seed (check 5b) | success, collisions and yields **identical**; `\|Δt_clear\|` ≤ 0.1 s (one decision step); final EV position within 0.05 m | the float32 wire moves the trajectory by about 1e-7 relative per tick |
+| observation (check 4), per element | 25 elements **exact**; `heading_err` within one float32 unit (≤ 1.2e-7) | only the heading goes through a quaternion; it is exact to one float64 unit modulo 2 pi and reaches the observation only through `wrap_to_pi(psi - theta)` |
+| the steer the plant applied vs the node's float64 intent | ≤ `|x| × 6e-8 + 1e-9` | `AckermannDrive.steering_angle` is float32 |
+| the speed the plant applied | **exactly** `min(clip(float32(intent), coop_speed_min, coop_speed_max), cap if in the EV lane on STRICT)` | the plant's rule, applied to the value that was on the wire; the number of ticks on which the rule changed the value is printed (check 11's evidence) |
+| replay inside the image (check 5a) | **exact** | the recorded `rows_applied` are replayed through `substep()` |
+| ROS run vs the headless run, same seed (check 5b) | success, collisions and yields **identical**; `\|Δt_clear\|` ≤ 0.1 s (one decision step); the EV's `s` compared **at the same tick** within 0.08 m (one EV tick at `ev_max_speed / sim_hz`) | speeds cross exactly; the steer's float32 rounding is absorbed by the simulator's bang-bang steering unless it lands within ~6e-8 of the 1e-4 deadband edge, so trajectories are expected to be identical and any divergence is a rare discrete event, reported with its tick |
 
 A run that needs a looser tolerance than this **fails**. The measured values are printed every run.
 
 ### What the node is allowed to import
 
-`caatc.scenario`, `caatc.frenet`, `caatc.controllers`, `caatc.obs_spec` (with `per_coop_obs`),
-`caatc.decentralized.LocalIdealCooperator`, and the two small pure helpers `yaw_to_quat` /
-`quat_to_yaw`. It must **not** import `caatc.clearance_env`: the node has no simulator.
+`caatc.actions`, `caatc.scenario`, `caatc.frenet`, `caatc.controllers`, `caatc.obs_spec`,
+`caatc.decentralized.LocalIdealCooperator`, `caatc.ros_geometry` and `caatc.ros_tick`. It must **not**
+import `caatc.clearance_env`, gymnasium or f1tenth_gym: the node has no simulator. A test
+(`test_node_imports.py`) imports the allowed modules in a fresh interpreter and fails if any of the
+forbidden ones appears in `sys.modules`.

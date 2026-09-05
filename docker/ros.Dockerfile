@@ -26,7 +26,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # environment that can still see the system packages keeps rclpy visible while our
 # own dependencies live in the venv.
 RUN python3 -m venv --system-site-packages /opt/venv
-ENV PATH=/opt/venv/bin:$PATH
+# VIRTUAL_ENV as well as PATH: colcon and CMake's FindPython look at it, so anything
+# built later uses the venv interpreter, not /usr/bin/python3 (which has a different
+# numpy and no simulator). Nodes are always started as `python3 -m ...` for the same
+# reason; `ros2 run` console scripts would carry a #!/usr/bin/python3 shebang.
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH
 
 # The exact versions caatc-gym has, frozen from that image (docker/ros-constraints.txt),
 # so both images compute with identical numeric libraries. The fingerprint check

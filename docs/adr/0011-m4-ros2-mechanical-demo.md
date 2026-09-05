@@ -70,9 +70,10 @@ Build M4 as **one simulator, K deployed car nodes, no end-of-life dependencies**
   same loop one physics tick at a time. **ROS replaces exactly rows `1..K`.** The EV row, the side
   traffic, the ACC law, the reward, the end-of-episode rules and the metrics are the same code that
   produced the published numbers.
-- **K `/car{j}/agent` nodes.** Each subscribes to an **allow-list** (its own state, its own V2V digest)
-  and nothing else, and publishes its own drive command. A `/v2v_relay` node applies range, message
-  loss and delay.
+- **K `/car{i}/agent` nodes.** Each subscribes to an **allow-list** and nothing else, and publishes
+  its own drive command. From M4.2 on the allow-list is its own state and its own V2V digest, filtered
+  by a `/v2v_relay` node that applies range, message loss and delay; in M4.1 it still hears the other
+  cars' raw odometry, and the design doc says so.
 - **Two modes.** *Lockstep* (every tick waits for every node, keyed by an integer tick number) exists
   for the **checks**: it removes timing as a variable. *Async* is the honest demo, with the real-time
   factor, command age and drops measured and published.
@@ -122,6 +123,6 @@ extra work, and to depend on nothing end-of-life. Two of the three go against wh
   table has to be re-measured. Choice 2 costs the bit-for-bit claim and replaces it with a measured
   tolerance.
 - **Neutral:** ADR 0005's order (learning first, then the demo) stands and is being followed; only its
-  bridge clause is replaced. `caatc/plant.py` is built as the hook for a future 3D or hardware
-  simulator and deliberately **not** used twice in M4. That would be M5, with its own ADR, checks and
-  re-measuring budget.
+  bridge clause is replaced. The four seam calls on `ClearanceEnv` are the only simulator interface in
+  M4; a separate `Plant` protocol with a second implementation (3D, hardware) would be M5, with its own
+  ADR, checks and re-measuring budget.

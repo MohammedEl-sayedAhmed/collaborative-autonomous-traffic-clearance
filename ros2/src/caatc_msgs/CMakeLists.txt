@@ -7,6 +7,7 @@ find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Decision.msg"
+  "msg/Episode.msg"
   "msg/Broadcast.msg"
   "msg/V2VDigest.msg"
   DEPENDENCIES std_msgs
