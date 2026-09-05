@@ -1,11 +1,11 @@
 > **Legacy (ROS 1 / Python 2).** This describes the 2020 ROS Kinetic / Gazebo stack that was
-> removed from `master` in M1 and preserved at tags `v0.1.0`–`v0.3.0`. See [docs/legacy/README.md](README.md)
+> removed from `master` in M1 and kept at tags `v0.1.0` to `v0.3.0`. See [docs/legacy/README.md](README.md)
 > and `git checkout v0.3.0`.
 
-# Known issues & fixes
+# Known issues and fixes
 
-Findings from a full code review + running every demo in the container (2026). Each entry says
-whether it's fixed on this branch, is expected behaviour, or is a real bug left unapplied (with the
+What I found by reading all the code and running every demo in the container (2026). Each entry says
+whether it is fixed on this branch, is expected behaviour, or is a real bug left as it was (with the
 one-line fix, so you can decide).
 
 ---
@@ -46,9 +46,9 @@ world with new models, add them to `docker/` or `GAZEBO_MODEL_PATH`.
 
 ## Real bugs left unapplied (behaviour-changing — review before applying)
 
-These are genuine defects, but fixing them changes the behaviour of a research pipeline that can't
-be fully validated headless (the camera path needs a GPU and manual driving). Listed with the fix so
-you can apply them deliberately.
+These are real bugs, but fixing them changes how a research pipeline behaves, and that pipeline
+cannot be fully tested without a screen (the camera path needs a GPU and someone driving). Listed
+with the fix so you can apply them on purpose.
 
 ### TEB local-plan topic mismatch
 `racecar_navigation/scripts/threeLanes_current_future_pos.py` subscribes to

@@ -1,17 +1,17 @@
 > **Legacy (ROS 1 / Python 2).** This describes the 2020 ROS Kinetic / Gazebo stack that was
-> removed from `master` in M1 and preserved at tags `v0.1.0`–`v0.3.0`. See [docs/legacy/README.md](README.md)
+> removed from `master` in M1 and kept at tags `v0.1.0` to `v0.3.0`. See [docs/legacy/README.md](README.md)
 > and `git checkout v0.3.0`.
 
 # Running the project
 
-Everything runs inside Docker (ROS Kinetic + Gazebo 7). **Nothing is installed on the host** —
-dependencies live in the image, build artifacts in a named volume, and the repo is bind-mounted as
-the catkin source. The host only needs Docker + Docker Compose.
+Everything runs inside Docker (ROS Kinetic + Gazebo 7). **Nothing is installed on your machine.**
+Dependencies live in the image, build results in a named volume, and the repo folder is shared into
+the container as the source. Your machine only needs Docker and Docker Compose.
 
-> Why Docker? ROS Kinetic targets Ubuntu 16.04 and cannot be installed on a modern distro. The
-> image pins the exact toolchain the 2020 project was built with.
+> Why Docker? ROS Kinetic targets Ubuntu 16.04 and cannot be installed on a modern system. The
+> image pins the exact tools the 2020 project was built with.
 
-## Prerequisites — install Docker
+## Before you start: install Docker
 
 The only host requirement is **Docker Engine** plus the **Compose plugin** (`docker compose`).
 On Debian/Ubuntu the distro packages are enough:
@@ -23,17 +23,17 @@ sudo systemctl enable --now docker      # start the daemon now, and on every boo
 sudo usermod -aG docker "$USER"         # so you can run docker without sudo
 ```
 
-> **Important — the `docker` group only takes effect in a *new login session*.** After
-> `usermod -aG docker`, **reboot or fully log out and back in**. Opening a new terminal window is
-> *not* enough: it inherits the graphical session's old group set. (On Ubuntu 25.10+/26.04 the
-> classic `newgrp docker` / `sg` work-around is no longer installed by default, so a fresh login is
-> the reliable path.) Then verify:
+> **Important: the `docker` group only works after you log in again.** After
+> `usermod -aG docker`, **reboot, or log out and back in**. Opening a new terminal is
+> *not* enough: it keeps the old group list of your desktop session. (On Ubuntu 25.10 and 26.04 the
+> old `newgrp docker` / `sg` trick is no longer installed by default, so a fresh login is the
+> reliable way.) Then check:
 >
 > ```bash
 > docker run --rm hello-world
 > ```
 
-Any recent Docker works — these steps were validated on Ubuntu 26.04 with `docker.io` 29.x. If your
+Any recent Docker works. These steps were tested on Ubuntu 26.04 with `docker.io` 29.x. If your
 distribution's packages are too old, install Docker's official packages from
 [docs.docker.com/engine/install](https://docs.docker.com/engine/install/) instead.
 
