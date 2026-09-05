@@ -1,48 +1,43 @@
-# 0004. Adopt f1tenth_gym as the RL platform
+# 0004. Use f1tenth_gym as the simulator for learning
 
 - **Status:** accepted
 - **Date:** 2026-08-24
 - **Deciders:** Mohammed El-sayed Ahmed
 
-## Context and problem statement
+## The problem
 
-The legacy project ran reinforcement learning inside a heavy 2-car Gazebo scene
-that OOMs on modest machines, and hand-rolled its own environment. We need an RL
-platform that is maintained, fast, multi-agent capable (our problem is several
-cars cooperating to clear a path for an emergency vehicle), and compatible with
-modern RL libraries.
+The old project ran its reinforcement learning inside a heavy two-car Gazebo scene that runs out of
+memory on ordinary machines, and it wrote its own environment by hand. We need a simulator for
+learning that is maintained, fast, supports several cars at once (our problem is several cars working
+together to clear a path for an emergency vehicle), and works with today's learning libraries.
 
-## Considered options
+## Options
 
-- **f1tenth_gym** `v1.0.0` branch — Gymnasium API, Python 3, natively N-agent
-  (`num_agents`, per-agent ids), pygame rendering; MIT.
-- f1tenth_gym `main` — the older `gym`-API version (Python 3.8/3.9); also N-agent.
-- Keep the custom Gazebo RL environment.
-- Our own headless kinematic harness (built for the legacy line) as the long-term base.
+- **f1tenth_gym**, `v1.0.0` branch: Gymnasium API, Python 3, several cars built in (`num_agents`,
+  one id per car), pygame drawing, MIT license.
+- f1tenth_gym `main`: the older `gym`-API version (Python 3.8/3.9); also multi-car.
+- Keep the custom Gazebo environment.
+- Our own small headless simulator (built for the old line) as the long-term base.
 
 ## Decision
 
-We will build the RL on **`f1tenth_gym` (v1.0.0 branch)**, pinned to a specific
-commit, and model our contribution **on top** of it: designate one of the N agents
-as the **emergency vehicle**, add **V2V** as shared observation among the
-cooperating agents, and a **cooperative reward** (minimize the EV's time-to-clear,
-with anti-oscillation terms). The gym provides N-car physics, LiDAR, and collision
-for free; the cooperative EV-clearing layer is our novel work.
+We build the learning on **`f1tenth_gym` (the v1.0.0 branch)**, pinned to one exact commit, and put
+our work **on top** of it: one of the N cars becomes the **emergency vehicle**, the cooperating cars
+share **V2V** information as part of what they observe, and a **shared reward** pushes them to minimise
+the EV's time to get through, with a penalty for wobbling back and forth. The gym gives us multi-car
+physics, lidar and collision detection for free. The "clear the road for the EV" layer is our own work.
 
-## Considered but rejected reasoning
+## Why not the others
 
-`main`'s old `gym` API is deprecated and won't plug cleanly into current libraries;
-the custom Gazebo env and the kinematic harness are ours to maintain forever and
-don't generalize. `v1.0.0` is a dev branch (no formal release) — accepted risk,
-mitigated by pinning a commit.
+`main` uses the old `gym` API, which is deprecated and does not plug into current libraries. The
+custom Gazebo environment and our own small simulator would be ours to maintain forever, and neither
+generalises. `v1.0.0` is a development branch with no formal release. We accept that risk and reduce
+it by pinning one commit.
 
 ## Consequences
 
-- **Positive:** Gymnasium API drops straight into `stable-baselines3` (DQN/PPO);
-  N-agent support makes the cooperative multi-agent scenario first-class; a
-  maintained, cited platform instead of bespoke infrastructure.
-- **Negative / trade-offs:** dependence on a pre-release branch (pin + watch for
-  churn); the gym is a *racing* env, so EV semantics, V2V, and cooperation are ours
-  to design.
-- **Neutral:** our existing training dashboard is stack-agnostic (reads JSONL runs),
-  so it carries over unchanged.
+- **Good:** the Gymnasium API plugs straight into `stable-baselines3` (DQN, PPO). Multi-car support
+  makes our cooperative scenario a natural fit. A maintained, cited simulator instead of our own.
+- **Cost:** we depend on a pre-release branch (pin it, and watch for changes). The gym is a *racing*
+  simulator, so the EV behaviour, V2V and cooperation are ours to design.
+- **Neutral:** our training dashboard only reads JSONL files, so it carries over unchanged.

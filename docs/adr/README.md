@@ -1,32 +1,32 @@
 # Architecture Decision Records
 
-This directory records the **significant architectural decisions** for this
-project as lightweight [MADR](https://adr.github.io/madr/)-style records — so the
-*why* behind each decision is captured, especially as the project is refactored
-from its legacy ROS 1 / Python 2 stack to a maintained ROS 2 / Python 3 one.
+This folder holds the **big decisions** made in this project, one short file each, in the
+[MADR](https://adr.github.io/madr/) style. The point is to keep the *why* behind each decision,
+especially while the project moves from its old ROS 1 / Python 2 stack to a supported
+ROS 2 / Python 3 one.
 
-## Conventions
+## Rules
 
-- One file per decision: `NNNN-kebab-case-title.md`, zero-padded and **sequential**;
-  numbers are never reused or renumbered.
-- **Status:** `proposed` → `accepted` → (later) `superseded by NNNN` / `deprecated`.
-- ADRs are **immutable** once accepted: don't rewrite one to change the decision —
-  add a new ADR that supersedes it, and update the old one's status + a link.
+- One file per decision: `NNNN-kebab-case-title.md`. Numbers go up by one and are never reused.
+- **Status:** `proposed` → `accepted` → later `superseded by NNNN` or `deprecated`.
+- An accepted ADR is **not changed** to say something different. To change a decision, write a new ADR
+  that supersedes the old one, then update the old one's status and link to the new one. Rewording an
+  ADR so it is easier to read is fine, as long as the decision itself stays the same.
 - Start a new one by copying [`0000-template.md`](0000-template.md).
 
 ## Index
 
 | # | Title | Status |
 |---|-------|--------|
-| [0001](0001-record-architecture-decisions.md) | Record architecture decisions in ADRs | Accepted |
-| [0002](0002-migrate-to-ros2-humble-python3.md) | Migrate from ROS Kinetic / Python 2 to ROS 2 / Python 3 | Accepted *(distro superseded by [0012](0012-target-ros2-jazzy-not-humble.md))* |
-| [0003](0003-refactor-in-place-preserve-legacy-with-tags.md) | Refactor in place; preserve the legacy stack via SemVer tags | Accepted |
-| [0004](0004-adopt-f1tenth-gym-for-rl.md) | Adopt f1tenth_gym as the RL platform | Accepted |
-| [0005](0005-phase-migration-gym-first.md) | Phase the migration gym-first, then a ROS 2 mechanical demo | Accepted *(bridge clause superseded by [0011](0011-m4-ros2-mechanical-demo.md))* |
-| [0006](0006-keep-thesis-as-private-submodule.md) | Keep the thesis as a private git submodule | Accepted |
-| [0007](0007-m1-clearance-env-design.md) | M1 scenario — ACC-governed multi-lane move-aside (ClearanceEnv) | Accepted |
-| [0008](0008-train-with-stable-baselines3-ppo.md) | M2 — train the ClearanceEnv with stable-baselines3 PPO | Accepted |
-| [0009](0009-decentralized-execution-ippo.md) | M3 — decentralized execution via a parameter-shared per-agent policy (IPPO) | Accepted |
-| [0010](0010-strict-preset-removes-the-convoying-substitution.md) | A STRICT preset that removes the convoying substitution | Accepted |
-| [0011](0011-m4-ros2-mechanical-demo.md) | M4 — the ROS 2 Jazzy mechanical demo: one plant, K deployed car nodes | Accepted |
-| [0012](0012-target-ros2-jazzy-not-humble.md) | Target ROS 2 Jazzy, not Humble (LTS to 2029) | Accepted |
+| [0001](0001-record-architecture-decisions.md) | Write decisions down as ADRs | Accepted |
+| [0002](0002-migrate-to-ros2-humble-python3.md) | Move from ROS Kinetic / Python 2 to ROS 2 / Python 3 | Accepted *(distro superseded by [0012](0012-target-ros2-jazzy-not-humble.md))* |
+| [0003](0003-refactor-in-place-preserve-legacy-with-tags.md) | Rebuild in this repo; keep the old stack at version tags | Accepted |
+| [0004](0004-adopt-f1tenth-gym-for-rl.md) | Use f1tenth_gym as the simulator for learning | Accepted |
+| [0005](0005-phase-migration-gym-first.md) | Do the learning in the plain simulator first, then a ROS 2 demo | Accepted *(bridge part superseded by [0011](0011-m4-ros2-mechanical-demo.md))* |
+| [0006](0006-keep-thesis-as-private-submodule.md) | Keep the thesis in a private submodule | Accepted |
+| [0007](0007-m1-clearance-env-design.md) | M1 scenario: the EV uses adaptive cruise, on wide lanes | Accepted |
+| [0008](0008-train-with-stable-baselines3-ppo.md) | M2: train with stable-baselines3 PPO | Accepted |
+| [0009](0009-decentralized-execution-ippo.md) | M3: each car decides alone, with one shared policy (IPPO) | Accepted |
+| [0010](0010-strict-preset-removes-the-convoying-substitution.md) | The STRICT preset: speeding up must not count as cooperation | Accepted |
+| [0011](0011-m4-ros2-mechanical-demo.md) | M4: the ROS 2 Jazzy demo, one simulator plus K car nodes | Accepted |
+| [0012](0012-target-ros2-jazzy-not-humble.md) | Target ROS 2 Jazzy, not Humble (supported to 2029) | Accepted |

@@ -1,35 +1,34 @@
-# 0006. Keep the thesis as a private git submodule
+# 0006. Keep the thesis in a private submodule
 
 - **Status:** accepted
 - **Date:** 2026-08-24
 - **Deciders:** Mohammed El-sayed Ahmed
 
-## Context and problem statement
+## The problem
 
-The repository will be made public, but the graduation thesis (LaTeX source +
-compiled PDF) must stay private. The thesis had been committed into this repo, so
-it also existed in the git history and in merged pull-request diffs.
+This repository will be made public, but the graduation thesis (LaTeX source and the compiled PDF)
+must stay private. The thesis had been committed into this repo, so it also existed in the git history
+and in the diffs of merged pull requests.
 
-## Considered options
+## Options
 
-- **Private submodule:** move the thesis to a separate private repo, referenced
-  here as a submodule at `thesis/`.
-- Keep it in-repo and make the whole repo public (exposes the thesis).
+- **Private submodule:** move the thesis to its own private repo, and link it here as a submodule at
+  `thesis/`.
+- Keep it in this repo and make everything public (exposes the thesis).
 - Keep the whole repo private.
 
 ## Decision
 
-The thesis lives in a **separate private repository**, wired in as a git
-**submodule at `thesis/`**. Public clones get only the submodule pointer (a
-gated commit ref), not the content. The thesis's compiled `main.pdf` is tracked in
-that private repo, and a thesis-vs-code cross-check lives there too.
+The thesis lives in a **separate private repository**, linked in as a git **submodule at
+`thesis/`**. A public clone only gets the submodule pointer (a commit reference behind access
+control), not the content. The compiled `main.pdf` is tracked in that private repo, and a check of the
+thesis against the code lives there too.
 
 ## Consequences
 
-- **Positive:** the main repo can go public without exposing the thesis; the
-  submodule ref keeps the two in lock-step when bumped.
-- **Negative / trade-offs:** contributors need access to build the thesis;
-  **any thesis change must also bump the submodule ref here**; and note that
-  history rewriting alone does not remove the thesis from already-merged PR diffs
-  on the host (accepted, given the repo is still private pre-publication).
+- **Good:** the main repo can go public without exposing the thesis. The submodule pointer keeps the
+  two in step when it is updated.
+- **Cost:** you need access to build the thesis. **Any change to the thesis must also update the
+  submodule pointer here.** Rewriting history alone does not remove the thesis from already-merged PR
+  diffs on GitHub (accepted, since the repo was still private at that point).
 - **Neutral:** `./run.sh thesis` builds the submodule when it is checked out.

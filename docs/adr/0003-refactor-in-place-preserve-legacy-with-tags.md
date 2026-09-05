@@ -1,35 +1,32 @@
-# 0003. Refactor in place; preserve the legacy stack via SemVer tags
+# 0003. Rebuild in this repo; keep the old stack at version tags
 
 - **Status:** accepted
 - **Date:** 2026-08-24
 - **Deciders:** Mohammed El-sayed Ahmed
 
-## Context and problem statement
+## The problem
 
-The ROS 2 / Python 3 migration (ADR 0002) is effectively a rewrite. We need the
-legacy ROS 1 work to stay referenceable, without carrying its EOL code forward as
-dead weight, and without fragmenting the project across repositories.
+The move to ROS 2 / Python 3 (ADR 0002) is in practice a rewrite. We want the old ROS 1 work to stay
+easy to find and read, without carrying its unsupported code forward as dead weight, and without
+splitting the project across several repositories.
 
-## Considered options
+## Options
 
-- **Refactor in place** on the existing repo; mark the legacy stack with tags.
-- A **new repository** for the v1.x line; freeze/archive the old one.
-- A **`v2/` subdirectory** in the same repo, old code left beside new.
+- **Rebuild in place** in this repo, and mark the old stack with git tags.
+- A **new repository** for the new line, and freeze the old one.
+- A **`v2/` folder** in the same repo, with the old code left next to the new.
 
 ## Decision
 
-We will **refactor in place** in this repository. The legacy ROS 1 / Python 2
-stack is preserved as annotated SemVer tags — **`v0.1.0`** (baseline),
-**`v0.2.0`** (fixed & reproducible), **`v0.3.0`** (enhanced, final ROS 1 line) —
-so any old state can be checked out at any time. New work continues on `master`
-toward **`v1.0.0`** (the ROS 2 line). No new repo, no parallel `v2/` tree.
+We **rebuild in place**, in this repository. The old ROS 1 / Python 2 stack is kept as annotated
+version tags: **`v0.1.0`** (as it was), **`v0.2.0`** (fixed and reproducible), **`v0.3.0`** (improved;
+the last ROS 1 version). Any old state can be checked out at any time. New work continues on `master`
+toward **`v1.0.0`** (the ROS 2 line). No new repo, no `v2/` folder.
 
 ## Consequences
 
-- **Positive:** single source of truth and history; the old work is one `git
-  checkout v0.3.0` away; `master` becomes clean, modern, and not littered with
-  dead ROS 1 code.
-- **Negative / trade-offs:** `master` will churn heavily during the rewrite;
-  cross-referencing old vs new means jumping between a tag and `HEAD` rather than
-  two live trees.
-- **Neutral:** the tags double as release points if we ever publish the legacy work.
+- **Good:** one place for the code and its history. The old work is one `git checkout v0.3.0` away.
+  `master` becomes clean and modern, with no dead ROS 1 code lying around.
+- **Cost:** `master` changes a lot during the rewrite. Comparing old with new means switching between
+  a tag and `HEAD` instead of looking at two folders side by side.
+- **Neutral:** the tags can also serve as release points if we ever publish the old work.

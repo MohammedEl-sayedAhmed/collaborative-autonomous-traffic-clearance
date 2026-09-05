@@ -123,5 +123,5 @@ DASH_URL=http://127.0.0.1:8770 node tools/dashboard/test_dashboard.mjs
   isn't committed.
 - Port: `DASH_PORT=9000 ./run.sh dashboard`. Custom runs dir:
   `python3 tools/dashboard/server.py --runs-dir /path/to/runs`.
-- The dashboard is intentionally **not** a Claude Artifact: a live view has to read files on your
-  disk as training writes them, which a sandboxed static page can't do.
+- The dashboard is a small local web server on purpose, not a static web page: a live view has to
+  read files on your disk while training writes them, and a static page cannot do that.
