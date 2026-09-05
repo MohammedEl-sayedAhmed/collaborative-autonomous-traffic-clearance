@@ -14,6 +14,13 @@ dev() {
     -v "$PWD":/src -e PYTHONPATH=/src -e SDL_VIDEODRIVER=dummy -w /src "$@"
 }
 
+# The ROS 2 image (M4). Host networking + IPC so more than one container can share
+# one DDS domain (RViz, a second fleet); the image's own entrypoint sources ROS.
+ros_dev() {
+  docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp --network host --ipc host \
+    -v "$PWD":/src -e PYTHONPATH=/src:/src/ros2/src/caatc_ros -e SDL_VIDEODRIVER=dummy -w /src "$@"
+}
+
 case "${1:-help}" in
   # ---- v1.0.0 line (ROS 2 / Python 3): f1tenth_gym RL core -------------------
   gym-build)                           # build the Python3 gym dev image (f1tenth_gym v1.0.0)
@@ -98,6 +105,14 @@ case "${1:-help}" in
     python3 tools/dashboard/demo_run.py --label improved-reward --episodes 40 --seed 2 --improve
     echo "Seeded 2 demo runs. Now: ./run.sh dashboard" ;;
 
+  # ---- M4: ROS 2 Jazzy (one simulator, K car nodes) ------------------------
+  ros-build)                           # M4: build the ROS 2 image (ros:jazzy + caatc + caatc_msgs)
+    shift || true; docker build -t caatc-ros -f docker/ros.Dockerfile "$@" . ;;
+  ros-fingerprint)                     # M4 check 1: is caatc-ros a numerical twin of caatc-gym?
+    shift || true; ros_dev caatc-ros python3 -m caatc.ros_fingerprint "$@" ;;
+  ros-shell)                           # an interactive shell in the ROS 2 image (ROS sourced)
+    ros_dev -it caatc-ros bash ;;
+
   # ---- thesis (private submodule) -------------------------------------------
   thesis)                              # compile the thesis (private submodule) -> thesis/main.pdf
     if [ ! -e thesis/build.sh ]; then
@@ -128,6 +143,12 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
     clearance-watch   M2 watch a rollout: records an mp4 (no display needed), or
                         --mode human for a live window (needs view-build)
                         (--policy naive|random|ideal | --model <.zip> --preset easy|hard)
+
+  M4 (ROS 2 Jazzy):
+    ros-build         Build the ROS 2 image: ros:jazzy + caatc + our messages
+    ros-fingerprint   Check 1: versions + exact golden replay -> IDENTICAL / DIFFERENT
+                        (--gate also runs the M1 headroom gate inside the ROS image)
+    ros-shell         A shell inside the ROS 2 image, with ROS sourced
 
   dashboard:
     dashboard         Live training dashboard at http://127.0.0.1:8770 (compare runs)
