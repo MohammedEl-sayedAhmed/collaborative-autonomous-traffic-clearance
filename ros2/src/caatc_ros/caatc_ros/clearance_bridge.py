@@ -46,18 +46,25 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from caatc_msgs.msg import Decision, Episode
 from nav_msgs.msg import Odometry
 from rcl_interfaces.msg import ParameterDescriptor
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 
-from caatc.ros_bridge_core import BridgeCore, BridgeState
+from caatc.ros_bridge_core import BridgeCore, BridgeState, record_filename
 from caatc.ros_fingerprint import versions
 from caatc.ros_node_core import ProtocolError
 from caatc.scenario import preset_config
 from caatc_ros.msgs_io import (clock_msg, ground_truth_msg, joint_state_msg, make_stamp,
-                               odometry_msg, stamp_tick_of)
+                               odometry_msg, stamp_tick_or_breach)
+
+try:                                   # rclpy raises this when a publish hits a shut-down context
+    from rclpy._rclpy_pybind11 import RCLError
+except ImportError:                    # pragma: no cover
+    class RCLError(Exception):
+        pass
 
 EXIT_OK = 0
 EXIT_ABORTED = 2
@@ -118,7 +125,7 @@ class ClearanceBridge(Node):
         self.settings = self._declare_settings(settings)
         s = self.settings
         self.cfg = preset_config(s.preset)
-        self.versions = versions()
+        self.versions = dict(versions(), ros_domain_id=os.environ.get("ROS_DOMAIN_ID", "0"))
         self.core = BridgeCore(self.cfg, s.ros_cars, versions=self.versions)
         self.seed = 0                        # the running episode's reset seed (Episode.seed)
         self.failed: Optional[str] = None    # set by a callback that saw a protocol breach
@@ -193,14 +200,13 @@ class ClearanceBridge(Node):
         core = self.core
         try:
             # the node echoes the Odometry stamp; a stamp off the tick grid is a breach
-            stamp_tick = stamp_tick_of(msg.header.stamp, self.cfg.sim_hz)
-            if stamp_tick < core.start_tick:
-                # stamped before this episode began: a command for an earlier episode
-                core.note_stale()
+            stamp_tick = stamp_tick_or_breach(f"/car{car}/drive", msg.header.stamp, self.cfg.sim_hz)
+            key = core.key_for_stamp_tick(stamp_tick)
+            if key is None:
+                core.note_stale()                  # stamped before the first episode began
                 return
-            tick = stamp_tick - core.start_tick
-            core.offer_drive(car, core.episode, tick, msg.drive.steering_angle, msg.drive.speed)
-        except (ProtocolError, ValueError) as e:
+            core.offer_drive(car, key[0], key[1], msg.drive.steering_angle, msg.drive.speed)
+        except ProtocolError as e:
             self._fail(f"/car{car}/drive: {e}")
 
     def _on_decision(self, car: int, msg: Decision) -> None:
@@ -224,15 +230,27 @@ class ClearanceBridge(Node):
 
     # -- the record and the summary ------------------------------------------------------
     def record_path(self) -> str:
-        core = self.core
-        return os.path.join(self.settings.out_dir, f"{self.cfg.preset}-seed{self.seed}-ep{core.episode}.npz")
+        return os.path.join(self.settings.out_dir, record_filename(self.cfg.preset, self.seed, self.core.episode))
 
     def save_record(self) -> str:
         """Write the episode's record (an aborted episode saves too, with ``aborted: true``)."""
         os.makedirs(self.settings.out_dir, exist_ok=True)
         path = self.record_path()
+        self.core.finalize_meta()
         self.core.record.save(path)
         return path
+
+    def one_node_per_car(self) -> Optional[str]:
+        """Exactly one publisher on every ROS car's drive topic, or the reason it is not.
+
+        Two nodes for one car (a stray one from another run on the same DDS domain, say)
+        would take turns answering, and the run could pass with a node the operator did
+        not start."""
+        for i in self.core.ros_cars:
+            n = self.count_publishers(f"/car{i}/drive")
+            if n != 1:
+                return f"/car{i}/drive has {n} publishers, expected exactly one car node"
+        return None
 
     def log_summary(self, path: str) -> None:
         m = self.core.episode_metrics()
@@ -255,7 +273,7 @@ def run_episode(bridge: ClearanceBridge, seed: int,
     """Run one episode in lockstep. ``pump`` lets callbacks in (default: one ``spin_once``)
     and says whether it processed a message (None counts as "unknown", treated as idle);
     a test can pass its own to feed commands without a bus. Returns an exit code."""
-    s, core = bridge.settings, bridge.core
+    core = bridge.core
     if pump is None:
         def pump() -> bool:
             before = bridge.received
@@ -263,6 +281,20 @@ def run_episode(bridge: ClearanceBridge, seed: int,
             return bridge.received != before
 
     bridge.seed = int(seed)
+    try:
+        return _lockstep(bridge, seed, pump)
+    except (KeyboardInterrupt, ExternalShutdownException, RCLError) as e:
+        # a signal (the smoke's timeout, or Ctrl-C) shut rclpy down under us: the record
+        # is numpy only and still writes; the rclpy logger may not, so print instead
+        reason = f"stopped by a signal ({type(e).__name__})"
+        core.abort(reason)
+        path = bridge.save_record()
+        print(f"ABORTED episode {core.episode} at tick {core.tick}: {reason} -> {path}", file=sys.stderr)
+        return EXIT_ABORTED
+
+
+def _lockstep(bridge: ClearanceBridge, seed: int, pump: Callable[[], Optional[bool]]) -> int:
+    s, core = bridge.settings, bridge.core
     bridge.publish_state(core.begin_episode(seed))
     tick_started = last_publish = time.monotonic()
     republished = False          # did this tick's state go out more than once?
@@ -273,6 +305,11 @@ def run_episode(bridge: ClearanceBridge, seed: int,
             return bridge.finish_aborted(bridge.failed)
 
         if core.ready():
+            if core.tick == 0:
+                problem = bridge.one_node_per_car()
+                if problem is not None:
+                    core.abort(problem)
+                    return bridge.finish_aborted(problem)
             if republished:
                 # The node answers every re-published copy with its cached command.
                 # Those echoes are on their way now; let them arrive while the tick is
@@ -332,6 +369,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         bridge = ClearanceBridge(parse_settings(remove_ros_args(argv)[1:]))
         return run_bridge(bridge)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        return EXIT_ABORTED
     finally:
         if bridge is not None:
             bridge.core.close()

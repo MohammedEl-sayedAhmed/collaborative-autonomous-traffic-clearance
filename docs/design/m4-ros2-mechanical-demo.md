@@ -106,12 +106,15 @@ Two ROS packages; build results live in a named volume (`caatc-ros-ws`), never i
 ```
 ros2/src/caatc_msgs/          # ament_cmake (rosidl): Episode, Decision, Broadcast, V2VDigest (what no standard message carries)
 ros2/src/caatc_ros/           # ament_python
-  caatc_ros/{clearance_bridge,car_node,v2v_relay,scene_view,ros_gate,bag_replay}.py
-  launch/clearance_demo.launch.py     # 1 bridge + 1 relay + K car nodes + view
-  config/{easy,hard,strict}.yaml
-  rviz/clearance.rviz                 # our own view: car + road markers, nothing copied
+  caatc_ros/{msgs_io,clearance_bridge,car_node,ros_smoke}.py     # M4.1 (done)
+  caatc_ros/{v2v_relay,ros_gate}.py                              # M4.2
+  caatc_ros/{scene_view,bag_replay}.py, launch/, rviz/           # M4.3
 docker/ros.Dockerfile                 # -> caatc-ros  (ros:jazzy, no torch, no SB3; ARG ROS_DISTRO=jazzy)
 ```
+
+Nodes are started as `python3 -m caatc_ros.<node>` with the image's venv Python; a launch file (M4.3)
+will use `ExecuteProcess` with that interpreter. Settings are command-line flags (the bridge also
+accepts them as ROS parameters); there is no configuration file.
 
 The car state and the drive command use **standard messages** (`nav_msgs/Odometry`,
 `sensor_msgs/JointState`, `ackermann_msgs/AckermannDriveStamped`, choice 2 below). Four small custom
@@ -334,9 +337,9 @@ first plan. What that costs is written here rather than found out later.
 ## M4.1 contract: topics, messages, the lockstep tick
 
 This is the exact agreement between the bridge and a car node. Both sides are written against it,
-and the checks test it. It was reviewed adversarially before any node was written, and the problems
-found (an off-by-one between two indices, float time stamps, no episode identity, double-applied
-decisions, and a dozen unspecified details) are fixed below.
+and the checks test it. The first draft had an off-by-one between two indices, float time stamps, no
+episode identity, double-applied decisions, and a dozen unspecified details. All of them are fixed
+below, before any node was written.
 
 ### Two indices, two names
 
@@ -433,7 +436,9 @@ reset(seed) → tick 0 state; publish Episode(RUNNING,
                                                     if not complete: wait (another callback will re-check)
                                                     tick = stamp_to_tick(stamp) - episode.start_tick
                                                     if (episode, tick) == last handled: re-publish the
-                                                      cached Drive (and Decision) and do nothing else
+                                                      cached Drive (and Decision) ONCE per re-publish
+                                                      (each re-publish carries one own-odometry message,
+                                                      and each of those earns one answer) and nothing else
                                                     if episode changed or tick == 0: reset target_lane =
                                                       cfg.ev_lane, target_speed = cfg.coop_speed, clear cache
                                                     if tick % cfg.substeps == 0:
@@ -456,8 +461,15 @@ wait for Drive(episode, tick) from every ROS car,
   any other older key is stale_commands and dropped;
   a newer key aborts the run
   re-publish the tick's state every 200 ms (wall clock)
-  while waiting; abort after 5 s per tick
+  while waiting, but only when no message arrived in
+  the last spin (an answer may be about to complete
+  the tick); after a re-publish, once ready, pump for
+  20 ms more so the node's echoes land as duplicates
+  before the advance; abort after 5 s per tick
   (30 s for tick 0, to cover DDS discovery)
+before the first advance of tick 0: exactly one
+  publisher on every ROS car's drive topic, or abort
+  (a stray node from another run must not answer)
 at the boundary, once, from this loop (never from a
   callback): env.set_decision(i - 1, decision[i].action)
   for ROS cars; env.set_decision(j, LocalIdealCooperator()(obs_t[j], cfg))
@@ -476,10 +488,14 @@ else: tick += 1; publish the new state
 ```
 
 **On a timeout the bridge aborts**: it writes the partial record with `aborted: true`, the tick and
-the missing topics, exits non-zero, and `ros-gate` fails. It **never** substitutes the simulator's own
-row for a missing command; that would silently turn a dead node into a simulator-driven car and every
-check would still pass. `stale_commands` must be 0 in a healthy lockstep run; `duplicate_commands` is
-expected to be non-zero whenever a re-publish happened, and is not a fault.
+the missing topics, exits with code 2, and `ros-gate` fails. A signal (Ctrl-C, or the smoke's own
+timeout) does the same: the record is written with the reason before the process ends. It **never**
+substitutes the simulator's own row for a missing command; that would silently turn a dead node into a
+simulator-driven car and every check would still pass. `stale_commands` must be 0 in a healthy
+lockstep run; `duplicate_commands` is expected to be non-zero whenever a re-publish happened, and is
+not a fault. Every run gets its own **DDS domain** (`ROS_DOMAIN_ID`, chosen by the smoke and written
+into the record), so two runs on one machine, or a node left over from an earlier run, cannot hear
+each other.
 
 **Who runs the Python.** Every node is started as `python3 -m caatc_ros.<node>` with the image's
 venv interpreter (`/opt/venv/bin/python3`, first on `PATH`, `VIRTUAL_ENV` set). `ros2 run` console
@@ -513,7 +529,7 @@ way, so a cross-image difference shows up as a measurement, not as an ownership 
 | what | tolerance | why |
 |---|---|---|
 | observation (check 4), per element | 25 elements **exact**; `heading_err` within one float32 unit (≤ 1.2e-7) | only the heading goes through a quaternion; it is exact to one float64 unit modulo 2 pi and reaches the observation only through `wrap_to_pi(psi - theta)` |
-| the steer the plant applied vs the node's float64 intent | ≤ `|x| × 6e-8 + 1e-9` | `AckermannDrive.steering_angle` is float32 |
+| the steer the plant applied | on the bus: **exactly** the float32 value the node sent (the float64 intent never leaves the node); in the pure-core test with the wire emulated: `|applied − intent|` ≤ `|x| × 6e-8 + 1e-9`, measured | `AckermannDrive.steering_angle` is float32 |
 | the speed the plant applied | **exactly** `min(clip(float32(intent), coop_speed_min, coop_speed_max), cap if in the EV lane on STRICT)` | the plant's rule, applied to the value that was on the wire; the number of ticks on which the rule changed the value is printed (check 11's evidence) |
 | replay inside the image (check 5a) | **exact** | the recorded `rows_applied` are replayed through `substep()` |
 | ROS run vs the headless run, same seed (check 5b) | success, collisions and yields **identical**; `\|Δt_clear\|` ≤ 0.1 s (one decision step); the EV's `s` compared **at the same tick** within 0.08 m (one EV tick at `ev_max_speed / sim_hz`) | speeds cross exactly; the steer's float32 rounding is absorbed by the simulator's bang-bang steering unless it lands within ~6e-8 of the 1e-4 deadband edge, so trajectories are expected to be identical and any divergence is a rare discrete event, reported with its tick |

@@ -142,3 +142,33 @@ class NodeCore:
         for k in [k for k in self._cache if k != key]:
             del self._cache[k]
         return out
+
+
+class EchoGate:
+    """One answer per copy of the state the bridge sent.
+
+    A fresh tick is always answered. A repeated tick (the bridge re-published while it
+    waited) is answered once per re-publish, not once per message: every re-publish
+    carries exactly one copy of the node's own odometry, so each own-odometry message
+    earns one answer, whatever order the topics arrive in. Keyed by the stamp tick,
+    which is unique across episodes.
+    """
+
+    def __init__(self) -> None:
+        self._own_seen: Dict[int, int] = {}
+        self._answered: Dict[int, int] = {}
+
+    def own_odom(self, stamp_tick: int) -> None:
+        self._own_seen[stamp_tick] = self._own_seen.get(stamp_tick, 0) + 1
+        for k in [k for k in self._own_seen if k != stamp_tick]:
+            self._own_seen.pop(k, None)
+            self._answered.pop(k, None)
+
+    def allow(self, stamp_tick: int, fresh: bool) -> bool:
+        if fresh:
+            self._answered[stamp_tick] = 1
+            return True
+        if self._answered.get(stamp_tick, 0) < self._own_seen.get(stamp_tick, 0):
+            self._answered[stamp_tick] = self._answered.get(stamp_tick, 0) + 1
+            return True
+        return False

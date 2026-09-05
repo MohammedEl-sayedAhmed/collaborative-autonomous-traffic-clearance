@@ -31,6 +31,30 @@ from .scenario import ScenarioConfig
 STATE_FIELDS = ("x", "y", "theta", "v", "delta", "s", "d", "lane")
 
 
+def record_filename(preset: str, seed: int, episode: int) -> str:
+    """The one place the record file name is decided; the smoke globs with record_glob."""
+    return f"{preset}-seed{int(seed)}-ep{int(episode)}.npz"
+
+
+def record_glob(preset: str) -> str:
+    return f"{preset}-seed*-ep*.npz"
+
+
+def json_info(info: dict) -> dict:
+    """The env's info dict with plain JSON types: None, bool, int or float, nothing numpy."""
+    out = {}
+    for k, v in info.items():
+        if v is None:
+            out[k] = None
+        elif isinstance(v, (bool, np.bool_)):
+            out[k] = bool(v)
+        elif isinstance(v, (int, np.integer)):
+            out[k] = int(v)
+        else:
+            out[k] = float(v)
+    return out
+
+
 def cars_to_array(cars: List[dict]) -> np.ndarray:
     """``env.cars`` -> ``(N, 8)`` float64 in the record's field order."""
     return np.array([[float(c[k]) for k in STATE_FIELDS] for c in cars], dtype=np.float64)
@@ -153,6 +177,7 @@ class BridgeCore:
         self._republishes_this_tick = 0
         self._prev_key: Optional[Tuple[int, int]] = None   # the tick that just finished ...
         self._prev_republished = False                      # ... and whether it was re-published
+        self._episode_starts: List[Tuple[int, int]] = []    # (start_tick, episode), in order
         self.wire_dtype = wire_dtype
         self._pending_drive: Dict[int, Tuple[np.floating, np.floating]] = {}
         self._pending_decision: Dict[int, dict] = {}
@@ -167,10 +192,12 @@ class BridgeCore:
         self.tick = 0
         self._pending_drive.clear(); self._pending_decision.clear()
         self._republishes_this_tick = 0
-        self._prev_key, self._prev_republished = None, False
+        # _prev_key / _prev_republished are kept: a late echo of the previous episode's
+        # re-published final tick may still arrive, and it is a duplicate, not a fault
         self.duplicate_commands = 0
         self.stale_commands = 0
         self._episode_over = False
+        self._episode_starts.append((self.start_tick, self.episode))
         self.env.reset(seed=seed)
         self.record = Record(meta=dict(
             preset=cfg.preset, cfg=asdict(cfg), seed=int(seed), episode=self.episode,
@@ -207,20 +234,30 @@ class BridgeCore:
         self.total_stale_commands += 1
         return "stale"
 
+    def key_for_stamp_tick(self, stamp_tick: int) -> Optional[Tuple[int, int]]:
+        """Which ``(episode, tick)`` a message stamp belongs to, across all episodes of this
+        process; None for a stamp before the first episode began."""
+        best = None
+        for start, ep in self._episode_starts:
+            if start <= stamp_tick:
+                best = (ep, int(stamp_tick) - start)
+        return best
+
     def _classify(self, car: int, episode: int, tick: int) -> str:
         if car not in self.ros_cars:
             raise ProtocolError(f"a command for car {car}, which is not ROS-driven ({self.ros_cars})")
         key, now = (int(episode), int(tick)), (self.episode, self.tick)
+        if key == self._prev_key and self._prev_republished:
+            # an echo of a re-published tick that arrived after the tick moved on (even
+            # after the episode ended, or the next one began): the node did what the
+            # contract asks; it is a duplicate, not a fault
+            return self._count_duplicate()
         if self._episode_over:
             # the final state was published with ENDED; nothing should answer it, and
             # anything that does is late for a tick that no longer exists
             return self._count_stale()
         if key == now:
             return "current"
-        if key == self._prev_key and self._prev_republished:
-            # an echo of a re-published tick that arrived after the tick moved on: the
-            # node did what the contract asks; it is a duplicate, not a fault
-            return self._count_duplicate()
         if key < now:
             return self._count_stale()
         raise ProtocolError(f"a command for {key} arrived while the bridge is at {now}: that cannot happen in lockstep")
@@ -326,8 +363,7 @@ class BridgeCore:
             rec.terminated.append(bool(terminated))
             rec.truncated.append(bool(truncated))
             rec.commit_obs.append(np.asarray(_obs, dtype=np.float32))
-            rec.infos.append({k: (None if v is None else (bool(v) if isinstance(v, (bool, np.bool_)) else float(v)))
-                              for k, v in info.items()})
+            rec.infos.append(json_info(info))
             if done and not (terminated or truncated):
                 self.abort("the seam ended a step early without ending the episode")
                 raise ProtocolError("the seam ended a step early without ending the episode")
@@ -342,8 +378,7 @@ class BridgeCore:
             self._episode_over = True
             self._end_tick = self.start_tick + self.tick
             self.record.meta["end_tick"] = self._end_tick
-            self.record.meta["duplicate_commands"] = self.duplicate_commands   # this episode
-            self.record.meta["stale_commands"] = self.stale_commands
+            self.finalize_meta()
         elif env.substeps_done == 0:
             self._snapshot()
         return StepOutcome(bool(done), committed, bool(terminated), bool(truncated), over)
@@ -355,30 +390,42 @@ class BridgeCore:
             self.record.meta["abort_reason"] = reason
             self.record.meta["abort_tick"] = self.tick
             self.record.meta["missing"] = self.missing()
-            self.record.meta["duplicate_commands"] = self.duplicate_commands
-            self.record.meta["stale_commands"] = self.stale_commands
+            self.finalize_meta()
 
     # -- the episode's metrics, in run_episode's shape --------------------------------
     def episode_metrics(self) -> dict:
-        rec = self.record
-        infos = rec.infos
-        last = infos[-1]
-        speeds = [i["ev_v"] for i in infos]
-        # the same arithmetic run_episode uses: a running float sum. Python 3.12's
-        # sum() is compensated and can differ from it in the last bit.
-        total = 0.0
-        for r in rec.rewards:
-            total += r
-        return {
-            "success": bool(last["success"]), "collision": bool(last["collision"]),
-            "t_clear": last["t_clear"], "ev_progress": float(last["ev_progress"]),
-            "ev_mean_speed": float(np.mean(speeds)) if speeds else 0.0,
-            "lane_changes": int(last["lane_changes"]), "cum_reward": float(total),
-            "num_steps": int(last["step"]), "sim_time": float(last["sim_time"]),
-        }
+        return record_metrics(self.record)
+
+    def finalize_meta(self) -> None:
+        """Copy the live counters into the record, so a late echo counted after the final
+        advance still shows up when the record is saved."""
+        if self.record is not None:
+            self.record.meta["duplicate_commands"] = self.duplicate_commands
+            self.record.meta["stale_commands"] = self.stale_commands
+            self.record.meta["total_duplicate_commands"] = self.total_duplicate_commands
+            self.record.meta["total_stale_commands"] = self.total_stale_commands
 
     def close(self) -> None:
         self.env.close()
+
+
+def record_metrics(rec: Record) -> dict:
+    """A record's episode metrics in ``run_episode``'s shape. The return is a running float
+    sum, the arithmetic run_episode uses; Python 3.12's sum() is compensated and can
+    differ from it in the last bit."""
+    infos = rec.infos
+    last = infos[-1]
+    speeds = [i["ev_v"] for i in infos]
+    total = 0.0
+    for r in rec.rewards:
+        total += r
+    return {
+        "success": bool(last["success"]), "collision": bool(last["collision"]),
+        "t_clear": last["t_clear"], "ev_progress": float(last["ev_progress"]),
+        "ev_mean_speed": float(np.mean(speeds)) if speeds else 0.0,
+        "lane_changes": int(last["lane_changes"]), "cum_reward": float(total),
+        "num_steps": int(last["step"]), "sim_time": float(last["sim_time"]),
+    }
 
 
 # -- the exact replay (check 5a) -----------------------------------------------------
@@ -399,6 +446,8 @@ def replay(rec: Record) -> ReplayReport:
     boundaries = {t: b for b, t in enumerate(rec.boundary_ticks)}
     commits = {t: c for c, t in enumerate(rec.commit_ticks)}
     K = cfg.num_cooperators
+    seen_commits = 0
+    last_over = False
 
     def diff(t: int, reason: str) -> ReplayReport:
         got = cars_to_array(env.cars)
@@ -429,10 +478,17 @@ def replay(rec: Record) -> ReplayReport:
                 c = commits.get(t)
                 if c is None:
                     return ReplayReport(False, T, t, 0.0, f"a commit at tick {t} that the record does not have")
+                seen_commits += 1
                 same = (np.array_equal(np.asarray(obs, np.float32), rec.commit_obs[c]) and float(r) == rec.rewards[c]
-                        and bool(te) == rec.terminated[c] and bool(tr) == rec.truncated[c])
+                        and bool(te) == rec.terminated[c] and bool(tr) == rec.truncated[c]
+                        and json_info(info) == rec.infos[c])
                 if not same:
                     return ReplayReport(False, T, t, 0.0, f"the commit at tick {t} differs")
+                last_over = bool(te or tr)
+        if seen_commits != len(rec.commit_ticks):
+            return ReplayReport(False, T, T, 0.0, f"{seen_commits} commits replayed, the record has {len(rec.commit_ticks)}")
+        if rec.commit_ticks and last_over != bool(rec.terminated[-1] or rec.truncated[-1]):
+            return ReplayReport(False, T, T, 0.0, "the replay and the record disagree on whether the episode ended")
         return ReplayReport(True, T)
     finally:
         env.close()
@@ -454,7 +510,9 @@ def run_lockstep_inprocess(cfg: ScenarioConfig, seed: int, ros_cars: Sequence[in
     if nodes is None:
         nodes = {i: NodeCore(cfg, i, node_policy) for i in bridge.ros_cars}
     st = bridge.begin_episode(seed)
+    bridge.node_intents = []            # per tick: {car: (steer_intent, speed_intent)}, for the tests
     while True:
+        intents = {}
         for _ in range(1 + republish_every):
             for i, node in nodes.items():
                 samples = {}
@@ -469,8 +527,10 @@ def run_lockstep_inprocess(cfg: ScenarioConfig, seed: int, ros_cars: Sequence[in
                     bridge.offer_drive(i, st.episode, st.tick, float(out.steer), float(out.speed))
                 else:
                     bridge.offer_drive(i, st.episode, st.tick, out.steer_intent, out.speed_intent)
+                intents[i] = (out.steer_intent, out.speed_intent)
             if republish_every:
                 bridge.note_republish()
+        bridge.node_intents.append(intents)
         res = bridge.advance()
         if res.episode_over:
             return bridge

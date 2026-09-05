@@ -317,3 +317,102 @@ def test_preset_config_is_the_same_function_everywhere():
     assert scenario.preset_config("hard").num_agents == 7
     with pytest.raises(ValueError):
         scenario.preset_config("medium")
+
+
+def test_a_late_echo_of_a_republished_final_tick_is_a_duplicate_even_across_episodes():
+    cfg = easy_preset()
+    bridge = run_lockstep_inprocess(cfg, 0, ros_cars=[1], republish_every=1)
+    try:
+        ep, last = bridge.episode, bridge.tick - 1
+        assert bridge.offer_drive(1, ep, last, 0.0, 2.0) == "duplicate"          # after ENDED
+        bridge.begin_episode(1)
+        assert bridge.offer_drive(1, ep, last, 0.0, 2.0) == "duplicate"          # after the next episode began
+        assert bridge.offer_drive(1, ep, last - 1, 0.0, 2.0) == "stale"          # two ticks back: stale
+        # the shell's way in: a stamp -> (episode, tick), across episodes
+        start0 = bridge._episode_starts[0][0]
+        assert bridge.key_for_stamp_tick(start0 + last) == (ep, last)
+        assert bridge.key_for_stamp_tick(bridge.start_tick) == (1, 0)
+        assert bridge.key_for_stamp_tick(start0 - 1) is None
+    finally:
+        bridge.close()
+
+
+def test_replay_notices_a_missing_commit_and_a_changed_info(tmp_path):
+    cfg = easy_preset()
+    bridge = run_lockstep_inprocess(cfg, 0, ros_cars=[1])
+    try:
+        rec = bridge.record
+        assert replay(rec).exact
+        cut = Record.load(str(tmp_path / "x.npz")) if False else None
+        # drop the last commit: the replay must not call it exact
+        rec2 = Record(meta=dict(rec.meta))
+        for k, v in rec.__dict__.items():
+            if k != "meta":
+                setattr(rec2, k, list(v))
+        for k in ("commit_ticks", "rewards", "terminated", "truncated", "commit_obs", "infos"):
+            getattr(rec2, k).pop()
+        assert not replay(rec2).exact
+        # change one info value: the replay must not call it exact either
+        rec3 = Record(meta=dict(rec.meta))
+        for k, v in rec.__dict__.items():
+            if k != "meta":
+                setattr(rec3, k, list(v))
+        rec3.infos = [dict(i) for i in rec.infos]
+        rec3.infos[-1]["lane_changes"] += 1
+        rep = replay(rec3)
+        assert not rep.exact and "differs" in rep.reason
+        # infos keep their integer fields as ints
+        assert isinstance(rec.infos[-1]["lane_changes"], int) and isinstance(rec.infos[-1]["step"], int)
+    finally:
+        bridge.close()
+
+
+def test_the_steer_tolerance_is_measured_with_the_wire_emulated():
+    """|applied steer - the node's float64 intent| <= |x| * 6e-8 + 1e-9, on every tick."""
+    cfg = strict_preset()
+    bridge = run_lockstep_inprocess(cfg, 0, ros_cars=[1], emulate_wire=True)
+    try:
+        rec = bridge.record
+        worst = 0.0
+        for t, intents in enumerate(bridge.node_intents):
+            steer_intent, _ = intents[1]
+            applied = rec.rows_applied[t][1, 0]
+            assert abs(applied - steer_intent) <= abs(steer_intent) * 6e-8 + 1e-9, t
+            worst = max(worst, abs(applied - steer_intent))
+        print(f"\nworst |applied steer - intent| over {len(bridge.node_intents)} ticks: {worst:.3e}")
+        assert len(bridge.node_intents) == len(rec.rows_applied)
+    finally:
+        bridge.close()
+
+
+def test_record_metrics_and_file_names():
+    from caatc.ros_bridge_core import record_filename, record_glob, record_metrics
+    import fnmatch
+
+    cfg = easy_preset()
+    bridge = run_lockstep_inprocess(cfg, 0, ros_cars=[1])
+    try:
+        assert record_metrics(bridge.record) == bridge.episode_metrics()
+        name = record_filename(cfg.preset, 0, 0)
+        assert name == "easy-seed0-ep0.npz" and fnmatch.fnmatch(name, record_glob(cfg.preset))
+        assert bridge.record.meta["duplicate_commands"] == 0 and bridge.record.meta["stale_commands"] == 0
+    finally:
+        bridge.close()
+
+
+def test_echo_gate_answers_once_per_republish():
+    from caatc.ros_node_core import EchoGate
+
+    g = EchoGate()
+    g.own_odom(100)                                  # the fresh tick's own odom arrives
+    assert g.allow(100, fresh=True)                  # answered
+    assert not g.allow(100, fresh=False)             # more callbacks of the same copy: silent
+    g.own_odom(100)                                  # a re-publish: one own-odom message ...
+    hits = sum(g.allow(100, fresh=False) for _ in range(6))
+    assert hits == 1                                 # ... earns exactly one echo, whatever the order
+    # own odom arriving LAST in the re-publish burst still yields exactly one echo
+    assert not g.allow(100, fresh=False)
+    g.own_odom(100)
+    assert g.allow(100, fresh=False) and not g.allow(100, fresh=False)
+    g.own_odom(101)                                  # the next tick clears the old bookkeeping
+    assert g.allow(101, fresh=True) and not g.allow(101, fresh=False)

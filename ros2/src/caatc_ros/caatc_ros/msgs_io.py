@@ -22,7 +22,7 @@ from std_msgs.msg import Float64MultiArray, MultiArrayDimension
 
 from caatc.frenet import wrap_to_pi
 from caatc.ros_geometry import quat_to_yaw, yaw_to_quat
-from caatc.ros_node_core import CarSample
+from caatc.ros_node_core import CarSample, ProtocolError
 from caatc.ros_tick import stamp_to_tick, tick_to_stamp
 
 # The per-car fields of /caatc/ground_truth, in this order (8 values per car).
@@ -39,6 +39,14 @@ def make_stamp(stamp_tick: int, sim_hz: float = 100.0) -> Time:
 def stamp_tick_of(stamp: Time, sim_hz: float = 100.0) -> int:
     """``builtin_interfaces/Time`` -> absolute stamp tick; raises ValueError off a tick."""
     return stamp_to_tick(int(stamp.sec), int(stamp.nanosec), sim_hz)
+
+
+def stamp_tick_or_breach(topic: str, stamp: Time, sim_hz: float = 100.0) -> int:
+    """The same, but a stamp off the tick grid is the other side breaking the contract."""
+    try:
+        return stamp_tick_of(stamp, sim_hz)
+    except ValueError as e:
+        raise ProtocolError(f"{topic}: {e}") from None
 
 
 # -- the bridge's outgoing state -------------------------------------------------------

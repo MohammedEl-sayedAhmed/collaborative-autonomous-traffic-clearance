@@ -17,7 +17,8 @@ The shell does three things and nothing else:
 3. It hands the tick to ``NodeCore.on_tick`` and publishes what comes back: an
    ``AckermannDriveStamped`` on ``/car{i}/drive`` every tick and a ``Decision`` on
    ``/car{i}/decision`` at step boundaries. Both echo the own Odometry stamp verbatim.
-   A repeated tick (the bridge re-published while waiting) gets the cached answer again.
+   A repeated tick (the bridge re-published while waiting) gets the cached answer again,
+   once per re-publish (``EchoGate``), not once per arriving message.
 
 Everything about the protocol (skipped ticks, episode resets, the observation, the
 policy, the low-level controller) lives in ``caatc.ros_node_core``. A ``ProtocolError``
@@ -48,10 +49,10 @@ from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 from sensor_msgs.msg import JointState
 
-from caatc.ros_node_core import NodeCore, ProtocolError
+from caatc.ros_node_core import EchoGate, NodeCore, ProtocolError
 from caatc.scenario import preset_config
 
-from .msgs_io import sample_from_odometry, stamp_tick_of
+from .msgs_io import sample_from_odometry, stamp_tick_or_breach
 
 EPISODE_TOPIC = "/caatc/episode"
 QOS_DEPTH = 10   # the default QoS profile: reliable, volatile, keep the last 10
@@ -66,6 +67,7 @@ class CarNode(Node):
         self.cfg = preset_config(self.preset)
         self.car = int(car)
         self.core = NodeCore(self.cfg, self.car)      # rejects a car that is not a cooperator
+        self.gate = EchoGate()                        # one answer per copy of the state
         self.own_odom = f"/car{self.car}/odom"
         self.own_joints = f"/car{self.car}/joint_states"
 
@@ -92,10 +94,7 @@ class CarNode(Node):
 
     # -- incoming messages -----------------------------------------------------------
     def _stamp_tick(self, topic: str, msg) -> int:
-        try:
-            return stamp_tick_of(msg.header.stamp, self.cfg.sim_hz)
-        except ValueError as e:
-            raise ProtocolError(f"{topic}: {e}") from None
+        return stamp_tick_or_breach(topic, msg.header.stamp, self.cfg.sim_hz)
 
     def _on_episode(self, msg: Episode) -> None:
         if msg.state == Episode.ENDED:
@@ -117,7 +116,10 @@ class CarNode(Node):
 
     def _on_stamped(self, topic: str, msg) -> None:
         """Every callback ends here: note the stamp, then see whether the tick is complete."""
-        self.latest[topic] = (self._stamp_tick(topic, msg), msg)
+        stamp_tick = self._stamp_tick(topic, msg)
+        self.latest[topic] = (stamp_tick, msg)
+        if topic == self.own_odom:
+            self.gate.own_odom(stamp_tick)
         self._maybe_act()
 
     # -- the tick ----------------------------------------------------------------------
@@ -148,6 +150,8 @@ class CarNode(Node):
             raise ProtocolError(f"{self.own_joints} at tick {tick} carries no steering angle")
 
         out = self.core.on_tick(int(episode.episode), tick, samples, float(joints.position[0]))
+        if not self.gate.allow(newest, out.fresh):
+            return                                     # this copy of the state was answered already
 
         if out.decision is not None:
             dec = out.decision

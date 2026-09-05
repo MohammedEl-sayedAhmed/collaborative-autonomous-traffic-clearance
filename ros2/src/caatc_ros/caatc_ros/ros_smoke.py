@@ -10,8 +10,9 @@ What happens, in order:
 
 1. The car node is started (``python3 -m caatc_ros.car_node --preset P --car 1``), then
    the bridge (``python3 -m caatc_ros.clearance_bridge --preset P --seeds S --ros-cars 1
-   --out-dir D``). Both use this very interpreter (the image's venv Python) and inherit
-   the environment. The bridge exits by itself when every episode is over (0 = done,
+   --out-dir D``). Both use this very interpreter (the image's venv Python), inherit the
+   environment, and get a DDS domain of their own (``ROS_DOMAIN_ID``), so two runs on one
+   machine cannot hear each other. The bridge exits by itself when every episode is over (0 = done,
    2 = aborted); the car node runs until it is killed, so it is terminated once the
    bridge is gone. Both outputs land in ``D/bridge.log`` and ``D/car_node.log``, and
    their tails are printed when anything fails.
@@ -61,10 +62,11 @@ from caatc.clearance_smoke import Gate
 from caatc.decentralized import LocalSquad
 from caatc.frenet import CenterlineFrame
 from caatc.obs_spec import feature_count, obs_layout
-from caatc.ros_bridge_core import Record, cars_to_array, replay
+from caatc.ros_bridge_core import Record, cars_to_array, record_glob, record_metrics, replay
 from caatc.scenario import ScenarioConfig, centerline_xy
 
 VENV_PYTHON = "/opt/venv/bin/python3"     # the one interpreter every process must run
+MARKER = ".caatc-ros-smoke"               # written into an out-dir this smoke created; only such dirs are cleaned
 DEFAULT_OUT_DIR = "/src/saved_variables/ros/smoke"
 DEFAULT_TIMEOUT_S = 600.0
 NODE_HEAD_START_S = 1.0                   # let the node come up before the bridge publishes tick 0
@@ -102,16 +104,19 @@ def _stop(proc: subprocess.Popen, name: str) -> Optional[int]:
 
 
 def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, car: int,
-                 timeout_s: float) -> RunResult:
-    """Start the car node, then the bridge; wait for the bridge; stop the node."""
-    env = dict(os.environ, PYTHONUNBUFFERED="1")    # complete, ordered logs
+                 timeout_s: float, domain: int) -> RunResult:
+    """Start the car node, then the bridge; wait for the bridge; stop the node.
+
+    Both children get their own DDS domain (``ROS_DOMAIN_ID``), so two smoke runs on one
+    machine, or a node left over from an earlier run, cannot hear each other."""
+    env = dict(os.environ, PYTHONUNBUFFERED="1", ROS_DOMAIN_ID=str(domain))    # complete, ordered logs
     node_log = os.path.join(out_dir, "car_node.log")
     bridge_log = os.path.join(out_dir, "bridge.log")
     node_cmd = [sys.executable, "-m", "caatc_ros.car_node", "--preset", preset, "--car", str(car)]
     bridge_cmd = [sys.executable, "-m", "caatc_ros.clearance_bridge", "--preset", preset,
                   "--seeds", ",".join(str(s) for s in seeds), "--ros-cars", str(car),
                   "--out-dir", out_dir]
-    print("Starting the lockstep run:")
+    print(f"Starting the lockstep run (ROS_DOMAIN_ID={domain}):")
     print("  car node: " + " ".join(node_cmd))
     print("  bridge:   " + " ".join(bridge_cmd))
     print(f"  logs:     {node_log}, {bridge_log}")
@@ -185,10 +190,19 @@ def read_log(path: Optional[str]) -> str:
 
 
 # -- the records ----------------------------------------------------------------------
-def load_records(out_dir: str, preset: str) -> List[Tuple[str, Record]]:
-    """Every ``<preset>-seed<seed>-ep<n>.npz`` in ``out_dir``, in episode order."""
-    paths = sorted(glob.glob(os.path.join(out_dir, f"{preset}-seed*-ep*.npz")))
+def load_records(out_dir: str, preset: str, seeds: Optional[Sequence[int]] = None) -> List[Tuple[str, Record]]:
+    """Every record of ``preset`` in ``out_dir`` (the bridge's own file names, see
+    ``record_glob``), in episode order. With ``seeds``, only the records of those seeds
+    are kept and the others are listed as ignored, so a directory with an earlier run's
+    leftovers is not judged by them."""
+    paths = sorted(glob.glob(os.path.join(out_dir, record_glob(preset))))
     items = [(p, Record.load(p)) for p in paths]
+    if seeds is not None:
+        wanted = {int(x) for x in seeds}
+        ignored = [p for p, rec in items if int(rec.meta.get("seed", -1)) not in wanted]
+        for p in ignored:
+            print(f"  ignoring {p} (its seed is not among {sorted(wanted)})")
+        items = [(p, rec) for p, rec in items if int(rec.meta.get("seed", -1)) in wanted]
     items.sort(key=lambda pr: int(pr[1].meta.get("episode", 0)))
     return items
 
@@ -367,11 +381,8 @@ def check_exact_replay(g: Gate, records: List[Tuple[str, Record]]) -> None:
 
 # -- check 5b: the ROS run against the headless run of the same seed --------------------------------
 def ros_outcome(rec: Record) -> dict:
-    """The ROS run's outcome, read from the last committed info (run_episode's shape)."""
-    last = rec.infos[-1]
-    return {"success": bool(last["success"]), "collision": bool(last["collision"]),
-            "t_clear": last["t_clear"], "lane_changes": int(last["lane_changes"]),
-            "cum_reward": float(sum(rec.rewards))}
+    """The ROS run's outcome in run_episode's shape, by the core's own arithmetic."""
+    return record_metrics(rec)
 
 
 def replay_headless_tick_by_tick(env: ClearanceEnv, cfg: ScenarioConfig, rec: Record,
@@ -485,14 +496,39 @@ def parse_seeds(text: str) -> List[int]:
     return seeds
 
 
-def prepare_out_dir(out_dir: str, keep: bool) -> None:
+def prepare_out_dir(out_dir: str, keep: bool, preset: str) -> None:
+    """Make ``out_dir`` ready. Never deletes a directory the user typed.
+
+    A directory this smoke created carries a marker file. Without ``--keep``, only such a
+    directory is cleaned, and only of the files the smoke itself writes (records of this
+    preset and the two logs); anything else in it stops the run with its name. A
+    directory without the marker is used only if it is empty or ``--keep`` was given.
+    """
     out_dir = os.path.abspath(out_dir)
-    if not keep and os.path.isdir(out_dir):
-        # refuse to wipe anything that is obviously not a dedicated output folder
-        if out_dir in ("/", os.path.abspath(os.getcwd()), os.path.dirname(os.path.abspath(os.getcwd()))):
-            raise SystemExit(f"refusing to delete {out_dir}; pass --keep or a dedicated --out-dir")
-        shutil.rmtree(out_dir)
-    os.makedirs(out_dir, exist_ok=True)
+    marker = os.path.join(out_dir, MARKER)
+    if not os.path.isdir(out_dir):
+        os.makedirs(out_dir)
+        open(marker, "w").close()
+        return
+    if keep:
+        return
+    entries = sorted(e for e in os.listdir(out_dir) if e != MARKER)
+    if not os.path.exists(marker):
+        if entries:
+            raise SystemExit(f"{out_dir} was not created by this smoke and is not empty; "
+                             f"pass --keep, or a dedicated --out-dir")
+        open(marker, "w").close()
+        return
+    ours = set(os.path.basename(p) for p in glob.glob(os.path.join(out_dir, record_glob(preset))))
+    ours |= {"bridge.log", "car_node.log"}
+    ours |= set(e for e in entries if re.fullmatch(r"[a-z]+-seed-?\d+-ep\d+\.npz", e))   # other presets' records
+    strangers = [e for e in entries if e not in ours]
+    if strangers:
+        raise SystemExit(f"{out_dir} holds files this smoke did not write ({', '.join(strangers[:5])}"
+                         f"{', ...' if len(strangers) > 5 else ''}); not deleting anything. "
+                         "Pass --keep, or a dedicated --out-dir")
+    for e in entries:
+        os.remove(os.path.join(out_dir, e))
 
 
 def modules_present(names: Sequence[str]) -> List[str]:
@@ -510,17 +546,23 @@ def modules_present(names: Sequence[str]) -> List[str]:
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="M4.1 smoke: one car over ROS 2 in lockstep, then the checks.")
     ap.add_argument("--preset", default="strict", choices=["easy", "hard", "strict"])
-    ap.add_argument("--seeds", default="0,1", type=parse_seeds, help="comma-separated reset seeds (default 0,1)")
+    ap.add_argument("--seeds", default=None, type=parse_seeds,
+                    help="comma-separated reset seeds (default 0,1; with --checks-only: the seeds the records have)")
     ap.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help=f"records and logs go here (default {DEFAULT_OUT_DIR})")
     ap.add_argument("--keep", action="store_true", help="do not delete --out-dir first")
     ap.add_argument("--car", type=int, default=1, help="the cooperator driven over ROS (agent index, default 1)")
     ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="seconds to wait for the bridge (default 600)")
     ap.add_argument("--checks-only", action="store_true",
                     help="skip the processes; run the checks on the records already in --out-dir")
+    ap.add_argument("--domain", type=int, default=None,
+                    help="ROS_DOMAIN_ID for this run (default: one derived from the process id)")
     a = ap.parse_args(argv)
-    seeds: List[int] = a.seeds
+    seeds: Optional[List[int]] = a.seeds
+    domain = a.domain if a.domain is not None else 1 + os.getpid() % 100
 
-    print(f"=== M4.1 ROS 2 lockstep smoke: preset={a.preset} seeds={seeds} car={a.car} ===")
+    if seeds is None and not a.checks_only:
+        seeds = [0, 1]
+    print(f"=== M4.1 ROS 2 lockstep smoke: preset={a.preset} seeds={seeds if seeds is not None else 'from the records'} car={a.car} ===")
     print(f"interpreter {sys.executable}, numpy {np.__version__}, out-dir {a.out_dir}")
 
     run: Optional[RunResult] = None
@@ -535,12 +577,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"cannot start the run: {', '.join(missing)} not importable (is ros2/src/caatc_ros on PYTHONPATH?)",
                   file=sys.stderr)
             return 2
-        prepare_out_dir(a.out_dir, a.keep)
-        run = run_lockstep(a.preset, seeds, a.out_dir, a.car, a.timeout)
+        prepare_out_dir(a.out_dir, a.keep, a.preset)
+        run = run_lockstep(a.preset, seeds, a.out_dir, a.car, a.timeout, domain)
         if not run.ok:
             print_tails(run)
 
-    records = load_records(a.out_dir, a.preset)
+    records = load_records(a.out_dir, a.preset, seeds)
+    if seeds is None:                                  # --checks-only without --seeds: judge what is there
+        seeds = sorted({int(rec.meta.get("seed", -1)) for _p, rec in records})
+        print(f"  seeds taken from the records: {seeds}")
     print(f"\n{len(records)} record(s) under {a.out_dir}")
     for p, _rec in records:
         print(f"  {p}")
