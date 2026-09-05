@@ -1,0 +1,20 @@
+{
+ "activation": "Tanh",
+ "ego_dim": 26,
+ "hidden": [
+  64,
+  64
+ ],
+ "n_actions": 5,
+ "n_layers": 3,
+ "note": "deterministic actor: the action is the index of the largest output; a central-critic model reads only its first ego_dim numbers",
+ "numpy": "2.5.2",
+ "obs_dim": 26,
+ "policy_class": "ActorCriticPolicy",
+ "python": "3.12.14",
+ "source": "ippo-strict.zip",
+ "source_sha256": "b66981c57c2f824c40419ad9076de8b956f72a6cf48220810fc823a0cdfc2de1",
+ "stable_baselines3": "2.9.0",
+ "torch": "2.14.0+cpu",
+ "weights_sha256": "6027e86227e48e9bfbb06493e80c783585eb14d2c99b9664abb8ab3c4b1665aa"
+}

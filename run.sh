@@ -114,6 +114,8 @@ case "${1:-help}" in
     shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke "$@" ;;
   ros-shell)                           # an interactive shell in the ROS 2 image (ROS sourced)
     ros_dev -it caatc-ros bash ;;
+  export-policy)                       # M4.2: SB3 .zip -> numpy actor (.npz + .json) for the robot image
+    shift || true; dev caatc-train python -m caatc.policy_export "$@" ;;
 
   # ---- thesis (private submodule) -------------------------------------------
   thesis)                              # compile the thesis (private submodule) -> thesis/main.pdf
@@ -153,6 +155,8 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
     ros-smoke         M4.1: one car node over ROS 2 in lockstep, then checks 3/4/5a/5b
                         (--preset easy|hard|strict --seeds 0,1 --keep --checks-only)
     ros-shell         A shell inside the ROS 2 image, with ROS sourced
+    export-policy     Export a trained actor to numpy, so the robot image needs no torch
+                        (saved_variables/models/ippo-strict.zip --out caatc/policies/ippo-strict)
 
   dashboard:
     dashboard         Live training dashboard at http://127.0.0.1:8770 (compare runs)

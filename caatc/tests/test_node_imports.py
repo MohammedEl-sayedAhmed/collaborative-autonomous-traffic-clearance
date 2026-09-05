@@ -8,14 +8,14 @@ import sys
 
 NODE_MODULES = ["caatc.actions", "caatc.scenario", "caatc.frenet", "caatc.controllers",
                 "caatc.obs_spec", "caatc.decentralized", "caatc.ros_geometry", "caatc.ros_tick",
-                "caatc.ros_node_core"]
+                "caatc.ros_node_core", "caatc.policy_export"]
 
 
 def test_node_side_modules_do_not_import_the_simulator():
     code = (
         "import sys, importlib\n"
         f"for m in {NODE_MODULES!r}: importlib.import_module(m)\n"
-        "bad = [m for m in ('caatc.clearance_env', 'gymnasium', 'f1tenth_gym') if m in sys.modules]\n"
+        "bad = [m for m in ('caatc.clearance_env', 'gymnasium', 'f1tenth_gym', 'torch', 'stable_baselines3') if m in sys.modules]\n"
         "print('BAD:' + ','.join(bad))\n"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
