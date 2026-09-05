@@ -104,6 +104,18 @@ class ScenarioConfig:
 
     seed: int = 12345
 
+    def __post_init__(self) -> None:
+        # The plant applies the STRICT cap AFTER clipping a car node's speed to
+        # [coop_speed_min, coop_speed_max], while the in-process path caps the
+        # target BEFORE clipping. The two give the same number only if the cap
+        # lies inside the range, so refuse a config where it does not.
+        cap = self.ev_lane_speed_cap
+        if cap is not None and not (self.coop_speed_min <= cap <= self.coop_speed_max):
+            raise ValueError(
+                f"ev_lane_speed_cap={cap} must lie within [coop_speed_min={self.coop_speed_min}, "
+                f"coop_speed_max={self.coop_speed_max}]"
+            )
+
     # -- derived --------------------------------------------------------------
     @property
     def neighbor_gate(self) -> float:

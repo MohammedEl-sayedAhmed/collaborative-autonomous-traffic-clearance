@@ -8,10 +8,33 @@ from caatc.frenet import wrap_to_pi
 from caatc.ros_geometry import quat_to_yaw, yaw_to_quat
 
 
-@pytest.mark.parametrize("theta", list(np.linspace(-math.pi, math.pi, 721)) + [0.0, 1e-9, -1e-9, math.pi - 1e-12, -math.pi + 1e-12])
-def test_round_trip_is_within_one_ulp(theta):
+# both the simulator's range [0, 2pi) and the quaternion's (-pi, pi], plus the edges
+ANGLES = (list(np.linspace(-math.pi, math.pi, 721)) + list(np.linspace(0.0, 2 * math.pi, 721, endpoint=False))
+          + [0.0, 1e-9, -1e-9, math.pi - 1e-12, -math.pi + 1e-12, 2 * math.pi - 1e-12, 6.21])
+
+
+@pytest.mark.parametrize("theta", ANGLES)
+def test_round_trip_is_within_one_ulp_modulo_2pi(theta):
+    """The simulator keeps theta in [0, 2pi); the quaternion returns (-pi, pi]."""
     back = quat_to_yaw(*yaw_to_quat(theta))
     assert abs(wrap_to_pi(back - theta)) <= 4.5e-16, (theta, back)
+
+
+def test_the_simulators_own_range_comes_back_unchanged():
+    """The bridge builds q from theta in [0, 2pi); the sharp inverse returns that
+    same range, so no 2pi jump appears on the node side for our own messages."""
+    for theta in (6.21, 3.5, 0.0, 6.283185):
+        back = quat_to_yaw(*yaw_to_quat(theta))
+        assert abs(back - theta) <= 4.5e-16, (theta, back)
+
+
+def test_the_negated_quaternion_is_the_same_rotation_modulo_2pi():
+    """A real odometry source may send -q for q. Consumers compare modulo 2pi."""
+    theta = 6.21
+    x, y, z, w = yaw_to_quat(theta)
+    back = quat_to_yaw(-x, -y, -z, -w)
+    assert abs(back - theta) > 1.0                       # raw values differ ...
+    assert abs(wrap_to_pi(back - theta)) <= 4.5e-16      # ... the rotation does not
 
 
 def test_quaternion_is_unit_and_about_z():

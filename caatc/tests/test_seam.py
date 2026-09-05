@@ -222,3 +222,42 @@ def test_cars_cache_tracks_the_physics():
         assert env.rows_applied.shape == (env.cfg.num_agents, 2)
     finally:
         env.close()
+
+
+def test_per_coop_obs_is_the_env_observation():
+    """One function builds the 26 numbers for both the env and a car node.
+
+    A node has no simulator, so it calls ``obs_spec.observation`` on a ``cars`` list it
+    builds from odometry. Here the env's own ``cars`` are fed in, and the result must
+    equal ``env.per_agent_obs(j)`` to the bit, on every preset, at every decision.
+    """
+    from caatc.obs_spec import observation
+
+    for name in PRESETS:
+        cfg = PRESETS[name]()
+        env = ClearanceEnv(cfg)
+        ideal = IdealCooperator()
+        try:
+            env.reset(seed=1)
+            while True:
+                cars = env.cars
+                for j in range(cfg.num_cooperators):
+                    mine = observation(cfg, env.frame, j, cars)
+                    theirs = env.per_agent_obs(j)
+                    assert mine.dtype == np.float32 and mine.shape == theirs.shape
+                    assert np.array_equal(mine, theirs), (name, j)
+                _, _, te, tr, _ = env.step(ideal(env))
+                if te or tr:
+                    break
+        finally:
+            env.close()
+
+
+def test_the_strict_cap_must_sit_inside_the_speed_range():
+    """The plant caps AFTER clipping; the in-process path caps BEFORE. Equal only if
+    the cap is inside the range, so a config outside it is refused up front."""
+    with pytest.raises(ValueError, match="ev_lane_speed_cap"):
+        strict_preset(ev_lane_speed_cap=9.0)
+    with pytest.raises(ValueError, match="ev_lane_speed_cap"):
+        strict_preset(ev_lane_speed_cap=-1.0)
+    assert strict_preset().ev_lane_speed_cap == strict_preset().coop_speed

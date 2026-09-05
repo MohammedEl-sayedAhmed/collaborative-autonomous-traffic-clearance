@@ -31,9 +31,10 @@ from .scenario import (
     make_layout,
 )
 from .controllers import coop_lowlevel, ev_control
+from .obs_spec import per_coop_obs, side_clear
 
 # discrete action ids (mirror the 2020 project's 5-action set)
-STAY, MERGE_LEFT, MERGE_RIGHT, SPEED_UP, SLOW_DOWN = range(5)
+from .actions import STAY, MERGE_LEFT, MERGE_RIGHT, SPEED_UP, SLOW_DOWN  # noqa: E402,F401  (re-exported)
 
 # The base env ray-casts a 1080-beam lidar per car per 100 Hz physics step. We
 # never use scans (our road has no walls; car-car collisions come from GJK, not
@@ -80,11 +81,6 @@ def _reduce_scan_beams(n: int = _CLEARANCE_SCAN_BEAMS) -> None:
         pass  # non-fatal: fall back to the default beam count (slower, still correct)
 
 
-def _one_hot(idx: int, n: int) -> List[float]:
-    v = [0.0] * n
-    if 0 <= idx < n:
-        v[idx] = 1.0
-    return v
 
 
 class ClearanceEnv(gym.Env):
@@ -497,71 +493,13 @@ class ClearanceEnv(gym.Env):
 
     # -- observation ----------------------------------------------------------
     def _per_coop_obs(self, j: int, cars: List[dict]) -> List[float]:
-        cfg = self.cfg
-        lat = cfg.num_lanes * cfg.lane_width
-        self_car = cars[1 + j]
-        ev = cars[0]
-        s, d, v, lane = self_car["s"], self_car["d"], self_car["v"], self_car["lane"]
-        psi = self.frame.tangent_angle(s)
-        heading_err = wrap_to_pi(psi - self_car["theta"])
+        """Cooperator ``j``'s raw observation; the builder lives in ``obs_spec``."""
+        return per_coop_obs(self.cfg, self.frame, j, cars)
 
-        out: List[float] = []
-        # SELF
-        out.append(d / lat)
-        out += _one_hot(lane, cfg.num_lanes)
-        out.append(v / cfg.ev_max_speed)
-        out.append(heading_err / np.pi)
-        out.append(self_car["delta"] / 0.4189)
-
-        # EV broadcast (range-gated)
-        ds = ev["s"] - s                     # < 0 when EV is behind (the norm case)
-        active = 1.0 if abs(ds) <= cfg.v2v_range else 0.0
-        if active:
-            behind_dist = max(0.0, s - ev["s"])
-            tta = behind_dist / max(ev["v"], 1e-3)
-            out.append(1.0)
-            out.append(ds / cfg.v2v_range)
-            out.append((ev["d"] - d) / lat)
-            out.append(ev["v"] / cfg.ev_max_speed)
-            out.append(min(tta / cfg.max_time, 2.0))
-            out += _one_hot(cfg.ev_lane, cfg.num_lanes)  # EV intended lane (center)
-            out.append(1.0 if (ev["lane"] == lane and ev["s"] < s) else 0.0)
-        else:
-            out += [0.0] * (6 + cfg.num_lanes)
-
-        # M nearest neighbours (other traffic; excludes self and the EV), gated to
-        # what this car could actually hear: without the gate the nearest-M sort
-        # fills its slots from anywhere on the road, which would make a
-        # "decentralized" policy quietly dependent on out-of-range cars (ADR 0009).
-        gate = cfg.neighbor_gate
-        neigh = [c for k, c in enumerate(cars)
-                 if k != 0 and k != (1 + j) and abs(c["s"] - s) <= gate]
-        neigh.sort(key=lambda c: abs(c["s"] - s))
-        for m in range(cfg.num_neighbors):
-            if m < len(neigh):
-                c = neigh[m]
-                out += [1.0, (c["s"] - s) / cfg.v2v_range,
-                        (c["d"] - d) / lat, (c["v"] - v) / cfg.ev_max_speed]
-            else:
-                out += [0.0, 0.0, 0.0, 0.0]
-
-        # left / right clear (adjacent lanes free within +/- clear_window)
-        out.append(self._side_clear(j, cars, lane, +1))
-        out.append(self._side_clear(j, cars, lane, -1))
-        return out
 
     def _side_clear(self, j: int, cars: List[dict], lane: int, side: int) -> float:
-        cfg = self.cfg
-        tgt = lane + side
-        if not (0 <= tgt <= cfg.num_lanes - 1):
-            return 0.0
-        s = cars[1 + j]["s"]
-        for k, c in enumerate(cars):
-            if k == (1 + j):
-                continue
-            if c["lane"] == tgt and abs(c["s"] - s) < cfg.clear_window:
-                return 0.0
-        return 1.0
+        return side_clear(self.cfg, j, cars, lane, side)
+
 
     # -- per-agent views (the seam decentralized execution is built on) -------
     @property
@@ -702,3 +640,17 @@ class ClearanceEnv(gym.Env):
             self.inner.close()
         except Exception:
             pass
+
+
+def _register_env() -> None:
+    """Register ``caatc/clearance-v0`` with Gymnasium (idempotent).
+
+    Lives here, not in ``caatc/__init__.py``, so that importing the node-side
+    modules never touches gymnasium. Anyone who imports this module can then also
+    ``gym.make("caatc/clearance-v0")``.
+    """
+    if "caatc/clearance-v0" not in gym.registry:
+        gym.register(id="caatc/clearance-v0", entry_point="caatc.clearance_env:ClearanceEnv")
+
+
+_register_env()

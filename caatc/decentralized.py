@@ -27,7 +27,7 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from .clearance_env import MERGE_LEFT, MERGE_RIGHT, STAY
+from .actions import MERGE_LEFT, MERGE_RIGHT, STAY
 from .obs_spec import LocalView, decode
 from .scenario import ScenarioConfig
 
