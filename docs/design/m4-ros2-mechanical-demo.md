@@ -13,11 +13,12 @@ results and ROS 2 for the mechanical proof, on a stack that is not end-of-life. 
 [ADR 0011](../adr/0011-m4-ros2-mechanical-demo.md), which replaces only the "via `f1tenth_gym_ros`
 (1–2 cars)" part of ADR 0005.
 
-**Where it stands (2026-09-05):** step M4.0 is done, both halves. (a) The images run Python 3.12, all
-17 published rows were re-checked, and the seam in `ClearanceEnv` is built and proven to change
-nothing. (b) The `caatc-ros` image (`ros:jazzy-ros-base` + our package + our messages) is built, and
-check 1 inside it says **IDENTICAL**: all six golden traces replay exactly, and the M1 headroom gate
-passes there too. Next is M4.1, one car node in lockstep, against the contract at the end of this doc.
+**Where it stands (2026-09-05):** M4.0 and M4.1 are done. The images run Python 3.12, all 17
+published rows were re-checked, the seam in `ClearanceEnv` is proven to change nothing, and the
+`caatc-ros` image is a numerical twin (check 1: **IDENTICAL**). **One car now drives over ROS 2 in
+lockstep** (`./run.sh ros-smoke`): on strict, easy and hard the ROS run differs from the headless run
+on **zero ticks**, the replay is exact, the node's 26 numbers equal the bridge's exactly at every
+boundary, and no command was ever stale. Next is M4.2: all K cars, the V2V relay, the exported policy.
 
 M3 proved that each car can decide alone, using a Python wrapper (`LocalOnlyView`) and a pipe harness
 (`proc_fleet.py`). M4's job is to make the same property hold when the transport is **real**: DDS
@@ -248,13 +249,17 @@ required); RViz being slow on the integrated GPU.
    passes the M1 headroom gate. The 3.12.3 vs 3.12.14 patch-level difference between the two images
    changes nothing.
    **Stop point 1:** passed on both counts.
-2. **M4.1, one car, lockstep** (about 1 to 1.5 days). First the pure-Python groundwork the contract
-   needs: the observation builder moved out of the env into `obs_spec.per_coop_obs` (done, with a
-   test that the two paths agree to the bit), the action constants in their own module so a node
-   never imports the simulator (done), integer tick stamps (done), and the `Episode` / `Decision`
-   messages (done). Then the bridge plus **one** car node running the hand-written local policy (no
-   torch; the only custom messages are `Episode` and `Decision`, already built into the image), rows
-   `2..K` still driven by the simulator. Checks 2, 3, 4, 5a, 9.
+2. **M4.1, one car, lockstep. DONE.** The groundwork: the observation builder moved out of the env
+   into `obs_spec.per_coop_obs` (the two paths agree to the bit), the action constants and the
+   decision rule in `caatc/actions.py` so a node never imports the simulator, integer tick stamps, the
+   `Episode` / `Decision` messages. The brains as pure Python: `caatc/ros_node_core.py` (the car) and
+   `caatc/ros_bridge_core.py` (the plant and referee, the record, the exact replay), tested without a
+   bus, wire emulated. The shells: `ros2/src/caatc_ros/caatc_ros/{clearance_bridge,car_node,
+   msgs_io,ros_smoke}.py`. **Result** (`./run.sh ros-smoke`, strict / easy / hard, seeds 0 and 1):
+   every check passes; the replay is exact (608 to 609 ticks per episode); over 122 (boundary, car)
+   pairs every observation element is exact, `heading_err` included; s, d and tangent exact; the ROS
+   run and the headless run differ on **0 ticks**; `stale_commands` 0. Checks 2 (lite), 3, 4, 5a, 5b
+   and 9 are in place. **Stop point 2: passed.**
    **Stop point 2:** observation agreement and in-image replay agreement on one car, or the transport
    is wrong and nothing built on top could be trusted.
 3. **M4.2, the fleet, the radio, the constraint** (about 2 days). K car nodes, `v2v_relay` with the
@@ -399,7 +404,7 @@ the raw odometry topics with `/car{i}/v2v`, the relay's range-, loss- and delay-
 only then do checks 7 and 8 test locality rather than plumbing. Check 9 covers locality in M4.1.
 
 **Configuration identity.** Both processes take the same `preset` parameter and build
-`preset_config(preset)` with defaults, so `num_agents` (7 on HARD, from `hard_block_sides`, which
+`caatc.scenario.preset_config(preset)` with defaults (a pure function, so the node can use it too), so `num_agents` (7 on HARD, from `hard_block_sides`, which
 `cfg.seed = 12345` fixes), the road, the lanes and every range are identical on both sides. The
 bridge's `--seed` is only the `reset` seed and is published in `Episode.seed`. The fallback policy for
 simulator-driven cooperators is `LocalIdealCooperator()` with default arguments on the boundary
@@ -445,9 +450,11 @@ at the boundary, BEFORE anything else:
 wait for Drive(episode, tick) from every ROS car,
   and Decision(episode, tick) at a boundary;
   first copy wins; a later copy for the same key is
-  counted as duplicate_commands and ignored; a copy
-  for an older key is counted as stale_commands and
-  dropped; a newer key aborts the run
+  counted as duplicate_commands and ignored; so is an
+  echo of the tick that just finished, if that tick was
+  re-published (the node did what the contract asks);
+  any other older key is stale_commands and dropped;
+  a newer key aborts the run
   re-publish the tick's state every 200 ms (wall clock)
   while waiting; abort after 5 s per tick
   (30 s for tick 0, to cover DDS discovery)
@@ -462,7 +469,8 @@ record (see below)
 assert (tick % substeps == 0) == (substeps_done was 0)   # the seam and the tick agree on boundaries
 if done or env.substeps_done == cfg.substeps: obs, r, terminated, truncated, info = env.commit_step()
   if done and not (terminated or truncated): abort loudly (the seam ended a step early)
-if terminated or truncated: publish Episode(ENDED) and the final state; write the record;
+if terminated or truncated: publish the final state once more, with Episode.state = ENDED
+  (Episode first; a node never answers a tick whose Episode says ENDED); write the record;
   next episode (new seed, start_tick = previous end + 100) or stop
 else: tick += 1; publish the new state
 ```
