@@ -228,6 +228,19 @@ software ([ADR 0012](docs/adr/0012-target-ros2-jazzy-not-humble.md)). Jazzy ship
 project's images moved to Python 3.12 too. One Python version everywhere means the physics is identical
 in both places.
 
+**Where it stands:** the ROS 2 image is a numerical twin of the plain one (the same recorded runs
+replay in it bit for bit), and **one car already drives over ROS 2**: its own program receives its
+odometry, hears the other cars, decides, and publishes a steering and speed command every 10 ms. The
+bridge waits for that command before it moves the physics by one tick, so timing cannot blur the
+comparison. On all three presets, the ROS run and the plain run **agree on every tick**, and a saved
+run replays exactly. Try it:
+
+```bash
+./run.sh ros-build                          # once: ros:jazzy + our package + our messages
+./run.sh ros-fingerprint --gate             # is the ROS image a numerical twin? (expect IDENTICAL)
+./run.sh ros-smoke --preset strict --seeds 0,1   # one car over ROS 2, then the checks
+```
+
 M4 is **not** trying to make the cars drive better. They already match the ideal. It has to prove three
 things instead, each with a check that fails loudly if it is not true:
 

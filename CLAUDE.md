@@ -45,9 +45,14 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
     matches the ideal. EASY and HARD are unchanged so the published numbers stay valid; `--policy
     speedup` plus two checks keep the loophole visible.
   - **M4, in progress:** the ROS 2 Jazzy demo (ADR 0011, ADR 0012). Done so far: Python 3.12
-    everywhere with all 17 published rows re-checked (one model retrained and re-measured), and the
+    everywhere with all 17 published rows re-checked (one model retrained and re-measured); the
     **seam** in `ClearanceEnv` (`set_decision` / `joint_action_rows` / `substep` / `commit_step`) with
-    golden traces and tests proving `step()` did not change by a single bit.
+    golden traces and tests proving `step()` did not change by a single bit; the `caatc-ros` image on
+    Jazzy, a numerical twin (`./run.sh ros-fingerprint --gate` says IDENTICAL); and **M4.1: one car
+    drives over ROS 2 in lockstep** (`./run.sh ros-smoke`): the ROS run and the headless run agree on
+    every tick, the replay is exact, and the node's 26 numbers equal the bridge's exactly. The brains
+    are pure Python (`caatc/ros_node_core.py`, `caatc/ros_bridge_core.py`), tested without ROS; the
+    rclpy shells live in `ros2/src/caatc_ros/`. The M4.1 contract is at the end of the design doc.
 - Big decisions and their reasons are in **`docs/adr/`**. Ideas for later are in **`ROADMAP.md`**.
 
 ## Repository map
@@ -56,7 +61,10 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
   `clearance_smoke.py` (the headroom check), `train.py` (M2 PPO), `play.py` + `render2d.py` (watch a
   run), `smoke.py` (M0), `tests/` (with `golden/` traces recorded before the seam); M3: `train_dec.py`,
   `decentralized.py`, `obs_spec.py`, `vec_agents.py`, `central_critic.py`, `pz_env.py`,
-  `proc_fleet.py`, `dec_smoke.py`.
+  `proc_fleet.py`, `dec_smoke.py`; M4: `actions.py`, `ros_tick.py`, `ros_geometry.py`,
+  `ros_fingerprint.py` (check 1), `ros_node_core.py`, `ros_bridge_core.py`.
+- `ros2/src/`: `caatc_msgs` (Episode, Decision, Broadcast, V2VDigest) and `caatc_ros` (the bridge, the
+  car node, `msgs_io`, the `ros_smoke` orchestrator). `docker/ros.Dockerfile` builds `caatc-ros`.
 - `docker/`: `gym.Dockerfile` (Python dev image), `gym-test.Dockerfile` (pytest),
   `gym-train.Dockerfile` (stable-baselines3 + CPU torch), `gym-view.Dockerfile` (X11 for a window).
 - `run.sh`: runs everything in Docker (v1.0.0 only: `gym-*`, `clearance-*`, `dashboard`, `thesis`).
@@ -81,6 +89,9 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
 - **M3:** `./run.sh clearance-smoke --m3` (is one car's own view enough?) · `./run.sh dec-smoke`
   (plumbing + locality) · `./run.sh clearance-train-dec --preset easy|hard|strict --timesteps N`
   (`--central-critic` for the central critic). Presets are `easy|hard|strict` everywhere.
+- **M4 (ROS 2):** `./run.sh ros-build` · `./run.sh ros-fingerprint --gate` (check 1) ·
+  `./run.sh ros-smoke --preset easy|hard|strict --seeds 0,1` (one car over ROS 2 + checks 3/4/5a/5b) ·
+  `./run.sh ros-shell`. Nodes always start as `python3 -m caatc_ros.<node>` inside the image.
 - **Dashboard:** `./run.sh dashboard` (reads `saved_variables/runs/`) · `./run.sh dashboard-demo`
 - **Thesis:** `./run.sh thesis`
 - `./run.sh` with no arguments lists every command.
@@ -111,9 +122,11 @@ rather than bit for bit; the policy **exported to numpy** so the robot image nee
 end-of-life dependencies at all** (nothing copied from `f1tenth_gym_ros`).
 
 Work in order: (1) ~~Python 3.12 and re-check every published table~~ done; (2) ~~the seam in
-`ClearanceEnv` with tests proving nothing changed~~ done; (3) the `caatc-ros` image on `ros:jazzy`,
-with the headroom check run inside it; (4) one car node in lockstep; (5) the full fleet, the V2V relay
-and the checks; (6) the RViz view, a rosbag and a dashboard run.
+`ClearanceEnv` with tests proving nothing changed~~ done; (3) ~~the `caatc-ros` image on `ros:jazzy`,
+with the headroom check run inside it~~ done (IDENTICAL); (4) ~~one car node in lockstep~~ done
+(0 differing ticks); (5) the full fleet, the V2V relay (`Broadcast` / `V2VDigest`), the exported
+numpy policy and the remaining checks; (6) the RViz view, a rosbag and a dashboard run; (7) the async
+mode with measured delay and loss.
 
 Also open: a richer V2V model (train against drops and delay, not just measure them) and the bigger
 scenarios in the roadmap. `docs/upstream-candidates.md` holds four `f1tenth_gym` findings; **nothing has
