@@ -21,8 +21,8 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from .scenario import (ScenarioConfig, EASY_PRESET, HARD_PRESET, STRICT_PRESET,
-                       easy_preset, hard_preset, strict_preset)
+from .scenario import (ScenarioConfig, EASY_PRESET, HARD_PRESET, STRICT_PRESET,  # noqa: F401
+                       easy_preset, hard_preset, strict_preset, preset_config)
 from .clearance_env import ClearanceEnv
 from .baselines import make_policy
 
@@ -52,17 +52,6 @@ def git_sha(default: str = "unknown") -> str:
         return sha or default
     except Exception:
         return default
-
-
-def preset_config(preset: str, **overrides) -> ScenarioConfig:
-    preset = preset.lower()
-    if preset == "easy":
-        return easy_preset(**overrides)
-    if preset == "hard":
-        return hard_preset(**overrides)
-    if preset == "strict":
-        return strict_preset(**overrides)
-    raise ValueError(f"unknown preset '{preset}' (easy|hard|strict)")
 
 
 def run_episode(env: ClearanceEnv, policy: Callable, seed: Optional[int] = None) -> Dict:

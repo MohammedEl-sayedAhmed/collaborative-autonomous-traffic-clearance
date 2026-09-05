@@ -266,3 +266,54 @@ def test_two_episodes_back_to_back_reset_the_node_and_keep_time_monotone():
         assert bridge.record.meta["start_tick"] >= 100 + 1  # after the first episode's end + gap
     finally:
         bridge.close()
+
+
+def test_counters_are_per_episode_and_late_echoes_are_duplicates_not_stale():
+    cfg = easy_preset()
+    bridge = BridgeCore(cfg, ros_cars=[1])
+    try:
+        bridge.begin_episode(0)
+        obs = bridge.env.per_agent_obs(0)
+        bridge.offer_decision(1, 0, 0, STAY, obs, 0.0, 0.0, 1, 0.0)
+        bridge.offer_drive(1, 0, 0, 0.0, 2.0)
+        bridge.note_republish()                       # tick 0 was re-published ...
+        bridge.advance()
+        assert bridge.offer_drive(1, 0, 0, 0.0, 2.0) == "duplicate"   # ... so a late echo is a duplicate
+        bridge.offer_drive(1, 0, 1, 0.0, 2.0)
+        bridge.advance()                              # tick 1 was NOT re-published
+        assert bridge.offer_drive(1, 0, 1, 0.0, 2.0) == "stale"       # a late copy is genuinely stale
+        assert bridge.offer_drive(1, 0, 0, 0.0, 2.0) == "stale"       # two ticks ago: stale
+        assert (bridge.duplicate_commands, bridge.stale_commands) == (1, 2)
+        # a new episode starts its counters from zero; the process totals keep counting
+        bridge.begin_episode(1)
+        assert (bridge.duplicate_commands, bridge.stale_commands) == (0, 0)
+        assert (bridge.total_duplicate_commands, bridge.total_stale_commands) == (1, 2)
+    finally:
+        bridge.close()
+
+
+def test_commands_after_the_episode_ended_are_stale_and_an_aborted_record_still_saves(tmp_path):
+    cfg = easy_preset()
+    bridge = run_lockstep_inprocess(cfg, 0, ros_cars=[1])
+    try:
+        assert bridge.offer_drive(1, bridge.episode, bridge.tick - 1, 0.0, 2.0) == "stale"
+        # abort a fresh episode before any tick: the record must still be a valid npz
+        bridge.begin_episode(1)
+        bridge.abort("test: nothing arrived")
+        path = str(tmp_path / "aborted.npz")
+        bridge.record.save(path)
+        rec = Record.load(path)
+        assert rec.meta["aborted"] and rec.meta["abort_tick"] == 0
+        assert len(rec.rows_applied) == 0 and len(rec.cars_state) == 1
+        assert rec.meta["missing"] == ["/car1/drive", "/car1/decision"]
+    finally:
+        bridge.close()
+
+
+def test_preset_config_is_the_same_function_everywhere():
+    from caatc import clearance_eval, scenario
+
+    assert clearance_eval.preset_config is scenario.preset_config
+    assert scenario.preset_config("hard").num_agents == 7
+    with pytest.raises(ValueError):
+        scenario.preset_config("medium")

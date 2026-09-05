@@ -110,6 +110,8 @@ case "${1:-help}" in
     shift || true; docker build -t caatc-ros -f docker/ros.Dockerfile "$@" . ;;
   ros-fingerprint)                     # M4 check 1: is caatc-ros a numerical twin of caatc-gym?
     shift || true; ros_dev caatc-ros python3 -m caatc.ros_fingerprint "$@" ;;
+  ros-smoke)                           # M4.1: one car over ROS 2 in lockstep + checks 3/4/5a/5b
+    shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke "$@" ;;
   ros-shell)                           # an interactive shell in the ROS 2 image (ROS sourced)
     ros_dev -it caatc-ros bash ;;
 
@@ -148,6 +150,8 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
     ros-build         Build the ROS 2 image: ros:jazzy + caatc + our messages
     ros-fingerprint   Check 1: versions + exact golden replay -> IDENTICAL / DIFFERENT
                         (--gate also runs the M1 headroom gate inside the ROS image)
+    ros-smoke         M4.1: one car node over ROS 2 in lockstep, then checks 3/4/5a/5b
+                        (--preset easy|hard|strict --seeds 0,1 --keep --checks-only)
     ros-shell         A shell inside the ROS 2 image, with ROS sourced
 
   dashboard:

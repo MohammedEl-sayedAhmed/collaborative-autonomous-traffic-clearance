@@ -271,3 +271,16 @@ def strict_preset(**overrides) -> ScenarioConfig:
 EASY_PRESET = easy_preset()
 HARD_PRESET = hard_preset()
 STRICT_PRESET = strict_preset()
+
+
+def preset_config(preset: str, **overrides) -> ScenarioConfig:
+    """The three presets by name. Lives here (no simulator import) so a ROS car node
+    and the bridge build the identical configuration from the same function."""
+    preset = preset.lower()
+    if preset == "easy":
+        return easy_preset(**overrides)
+    if preset == "hard":
+        return hard_preset(**overrides)
+    if preset == "strict":
+        return strict_preset(**overrides)
+    raise ValueError(f"unknown preset '{preset}' (easy|hard|strict)")

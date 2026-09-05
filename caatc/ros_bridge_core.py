@@ -78,18 +78,28 @@ class Record:
     infos: List[dict] = field(default_factory=list)
 
     def save(self, path: str) -> None:
-        def st(xs, dtype=None):
-            return np.asarray(xs) if dtype is None else np.asarray(xs, dtype=dtype)
+        """Write the record; an episode aborted before anything happened still saves."""
+        N = self.cars_state[0].shape[0]
+        K = int(self.meta["cfg"]["num_cooperators"])
+        F = int(self.meta["feature_count"])
+
+        def stk(xs, empty_shape, dtype=np.float64):
+            return np.stack(xs) if xs else np.zeros(empty_shape, dtype=dtype)
+
+        def st(xs, dtype):
+            return np.asarray(xs, dtype=dtype)
+
         np.savez_compressed(
             path, meta=json.dumps(self.meta),
-            cars_state=np.stack(self.cars_state), rows_applied=np.stack(self.rows_applied),
-            wire=np.stack(self.wire), speed_before_rule=np.stack(self.speed_before_rule),
+            cars_state=np.stack(self.cars_state), rows_applied=stk(self.rows_applied, (0, N, 2)),
+            wire=stk(self.wire, (0, K, 2), np.float32), speed_before_rule=stk(self.speed_before_rule, (0, K)),
             done=st(self.done, bool), republishes=st(self.republishes, np.int64),
-            boundary_ticks=st(self.boundary_ticks, np.int64), decisions=np.stack(self.decisions),
-            obs_t=np.stack(self.obs_t), node_obs=np.stack(self.node_obs), node_frame=np.stack(self.node_frame),
+            boundary_ticks=st(self.boundary_ticks, np.int64), decisions=stk(self.decisions, (0, K), np.int64),
+            obs_t=stk(self.obs_t, (0, K, F), np.float32), node_obs=stk(self.node_obs, (0, K, F), np.float32),
+            node_frame=stk(self.node_frame, (0, K, 4)),
             commit_ticks=st(self.commit_ticks, np.int64), rewards=st(self.rewards, np.float64),
             terminated=st(self.terminated, bool), truncated=st(self.truncated, bool),
-            commit_obs=np.stack(self.commit_obs), infos=json.dumps(self.infos),
+            commit_obs=stk(self.commit_obs, (0, K * F), np.float32), infos=json.dumps(self.infos),
         )
 
     @classmethod
@@ -136,9 +146,13 @@ class BridgeCore:
         self.start_tick = 0
         self._end_tick = 0
         self.record: Optional[Record] = None
-        self.duplicate_commands = 0
-        self.stale_commands = 0
+        self.duplicate_commands = 0          # this episode
+        self.stale_commands = 0              # this episode
+        self.total_duplicate_commands = 0    # whole process
+        self.total_stale_commands = 0
         self._republishes_this_tick = 0
+        self._prev_key: Optional[Tuple[int, int]] = None   # the tick that just finished ...
+        self._prev_republished = False                      # ... and whether it was re-published
         self.wire_dtype = wire_dtype
         self._pending_drive: Dict[int, Tuple[np.floating, np.floating]] = {}
         self._pending_decision: Dict[int, dict] = {}
@@ -153,6 +167,9 @@ class BridgeCore:
         self.tick = 0
         self._pending_drive.clear(); self._pending_decision.clear()
         self._republishes_this_tick = 0
+        self._prev_key, self._prev_republished = None, False
+        self.duplicate_commands = 0
+        self.stale_commands = 0
         self._episode_over = False
         self.env.reset(seed=seed)
         self.record = Record(meta=dict(
@@ -180,15 +197,32 @@ class BridgeCore:
         return BridgeState(self.episode, self.tick, self.start_tick, self.stamp_tick, self.boundary, self.env.cars)
 
     # -- incoming commands ---------------------------------------------------------
+    def _count_duplicate(self) -> str:
+        self.duplicate_commands += 1
+        self.total_duplicate_commands += 1
+        return "duplicate"
+
+    def _count_stale(self) -> str:
+        self.stale_commands += 1
+        self.total_stale_commands += 1
+        return "stale"
+
     def _classify(self, car: int, episode: int, tick: int) -> str:
         if car not in self.ros_cars:
             raise ProtocolError(f"a command for car {car}, which is not ROS-driven ({self.ros_cars})")
         key, now = (int(episode), int(tick)), (self.episode, self.tick)
+        if self._episode_over:
+            # the final state was published with ENDED; nothing should answer it, and
+            # anything that does is late for a tick that no longer exists
+            return self._count_stale()
         if key == now:
             return "current"
+        if key == self._prev_key and self._prev_republished:
+            # an echo of a re-published tick that arrived after the tick moved on: the
+            # node did what the contract asks; it is a duplicate, not a fault
+            return self._count_duplicate()
         if key < now:
-            self.stale_commands += 1
-            return "stale"
+            return self._count_stale()
         raise ProtocolError(f"a command for {key} arrived while the bridge is at {now}: that cannot happen in lockstep")
 
     def offer_drive(self, car: int, episode: int, tick: int, steer: float, speed: float) -> str:
@@ -196,8 +230,7 @@ class BridgeCore:
         if cls != "current":
             return cls
         if car in self._pending_drive:
-            self.duplicate_commands += 1
-            return "duplicate"
+            return self._count_duplicate()
         self._pending_drive[car] = (self.wire_dtype(steer), self.wire_dtype(speed))
         return "accepted"
 
@@ -209,8 +242,7 @@ class BridgeCore:
         if not self.boundary:
             raise ProtocolError(f"a decision for tick {tick}, which is not a step boundary")
         if car in self._pending_decision:
-            self.duplicate_commands += 1
-            return "duplicate"
+            return self._count_duplicate()
         obs = np.asarray(obs, dtype=np.float32)
         if obs.shape != (feature_count(self.cfg),):
             raise ProtocolError(f"decision obs has shape {obs.shape}, expected ({feature_count(self.cfg)},)")
@@ -233,6 +265,10 @@ class BridgeCore:
 
     def note_republish(self) -> None:
         self._republishes_this_tick += 1
+
+    def note_stale(self) -> None:
+        """A shell saw a command stamped before this episode began: count it as stale."""
+        self._count_stale()
 
     # -- the tick ------------------------------------------------------------------
     def advance(self) -> StepOutcome:
@@ -296,6 +332,8 @@ class BridgeCore:
                 self.abort("the seam ended a step early without ending the episode")
                 raise ProtocolError("the seam ended a step early without ending the episode")
 
+        self._prev_key = (self.episode, self.tick)
+        self._prev_republished = self._republishes_this_tick > 0
         self.tick += 1
         self._pending_drive.clear(); self._pending_decision.clear()
         self._republishes_this_tick = 0
@@ -304,7 +342,7 @@ class BridgeCore:
             self._episode_over = True
             self._end_tick = self.start_tick + self.tick
             self.record.meta["end_tick"] = self._end_tick
-            self.record.meta["duplicate_commands"] = self.duplicate_commands
+            self.record.meta["duplicate_commands"] = self.duplicate_commands   # this episode
             self.record.meta["stale_commands"] = self.stale_commands
         elif env.substeps_done == 0:
             self._snapshot()
@@ -317,6 +355,8 @@ class BridgeCore:
             self.record.meta["abort_reason"] = reason
             self.record.meta["abort_tick"] = self.tick
             self.record.meta["missing"] = self.missing()
+            self.record.meta["duplicate_commands"] = self.duplicate_commands
+            self.record.meta["stale_commands"] = self.stale_commands
 
     # -- the episode's metrics, in run_episode's shape --------------------------------
     def episode_metrics(self) -> dict:

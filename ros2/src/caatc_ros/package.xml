@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>caatc_ros</name>
+  <version>1.0.0</version>
+  <description>The ROS 2 nodes of the Collaborative Autonomous Traffic Clearance demo (M4): the clearance bridge (the simulator and referee, one ClearanceEnv driven one tick at a time) and the car nodes that replace the cooperators' rows of the action array over standard ROS messages.</description>
+  <maintainer email="57391064+MohammedEl-sayedAhmed@users.noreply.github.com">Mohammed El-sayed Ahmed</maintainer>
+  <license>GPL-3.0-or-later</license>
+
+  <depend>rclpy</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>ackermann_msgs</depend>
+  <depend>rosgraph_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>caatc_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
