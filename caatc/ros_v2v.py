@@ -28,33 +28,17 @@ import numpy as np
 
 from .frenet import CenterlineFrame
 from .ros_node_core import CarSample
-from .scenario import ScenarioConfig, centerline_xy, lane_of
+from .scenario import ScenarioConfig, centerline_xy
 
-FAR_AWAY_S = -1.0e6      # a placeholder's position along the road: outside every gate, always
-ROLE_EV, ROLE_COOPERATOR, ROLE_OCCUPANT = 0, 1, 2
-
-
-def role_of(cfg: ScenarioConfig, car: int) -> int:
-    if car == 0:
-        return ROLE_EV
-    return ROLE_COOPERATOR if car <= cfg.num_cooperators else ROLE_OCCUPANT
+# the node-side pieces live in ros_node_core (the node imports them from there); this
+# module re-exports them so the relay and the tests have one name for each
+from .ros_node_core import (FAR_AWAY_S, ROLE_COOPERATOR, ROLE_EV, ROLE_OCCUPANT, Heard,  # noqa: E402,F401
+                            cars_from_digest, placeholder_entry, role_of)
 
 
 def required_range(cfg: ScenarioConfig) -> float:
     """The smallest relay range that carries everything the observation can depend on."""
     return max(cfg.v2v_range, cfg.neighbor_gate, cfg.clear_window)
-
-
-@dataclass(frozen=True)
-class Heard:
-    """One broadcast as a receiver hears it (what ``caatc_msgs/Broadcast`` carries)."""
-    car: int
-    role: int
-    x: float
-    y: float
-    theta: float
-    v: float
-    tick: int           # when the sender measured it; older than the current tick under delay
 
 
 class RelayCore:
@@ -123,28 +107,3 @@ class RelayCore:
             del self._history[old]
         self._cache = {key: digests}
         return digests
-
-
-def placeholder_entry(car: int) -> dict:
-    """A car the node did not hear: outside every gate, whatever the receiver's position."""
-    return dict(i=car, x=float("nan"), y=float("nan"), theta=0.0, v=0.0, s=FAR_AWAY_S, d=0.0, lane=0)
-
-
-def cars_from_digest(cfg: ScenarioConfig, frame: CenterlineFrame, car: int, own: CarSample,
-                     own_delta: float, heard: List[Heard]) -> List[dict]:
-    """The full car list in agent order, from the node's own odometry and its digest.
-
-    The node's own entry gets ``theta`` and ``delta`` (the observation reads them for the
-    car itself only); every heard car gets ``s, d, v, lane``; every other car is a
-    placeholder. This is what ``obs_spec.observation(cfg, frame, car - 1, cars)`` reads.
-    """
-    cars = [placeholder_entry(i) for i in range(cfg.num_agents)]
-    s, d = frame.project(own.x, own.y)
-    cars[car] = dict(i=car, x=own.x, y=own.y, theta=own.theta, v=own.v, s=s, d=d,
-                     lane=lane_of(cfg, d), delta=float(own_delta))
-    for h in heard:
-        if h.car == car or not 0 <= h.car < cfg.num_agents:
-            raise ValueError(f"a digest for car {car} carries car {h.car}")
-        s, d = frame.project(h.x, h.y)
-        cars[h.car] = dict(i=h.car, x=h.x, y=h.y, theta=h.theta, v=h.v, s=s, d=d, lane=lane_of(cfg, d))
-    return cars

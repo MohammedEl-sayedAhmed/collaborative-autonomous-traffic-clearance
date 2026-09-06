@@ -508,28 +508,38 @@ def replay(rec: Record) -> ReplayReport:
 def run_lockstep_inprocess(cfg: ScenarioConfig, seed: int, ros_cars: Sequence[int],
                            node_policy=None, emulate_wire: bool = True,
                            republish_every: int = 0, bridge: Optional[BridgeCore] = None,
-                           nodes: Optional[Dict[int, NodeCore]] = None) -> BridgeCore:
+                           nodes: Optional[Dict[int, NodeCore]] = None,
+                           v2v: bool = False, relay=None, fallback: Optional[Fallback] = None) -> BridgeCore:
     """Run one episode with ``NodeCore`` objects standing in for the ROS car nodes.
 
     ``emulate_wire`` sends the heading through a quaternion and the drive through
     float32, exactly as the messages would. ``republish_every`` > 0 re-offers every
-    tick's state that many extra times, to exercise the duplicate handling.
+    tick's state that many extra times, to exercise the duplicate handling. ``v2v``
+    puts a ``RelayCore`` between the bridge and the nodes (M4.2): each node then sees
+    only its own odometry and its digest.
     """
     if bridge is None:
-        bridge = BridgeCore(cfg, ros_cars, wire_dtype=np.float32 if emulate_wire else np.float64)
+        bridge = BridgeCore(cfg, ros_cars, fallback=fallback, wire_dtype=np.float32 if emulate_wire else np.float64)
     if nodes is None:
         nodes = {i: NodeCore(cfg, i, node_policy) for i in bridge.ros_cars}
+    if v2v and relay is None:
+        from .ros_v2v import RelayCore
+        relay = RelayCore(cfg)
     st = bridge.begin_episode(seed)
     bridge.node_intents = []            # per tick: {car: (steer_intent, speed_intent)}, for the tests
     while True:
         intents = {}
         for copy in range(1 + republish_every):
+            samples = {}
+            for c in st.cars:
+                theta = quat_to_yaw(*yaw_to_quat(c["theta"])) if emulate_wire else c["theta"]
+                samples[c["i"]] = CarSample(c["x"], c["y"], theta, c["v"])
+            digests = relay.on_tick(st.episode, st.tick, samples) if v2v else None
             for i, node in nodes.items():
-                samples = {}
-                for c in st.cars:
-                    theta = quat_to_yaw(*yaw_to_quat(c["theta"])) if emulate_wire else c["theta"]
-                    samples[c["i"]] = CarSample(c["x"], c["y"], theta, c["v"])
-                out = node.on_tick(st.episode, st.tick, samples, own_delta=st.cars[i]["delta"])
+                if v2v:
+                    out = node.on_tick_digest(st.episode, st.tick, samples[i], st.cars[i]["delta"], digests[i])
+                else:
+                    out = node.on_tick(st.episode, st.tick, samples, own_delta=st.cars[i]["delta"])
                 if out.decision is not None:
                     dec = out.decision
                     bridge.offer_decision(i, dec.episode, dec.tick, dec.action, dec.obs, dec.s, dec.d, dec.lane, dec.tangent)

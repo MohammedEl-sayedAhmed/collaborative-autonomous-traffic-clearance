@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import glob
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -68,6 +69,7 @@ from caatc.clearance_smoke import Gate
 from caatc.actions import apply_decision
 from caatc.controllers import coop_lowlevel
 from caatc.decentralized import LocalIdealCooperator, LocalSquad
+from caatc.ros_node_core import policy_from_name
 from caatc.frenet import CenterlineFrame
 from caatc.obs_spec import feature_count, obs_layout
 from caatc.ros_bridge_core import Record, cars_to_array, record_glob, record_metrics, replay
@@ -94,6 +96,9 @@ class RunResult:
     node_log: str
     elapsed_s: float
 
+    logs: Optional[Dict[str, str]] = None      # name -> log path, for every process started
+    gate_code: Optional[int] = None
+
     @property
     def ok(self) -> bool:
         return self.bridge_code == 0 and not self.timed_out and self.node_exited_early is None
@@ -112,79 +117,130 @@ def _stop(proc: subprocess.Popen, name: str) -> Optional[int]:
     return proc.returncode
 
 
-def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, car: int,
+@dataclass
+class FleetOptions:
+    """What to start besides the bridge."""
+    cars: List[int]
+    v2v: bool = False
+    policy: str = "local-ideal"
+    gate: bool = False
+    loss: float = 0.0
+    delay_ticks: int = 0
+    relay_seed: int = 0
+
+
+def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOptions,
                  timeout_s: float, domain: int, republish_period: Optional[float] = None,
                  node_delay_s: float = 0.0) -> RunResult:
-    """Start the car node, then the bridge; wait for the bridge; stop the node.
+    """Start the helpers (relay, gate), the car nodes, then the bridge; wait for the bridge;
+    wait for the gate to finish; stop everything else.
 
-    Both children get their own DDS domain (``ROS_DOMAIN_ID``), so two smoke runs on one
+    Every child gets its own DDS domain (``ROS_DOMAIN_ID``), so two smoke runs on one
     machine, or a node left over from an earlier run, cannot hear each other.
-    With ``node_delay_s`` > 0 the order flips: the bridge starts first and the node only
+    With ``node_delay_s`` > 0 the order flips: the bridge starts first and the nodes only
     that many seconds later, so tick 0 can only be answered from a re-publish. That is
     the stress mode: it exercises discovery, the re-publish and the echo path."""
     env = dict(os.environ, PYTHONUNBUFFERED="1", ROS_DOMAIN_ID=str(domain))    # complete, ordered logs
-    node_log = os.path.join(out_dir, "car_node.log")
     bridge_log = os.path.join(out_dir, "bridge.log")
-    node_cmd = [sys.executable, "-m", "caatc_ros.car_node", "--preset", preset, "--car", str(car)]
+    cars_arg = ",".join(str(c) for c in fleet.cars)
+    node_cmds = {c: [sys.executable, "-m", "caatc_ros.car_node", "--preset", preset, "--car", str(c),
+                     "--policy", fleet.policy] + (["--v2v"] if fleet.v2v else []) for c in fleet.cars}
     bridge_cmd = [sys.executable, "-m", "caatc_ros.clearance_bridge", "--preset", preset,
-                  "--seeds", ",".join(str(s) for s in seeds), "--ros-cars", str(car),
-                  "--out-dir", out_dir]
+                  "--seeds", ",".join(str(s) for s in seeds), "--ros-cars", cars_arg, "--out-dir", out_dir]
     if republish_period is not None:
         bridge_cmd += ["--republish-period", str(republish_period)]
-    print(f"Starting the lockstep run (ROS_DOMAIN_ID={domain}):")
-    print("  car node: " + " ".join(node_cmd))
+    relay_cmd = [sys.executable, "-m", "caatc_ros.v2v_relay", "--preset", preset, "--out-dir", out_dir,
+                 "--loss", str(fleet.loss), "--delay-ticks", str(fleet.delay_ticks), "--seed", str(fleet.relay_seed)]
+    gate_cmd = [sys.executable, "-m", "caatc_ros.ros_gate", "--preset", preset, "--cars", cars_arg,
+                "--allowlist", "m4.2" if fleet.v2v else "m4.1", "--episodes", str(len(seeds)),
+                "--out", os.path.join(out_dir, "gate.json")] + (["--relay"] if fleet.v2v else [])
+    print(f"Starting the lockstep run (ROS_DOMAIN_ID={domain}, cars {fleet.cars}, policy {fleet.policy}, "
+          f"radio = {'V2V digest' if fleet.v2v else 'raw odometry'}{', gate on' if fleet.gate else ''}):")
+    for c, cmd in node_cmds.items():
+        print(f"  car {c}:   " + " ".join(cmd))
+    if fleet.v2v:
+        print("  relay:    " + " ".join(relay_cmd))
+    if fleet.gate:
+        print("  gate:     " + " ".join(gate_cmd))
     print("  bridge:   " + " ".join(bridge_cmd))
-    print(f"  logs:     {node_log}, {bridge_log}")
 
     t0 = time.monotonic()
     bridge: Optional[subprocess.Popen] = None
+    helpers: Dict[str, subprocess.Popen] = {}
     node_exited_early: Optional[int] = None
     timed_out = False
-    with open(node_log, "wb") as nf, open(bridge_log, "wb") as bf:
+    logs: Dict[str, str] = {"bridge": bridge_log}
+    handles = []
+
+    def popen(name: str, cmd: List[str]) -> subprocess.Popen:
+        path = os.path.join(out_dir, f"{name}.log")
+        logs[name] = path
+        fh = open(path, "wb")
+        handles.append(fh)
+        return subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env)
+
+    try:
         if node_delay_s > 0:
-            # stress mode: the bridge first, so the node can only join through a re-publish
-            print(f"  stress: the bridge starts first, the car node {node_delay_s:.0f} s later")
-            bridge = subprocess.Popen(bridge_cmd, stdout=bf, stderr=subprocess.STDOUT, env=env)
+            # stress mode: the bridge first, so the nodes can only join through a re-publish
+            print(f"  stress: the bridge starts first, the car nodes {node_delay_s:.0f} s later")
+            bridge = popen("bridge", bridge_cmd)
             time.sleep(node_delay_s)
-        node = subprocess.Popen(node_cmd, stdout=nf, stderr=subprocess.STDOUT, env=env)
-        try:
-            time.sleep(NODE_HEAD_START_S)
-            if node.poll() is not None and bridge is None:
-                # no point in starting a bridge that would wait 30 s for a dead node
-                node_exited_early = node.returncode
-                print(f"  the car node exited during start-up with code {node_exited_early}; "
-                      "the bridge is not started")
-            else:
-                if bridge is None:
-                    bridge = subprocess.Popen(bridge_cmd, stdout=bf, stderr=subprocess.STDOUT, env=env)
-                deadline = t0 + timeout_s
-                while bridge.poll() is None:
-                    if node_exited_early is None and node.poll() is not None:
-                        node_exited_early = node.returncode
-                        print(f"  the car node exited with code {node_exited_early} while the "
-                              "bridge was still running")
-                    if time.monotonic() > deadline:
-                        timed_out = True
-                        print(f"  the bridge did not finish within {timeout_s:.0f} s, stopping it")
-                        _stop(bridge, "the bridge")
-                        break
-                    time.sleep(0.25)
-        except KeyboardInterrupt:
-            print("\ninterrupted: stopping both processes")
-            if bridge is not None:
-                _stop(bridge, "the bridge")
-            _stop(node, "the car node")
-            raise
-        finally:
-            # the node runs until killed by design
-            code = _stop(node, "the car node")
+        if fleet.v2v:
+            helpers["relay"] = popen("relay", relay_cmd)
+        if fleet.gate:
+            helpers["gate"] = popen("gate", gate_cmd)
+        nodes = {c: popen(f"car_node{c}", cmd) for c, cmd in node_cmds.items()}
+        time.sleep(NODE_HEAD_START_S)
+        dead = [c for c, pr in nodes.items() if pr.poll() is not None]
+        if dead and bridge is None:
+            # no point in starting a bridge that would wait 30 s for a dead node
+            node_exited_early = nodes[dead[0]].returncode
+            print(f"  car node {dead[0]} exited during start-up with code {node_exited_early}; the bridge is not started")
+        else:
+            if bridge is None:
+                bridge = popen("bridge", bridge_cmd)
+            deadline = t0 + timeout_s
+            while bridge.poll() is None:
+                for c, pr in nodes.items():
+                    if node_exited_early is None and pr.poll() is not None:
+                        node_exited_early = pr.returncode
+                        print(f"  car node {c} exited with code {node_exited_early} while the bridge was still running")
+                if time.monotonic() > deadline:
+                    timed_out = True
+                    print(f"  the bridge did not finish within {timeout_s:.0f} s, stopping it")
+                    _stop(bridge, "the bridge")
+                    break
+                time.sleep(0.25)
+        if "gate" in helpers and bridge is not None:
+            # the gate stops by itself after the last ENDED; give it a moment to take its final samples
+            until = time.monotonic() + 15.0
+            while helpers["gate"].poll() is None and time.monotonic() < until:
+                time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("\ninterrupted: stopping every process")
+        if bridge is not None:
+            _stop(bridge, "the bridge")
+        raise
+    finally:
+        # the nodes and the relay run until killed by design
+        for c, pr in list(nodes.items()) if "nodes" in locals() else []:
+            code = _stop(pr, f"car node {c}")
             if node_exited_early is None:
-                print(f"  car node stopped (exit code {code})")
+                print(f"  car node {c} stopped (exit code {code})")
+        for name, pr in helpers.items():
+            code = _stop(pr, name)
+            print(f"  {name} stopped (exit code {code})")
+        for fh in handles:
+            fh.close()
 
     elapsed = time.monotonic() - t0
     bridge_code = None if bridge is None else bridge.returncode
     print(f"  bridge exit code: {bridge_code}  ({elapsed:.1f} s)")
-    return RunResult(bridge_code, timed_out, node_exited_early, bridge_log, node_log, elapsed)
+    node_log = logs.get(f"car_node{fleet.cars[0]}", "")
+    result = RunResult(bridge_code, timed_out, node_exited_early, bridge_log, node_log, elapsed)
+    result.logs = logs
+    result.gate_code = helpers["gate"].returncode if "gate" in helpers else None
+    return result
 
 
 def tail(path: str, n: int = LOG_TAIL_LINES) -> str:
@@ -400,11 +456,14 @@ def check_observation_agreement(g: Gate, records: List[Tuple[str, Record]]) -> N
 
 
 # -- check 6: the decisions and the drive commands are the reference's ------------------------------
-def check_decision_and_controller_agreement(g: Gate, records: List[Tuple[str, Record]]) -> None:
+def check_decision_and_controller_agreement(g: Gate, records: List[Tuple[str, Record]],
+                                            policy_name: str = "local-ideal") -> None:
     """Without this, a node that clears the EV's lane to the OTHER side, or steers from the
-    previous tick's samples, would still pass checks 3, 4, 5a and 5b."""
-    print("\nCheck 6: every decision is the reference policy's, every drive command the reference controller's")
-    policy = LocalIdealCooperator()
+    previous tick's samples, would still pass checks 3, 4, 5a and 5b. The ROS cars are held
+    to the policy they were started with; simulator-driven cars to the bridge's fallback."""
+    print(f"\nCheck 6: every decision is the reference policy's ({policy_name}), every drive command the reference controller's")
+    policy = policy_from_name(policy_name)
+    fallback = LocalIdealCooperator()
     for _p, rec in records:
         cfg = record_cfg(rec)
         frame = CenterlineFrame(*centerline_xy(cfg))
@@ -413,10 +472,11 @@ def check_decision_and_controller_agreement(g: Gate, records: List[Tuple[str, Re
         mism = n = 0
         for b in range(len(rec.boundary_ticks)):
             for j in range(K):
-                obs = rec.node_obs[b][j] if (j + 1) in ros_cars else rec.obs_t[b][j]
+                ros = (j + 1) in ros_cars
+                obs = rec.node_obs[b][j] if ros else rec.obs_t[b][j]
                 n += 1
-                mism += int(int(rec.decisions[b][j]) != int(policy(obs, cfg)))
-        g.check(f"{label_of(rec)}: every decision equals LocalIdealCooperator on the observation it was taken from",
+                mism += int(int(rec.decisions[b][j]) != int((policy if ros else fallback)(obs, cfg)))
+        g.check(f"{label_of(rec)}: every decision equals the reference policy on the observation it was taken from",
                 n > 0 and mism == 0, f"{mism} of {n} differ")
         boundary_of = {t: b for b, t in enumerate(rec.boundary_ticks)}
         T = len(rec.rows_applied)
@@ -458,15 +518,32 @@ def ros_outcome(rec: Record) -> dict:
     return record_metrics(rec)
 
 
+class RefSquad:
+    """The headless mirror of the fleet: the run's policy on the ROS cars, the bridge's
+    fallback (LocalIdealCooperator) on the simulator-driven ones."""
+
+    def __init__(self, cfg: ScenarioConfig, ros_cars: Sequence[int], policy_name: str):
+        self.cfg = cfg
+        self.policies = [policy_from_name(policy_name) if (j + 1) in set(ros_cars) else LocalIdealCooperator()
+                         for j in range(cfg.num_cooperators)]
+
+    def reset(self) -> None:
+        pass
+
+    def __call__(self, env) -> np.ndarray:
+        obs = env.per_agent_obs_all()
+        return np.array([int(pol(obs[j], self.cfg)) for j, pol in enumerate(self.policies)], dtype=int)
+
+
 def replay_headless_tick_by_tick(env: ClearanceEnv, cfg: ScenarioConfig, rec: Record,
-                                 seed: int) -> Tuple[float, int, Optional[int], int]:
+                                 seed: int, squad=None) -> Tuple[float, int, Optional[int], int]:
     """Drive a headless episode tick by tick beside the record; compare the state at each tick.
 
     Returns ``(worst |d ev_s|, ticks with any state difference, first such tick, ticks compared)``.
     The first differing tick is the tick whose outcome (the state after it) differs.
     """
     env.reset(seed=seed)
-    squad = LocalSquad()
+    squad = squad if squad is not None else LocalSquad()
     worst = 0.0
     differing = 0
     first: Optional[int] = None
@@ -492,15 +569,24 @@ def replay_headless_tick_by_tick(env: ClearanceEnv, cfg: ScenarioConfig, rec: Re
     return worst, differing, first, compared
 
 
-def check_against_headless(g: Gate, records: List[Tuple[str, Record]]) -> None:
-    print("\nCheck 5b: the ROS run against the headless run of the same seed (LocalSquad)")
+def check_against_headless(g: Gate, records: List[Tuple[str, Record]], policy_name: str = "local-ideal",
+                           expect_fail: bool = False, radio_perfect: bool = True) -> None:
+    """The ROS run against a headless run of the same seed with the same policies.
+
+    With ``expect_fail`` (checks 10 and 11) the run is a baseline that must NOT clear the
+    road: success must be False on every seed. With an imperfect radio (loss or delay) the
+    nodes legitimately see something else than the simulator, so only the outcome is
+    compared and printed, not required to match."""
+    print(f"\nCheck 5b: the ROS run against the headless run of the same seed ({policy_name})")
     for _p, rec in records:
         cfg = record_cfg(rec)
         seed = int(rec.meta["seed"])
+        ros_cars = [int(i) for i in rec.meta.get("ros_cars", [])]
         ev_tick = cfg.ev_max_speed / cfg.sim_hz
         env = ClearanceEnv(cfg)
         try:
-            ref = run_episode(env, LocalSquad(), seed=seed)
+            squad = RefSquad(cfg, ros_cars, policy_name)
+            ref = run_episode(env, squad, seed=seed)
             got = ros_outcome(rec)
             same = all(got[k] == ref[k] for k in ("success", "collision", "lane_changes"))
             tc_g, tc_r = got["t_clear"], ref["t_clear"]
@@ -508,22 +594,53 @@ def check_against_headless(g: Gate, records: List[Tuple[str, Record]]) -> None:
                 tc_ok = tc_g is None and tc_r is None
             else:
                 tc_ok = abs(float(tc_g) - float(tc_r)) <= cfg.dt + 1e-9
-            g.check(f"{label_of(rec)}: same success, collision and lane changes", same,
-                    f"ros success={got['success']} collision={got['collision']} yields={got['lane_changes']}; "
-                    f"headless success={ref['success']} collision={ref['collision']} yields={ref['lane_changes']}; "
-                    f"return ros={got['cum_reward']:.4f} headless={ref['cum_reward']:.4f}")
-            g.check(f"{label_of(rec)}: t_clear within one decision step ({cfg.dt:.2f} s)", tc_ok,
-                    f"ros {tc_g} vs headless {tc_r}")
-            worst, differing, first, compared = replay_headless_tick_by_tick(env, cfg, rec, seed)
-            g.check(f"{label_of(rec)}: EV s at the same tick within one EV tick ({ev_tick:.3f} m)",
-                    worst <= ev_tick,
-                    f"worst |d ev_s|={fmt(worst)} m; ticks with any state difference: {differing} of {compared}"
-                    + ("" if first is None else f", first after tick {first}"))
+            detail = (f"ros success={got['success']} collision={got['collision']} yields={got['lane_changes']}; "
+                      f"headless success={ref['success']} collision={ref['collision']} yields={ref['lane_changes']}; "
+                      f"return ros={got['cum_reward']:.4f} headless={ref['cum_reward']:.4f}")
+            if not radio_perfect:
+                print(f"    {label_of(rec)} (radio with loss/delay, outcome only): {detail}")
+            else:
+                g.check(f"{label_of(rec)}: same success, collision and lane changes", same, detail)
+                g.check(f"{label_of(rec)}: t_clear within one decision step ({cfg.dt:.2f} s)", tc_ok,
+                        f"ros {tc_g} vs headless {tc_r}")
+                worst, differing, first, compared = replay_headless_tick_by_tick(env, cfg, rec, seed, RefSquad(cfg, ros_cars, policy_name))
+                g.check(f"{label_of(rec)}: EV s at the same tick within one EV tick ({ev_tick:.3f} m)",
+                        worst <= ev_tick,
+                        f"worst |d ev_s|={fmt(worst)} m; ticks with any state difference: {differing} of {compared}"
+                        + ("" if first is None else f", first after tick {first}"))
+            if expect_fail:
+                g.check(f"{label_of(rec)}: check 10, this baseline must NOT clear the road through the full graph",
+                        not got["success"], f"success={got['success']} yields={got['lane_changes']}")
+                if policy_name == "speedup":
+                    K = cfg.num_cooperators
+                    capped = sum(int(rec.rows_applied[t][i, 1] < float(rec.wire[t][i - 1, 1]))
+                                 for t in range(len(rec.rows_applied)) for i in ros_cars)
+                    g.check(f"{label_of(rec)}: check 11, the plant capped the speed while in the EV lane",
+                            capped > 0, f"capped on {capped} ticks")
         finally:
             env.close()
 
 
-# -- the plant's speed rule -----------------------------------------------------------------------
+def check_gate_report(g: Gate, out_dir: str, gate_code: Optional[int]) -> None:
+    """Check 7 from the gate node's report."""
+    print("\nCheck 7: subscription hygiene (the gate node's report)")
+    path = os.path.join(out_dir, "gate.json")
+    if not os.path.exists(path):
+        g.check("the gate wrote its report", False, f"{path} missing (gate exit code {gate_code})")
+        return
+    with open(path) as f:
+        rep = json.load(f)
+    for car, r in rep["per_car"].items():
+        g.check(f"car {car}: subscriptions equal the allow-list", bool(r["ok"]),
+                "" if r["ok"] else f"extra {r['extra']}, missing {r['missing']}, seen {r['seen']}")
+    g.check("no car node listens to /caatc/ground_truth", not rep["ground_truth_listeners"], str(rep["ground_truth_listeners"]))
+    g.check("no car node hears another car's odometry", not rep["foreign_odom"], str(rep["foreign_odom"]))
+    g.check("the node set equals the declared set", bool(rep["node_set_ok"]),
+            f"last {rep['node_set_last']} vs expected {rep['node_set_expected']}")
+    g.check("the gate itself passed and exited 0", bool(rep["passed"]) and gate_code == 0,
+            f"passed={rep['passed']} exit={gate_code} samples={rep['samples']} episodes ended {rep['episodes_ended']}")
+
+
 def check_speed_rule(g: Gate, records: List[Tuple[str, Record]]) -> None:
     print("\nThe plant's rule on the wire values: steer as sent, speed = min(clip(wire), cap in the EV lane)")
     for _p, rec in records:
@@ -634,6 +751,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--stress", action="store_true",
                     help="the bridge starts first and re-publishes every 20 ms; the node arrives late, so the "
                          "re-publish and echo path is exercised, and the checks require that it was")
+    ap.add_argument("--fleet", action="store_true", help="M4.2: every cooperator is a ROS node (ignores --car)")
+    ap.add_argument("--v2v", action="store_true", help="M4.2: start the relay; car nodes hear only their digest")
+    ap.add_argument("--policy", default="local-ideal",
+                    help="the car nodes' policy: local-ideal | naive | speedup | numpy:<prefix>")
+    ap.add_argument("--gate", action="store_true", help="start the gate node and read its report (check 7)")
+    ap.add_argument("--expect-fail", action="store_true",
+                    help="checks 10/11: this is a baseline that must NOT clear the road (naive, speedup)")
+    ap.add_argument("--loss", type=float, default=0.0, help="relay: drop probability per broadcast (M4.4)")
+    ap.add_argument("--delay-ticks", type=int, default=0, help="relay: digest carries positions this many ticks old (M4.4)")
     a = ap.parse_args(argv)
     seeds: Optional[List[int]] = a.seeds
     domain = a.domain if a.domain is not None else 1 + os.getpid() % 100
@@ -642,7 +768,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         seeds = [0, 1]
     republish_period = 0.02 if a.stress else a.republish_period   # stress: re-publish every 20 ms while idle
     node_delay_s = STRESS_NODE_DELAY_S if a.stress else 0.0
-    print(f"=== M4.1 ROS 2 lockstep smoke: preset={a.preset} seeds={seeds if seeds is not None else 'from the records'} car={a.car} ===")
+    cfg0 = preset_config(a.preset)
+    cars = list(range(1, cfg0.num_cooperators + 1)) if a.fleet else [a.car]
+    fleet = FleetOptions(cars=cars, v2v=a.v2v, policy=a.policy, gate=a.gate, loss=a.loss, delay_ticks=a.delay_ticks)
+    radio_perfect = a.loss == 0.0 and a.delay_ticks == 0
+    if a.v2v and not a.fleet and a.gate:
+        pass    # a single car over the digest with the gate is fine too
+    print(f"=== ROS 2 lockstep smoke: preset={a.preset} seeds={seeds if seeds is not None else 'from the records'} "
+          f"cars={cars} policy={a.policy} radio={'digest' if a.v2v else 'raw odometry'}"
+          f"{f' loss={a.loss} delay={a.delay_ticks}' if not radio_perfect else ''}{' expect-fail' if a.expect_fail else ''} ===")
     print(f"interpreter {sys.executable}, numpy {np.__version__}, out-dir {a.out_dir}")
 
     run: Optional[RunResult] = None
@@ -658,7 +792,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                   file=sys.stderr)
             return 2
         prepare_out_dir(a.out_dir, a.keep, a.preset)
-        run = run_lockstep(a.preset, seeds, a.out_dir, a.car, a.timeout, domain, republish_period, node_delay_s)
+        run = run_lockstep(a.preset, seeds, a.out_dir, fleet, a.timeout, domain, republish_period, node_delay_s)
         if not run.ok:
             print_tails(run)
 
@@ -672,16 +806,24 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     g = Gate()
     check_run(g, run, records, seeds, a.preset)
-    logs = {"bridge": read_log(os.path.join(a.out_dir, "bridge.log")),
-            "car node": read_log(os.path.join(a.out_dir, "car_node.log"))}
+    log_paths = (run.logs if run is not None and run.logs else
+                 {os.path.splitext(os.path.basename(p))[0]: p for p in glob.glob(os.path.join(a.out_dir, "*.log"))})
+    logs = {name: read_log(path) for name, path in log_paths.items() if name != "gate"}
     check_bookkeeping_and_fingerprint(g, records, logs, stress=a.stress)
     if records:
         check_frame_agreement(g, records)
-        check_observation_agreement(g, records)
-        check_decision_and_controller_agreement(g, records)
+        if radio_perfect:
+            if a.v2v:
+                print("\n(check 4 below is check 12 too: the nodes built their observation from the digest alone)")
+            check_observation_agreement(g, records)
+            check_decision_and_controller_agreement(g, records, a.policy)
+        else:
+            print("\nradio with loss/delay: checks 4, 6 and the equality half of 5b do not apply; outcomes are printed")
         check_exact_replay(g, records)
-        check_against_headless(g, records)
+        check_against_headless(g, records, a.policy, a.expect_fail, radio_perfect)
         check_speed_rule(g, records)
+        if a.gate:
+            check_gate_report(g, a.out_dir, run.gate_code if run is not None else None)
     else:
         print("\nno records: checks 3, 4, 5a, 5b and the speed rule cannot run")
 

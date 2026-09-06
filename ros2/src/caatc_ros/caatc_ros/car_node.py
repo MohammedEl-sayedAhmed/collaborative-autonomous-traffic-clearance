@@ -3,10 +3,11 @@
 The shell does three things and nothing else:
 
 1. It listens to the bridge's state for one tick: ``/caatc/episode``, its own
-   ``/car{i}/odom`` and ``/car{i}/joint_states``, and ``/car{k}/odom`` for every other
-   car k (the EV included). That is the whole allow-list of M4.1; check 7 compares the
-   node's subscriptions against it, so nothing else is subscribed here (no ``/clock``,
-   no ``/caatc/ground_truth``).
+   ``/car{i}/odom`` and ``/car{i}/joint_states``, and either every other car's
+   ``/car{k}/odom`` (M4.1) or, with ``--v2v``, only its own digest ``/car{i}/v2v`` from
+   the relay (M4.2). That is the whole allow-list; check 7 compares the node's
+   subscriptions against it, so nothing else is subscribed here (no ``/clock``, no
+   ``/caatc/ground_truth``).
 2. When every one of those topics carries the same, newest stamp, the tick is complete.
    The stamp is an exact integer function of the tick (``caatc.ros_tick``), so the tick
    is ``stamp_tick - episode.start_tick`` and never a float. The Episode message is one
@@ -42,14 +43,14 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
-from caatc_msgs.msg import Decision, Episode
+from caatc_msgs.msg import Decision, Episode, V2VDigest
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 from sensor_msgs.msg import JointState
 
-from caatc.ros_node_core import EchoGate, NodeCore, ProtocolError
+from caatc.ros_node_core import EchoGate, Heard, NodeCore, ProtocolError, policy_from_name
 from caatc.scenario import preset_config
 
 from .msgs_io import sample_from_odometry, stamp_tick_or_breach
@@ -61,27 +62,35 @@ QOS_DEPTH = 10   # the default QoS profile: reliable, volatile, keep the last 10
 class CarNode(Node):
     """Agent ``car`` (1..K) as node ``/car{car}/agent``."""
 
-    def __init__(self, preset: str, car: int):
+    def __init__(self, preset: str, car: int, v2v: bool = False, policy: str = "local-ideal"):
         super().__init__("agent", namespace=f"/car{car}")
         self.preset = preset.lower()
         self.cfg = preset_config(self.preset)
         self.car = int(car)
-        self.core = NodeCore(self.cfg, self.car)      # rejects a car that is not a cooperator
+        self.v2v = bool(v2v)
+        self.policy_name = policy
+        self.core = NodeCore(self.cfg, self.car, policy_from_name(policy))   # rejects a car that is not a cooperator
         self.gate = EchoGate()                        # one answer per copy of the state
         self.own_odom = f"/car{self.car}/odom"
         self.own_joints = f"/car{self.car}/joint_states"
+        self.own_v2v = f"/car{self.car}/v2v"
 
         # latest[topic] = (stamp tick, message) for every subscribed topic
         self.latest: Dict[str, Tuple[int, object]] = {}
         # the RUNNING Episode messages seen, by where their tick 0 sits on the clock
         self.episodes: Dict[int, Episode] = {}
-        self.required: List[str] = [EPISODE_TOPIC, self.own_odom, self.own_joints] + [
-            f"/car{k}/odom" for k in range(self.cfg.num_agents) if k != self.car]
+        if self.v2v:
+            # M4.2: the four-topic allow-list; other cars are heard only through the digest
+            self.required: List[str] = [EPISODE_TOPIC, self.own_odom, self.own_joints, self.own_v2v]
+        else:
+            # M4.1: every other car's raw odometry is the radio
+            self.required = [EPISODE_TOPIC, self.own_odom, self.own_joints] + [
+                f"/car{k}/odom" for k in range(self.cfg.num_agents) if k != self.car]
 
         # the allow-list, and nothing else (use_sim_time stays false, so no /clock either)
         self.create_subscription(Episode, EPISODE_TOPIC, self._on_episode, QOS_DEPTH)
         for topic in self.required[1:]:
-            kind = JointState if topic == self.own_joints else Odometry
+            kind = JointState if topic == self.own_joints else V2VDigest if topic == self.own_v2v else Odometry
             self.create_subscription(kind, topic, functools.partial(self._on_stamped, topic), QOS_DEPTH)
         self.pub_drive = self.create_publisher(AckermannDriveStamped, f"/car{self.car}/drive", QOS_DEPTH)
         self.pub_decision = self.create_publisher(Decision, f"/car{self.car}/decision", QOS_DEPTH)
@@ -89,7 +98,8 @@ class CarNode(Node):
         log = self.get_logger()
         log.info(f"python {sys.executable}, numpy {np.__version__}")
         log.info(f"car {self.car} on preset '{self.preset}': {self.cfg.num_agents} cars, "
-                 f"{self.cfg.num_cooperators} cooperators, {self.cfg.substeps} ticks per decision")
+                 f"{self.cfg.num_cooperators} cooperators, {self.cfg.substeps} ticks per decision; "
+                 f"policy {self.policy_name}; radio = {'the V2V digest' if self.v2v else 'raw odometry (M4.1)'}")
         log.info("listening to: " + ", ".join(self.required))
 
     # -- incoming messages -----------------------------------------------------------
@@ -142,14 +152,23 @@ class CarNode(Node):
         episode = self.episodes[max(starts)]
         tick = newest - int(episode.start_tick)
 
-        samples = {k: sample_from_odometry(self.latest[f"/car{k}/odom"][1])
-                   for k in range(self.cfg.num_agents)}
         own_odom = self.latest[self.own_odom][1]
         joints = self.latest[self.own_joints][1]
         if len(joints.position) < 1:
             raise ProtocolError(f"{self.own_joints} at tick {tick} carries no steering angle")
 
-        out = self.core.on_tick(int(episode.episode), tick, samples, float(joints.position[0]))
+        if self.v2v:
+            digest = self.latest[self.own_v2v][1]
+            if int(digest.receiver) != self.car:
+                raise ProtocolError(f"{self.own_v2v} carries a digest for car {int(digest.receiver)}")
+            heard = [Heard(int(b.car), int(b.role), float(b.x), float(b.y), float(b.theta), float(b.v), int(b.tick))
+                     for b in digest.heard]
+            out = self.core.on_tick_digest(int(episode.episode), tick, sample_from_odometry(own_odom),
+                                           float(joints.position[0]), heard)
+        else:
+            samples = {k: sample_from_odometry(self.latest[f"/car{k}/odom"][1])
+                       for k in range(self.cfg.num_agents)}
+            out = self.core.on_tick(int(episode.episode), tick, samples, float(joints.position[0]))
         if not self.gate.allow(newest, out.fresh):
             return                                     # this copy of the state was answered already
 
@@ -186,6 +205,10 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     ap.add_argument("--preset", default="strict", choices=["easy", "hard", "strict"],
                     help="the same preset the bridge runs (default: strict)")
     ap.add_argument("--car", type=int, default=1, help="agent index i, 1..K (default: 1)")
+    ap.add_argument("--v2v", action="store_true",
+                    help="M4.2: hear other cars only through /car{i}/v2v, never their raw odometry")
+    ap.add_argument("--policy", default="local-ideal",
+                    help="local-ideal | naive | speedup | numpy:<prefix> (an exported actor)")
     return ap.parse_args(argv)
 
 
@@ -196,7 +219,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     node = None
     code = 0
     try:
-        node = CarNode(args.preset, args.car)
+        node = CarNode(args.preset, args.car, args.v2v, args.policy)
         rclpy.spin(node)                    # single-threaded: one callback at a time
     except ValueError as e:                 # a car index that is not a cooperator, and the like
         print(f"bad configuration: {e}", file=sys.stderr)

@@ -19,12 +19,15 @@ from typing import Callable, Dict, Optional, Tuple
 
 import numpy as np
 
-from .actions import apply_decision
+from .actions import SPEED_UP, STAY, apply_decision
 from .controllers import coop_lowlevel
 from .decentralized import LocalIdealCooperator
 from .frenet import CenterlineFrame
 from .obs_spec import feature_count, observation
 from .scenario import ScenarioConfig, centerline_xy, lane_of
+
+FAR_AWAY_S = -1.0e6      # a placeholder's position along the road: outside every gate, always
+ROLE_EV, ROLE_COOPERATOR, ROLE_OCCUPANT = 0, 1, 2
 
 
 class ProtocolError(RuntimeError):
@@ -38,6 +41,67 @@ class CarSample:
     y: float
     theta: float
     v: float
+
+
+@dataclass(frozen=True)
+class Heard:
+    """One broadcast as a receiver hears it (what ``caatc_msgs/Broadcast`` carries)."""
+    car: int
+    role: int
+    x: float
+    y: float
+    theta: float
+    v: float
+    tick: int           # when the sender measured it; older than the current tick under delay
+
+
+def role_of(cfg: ScenarioConfig, car: int) -> int:
+    if car == 0:
+        return ROLE_EV
+    return ROLE_COOPERATOR if car <= cfg.num_cooperators else ROLE_OCCUPANT
+
+
+def placeholder_entry(car: int) -> dict:
+    """A car the node did not hear: outside every gate, whatever the receiver's position.
+
+    Injected AFTER projection on purpose: a far (x, y) would project onto the end of the
+    road with a small distance along it and slip through a gate."""
+    return dict(i=car, x=float("nan"), y=float("nan"), theta=0.0, v=0.0, s=FAR_AWAY_S, d=0.0, lane=0)
+
+
+def cars_from_digest(cfg: ScenarioConfig, frame: CenterlineFrame, car: int, own: "CarSample",
+                     own_delta: float, heard) -> list:
+    """The full car list in agent order, from the node's own odometry and its digest.
+
+    The node's own entry gets ``theta`` and ``delta`` (the observation reads them for the
+    car itself only); every heard car gets ``s, d, v, lane``; every other car is a
+    placeholder. This is what ``obs_spec.observation(cfg, frame, car - 1, cars)`` reads.
+    """
+    cars = [placeholder_entry(i) for i in range(cfg.num_agents)]
+    s, d = frame.project(own.x, own.y)
+    cars[car] = dict(i=car, x=own.x, y=own.y, theta=own.theta, v=own.v, s=s, d=d,
+                     lane=lane_of(cfg, d), delta=float(own_delta))
+    for h in heard:
+        if h.car == car or not 0 <= h.car < cfg.num_agents:
+            raise ValueError(f"a digest for car {car} carries car {h.car}")
+        s, d = frame.project(h.x, h.y)
+        cars[h.car] = dict(i=h.car, x=h.x, y=h.y, theta=h.theta, v=h.v, s=s, d=d, lane=lane_of(cfg, d))
+    return cars
+
+
+def policy_from_name(name: str):
+    """The per-car policy a node runs, by name: ``local-ideal``, ``naive``, ``speedup``, or
+    ``numpy:<prefix>`` (an exported actor, loaded with numpy alone)."""
+    if name == "local-ideal":
+        return LocalIdealCooperator()
+    if name == "naive":
+        return lambda obs, cfg: STAY
+    if name == "speedup":
+        return lambda obs, cfg: SPEED_UP
+    if name.startswith("numpy:"):
+        from .policy_export import NumpyActor
+        return NumpyActor.load(name[len("numpy:"):])
+    raise ValueError(f"unknown policy {name!r} (local-ideal | naive | speedup | numpy:<prefix>)")
 
 
 @dataclass(frozen=True)
@@ -91,7 +155,31 @@ class NodeCore:
     # -- the tick ----------------------------------------------------------------
     def on_tick(self, episode: int, tick: int, samples: Dict[int, CarSample],
                 own_delta: float) -> NodeOutput:
-        """Handle the state of one tick. Idempotent for a repeated ``(episode, tick)``."""
+        """M4.1: the state of one tick as every car's odometry. Idempotent for a repeated tick."""
+        cfg = self.cfg
+        if len(samples) != cfg.num_agents or set(samples) != set(range(cfg.num_agents)):
+            raise ProtocolError(f"need every car 0..{cfg.num_agents - 1} for tick {tick}, got {sorted(samples)}")
+
+        def build() -> list:
+            cars = []
+            for i in range(cfg.num_agents):
+                smp = samples[i]
+                s, d = self.frame.project(smp.x, smp.y)
+                entry = dict(i=i, x=smp.x, y=smp.y, theta=smp.theta, v=smp.v, s=s, d=d, lane=lane_of(cfg, d))
+                if i == self.car:
+                    entry["delta"] = float(own_delta)
+                cars.append(entry)
+            return cars
+
+        return self._handle(episode, tick, build)
+
+    def on_tick_digest(self, episode: int, tick: int, own: CarSample, own_delta: float, heard) -> NodeOutput:
+        """M4.2: the state of one tick as the node's own odometry plus its V2V digest."""
+        return self._handle(episode, tick,
+                            lambda: cars_from_digest(self.cfg, self.frame, self.car, own, own_delta, heard))
+
+    def _handle(self, episode: int, tick: int, build_cars) -> NodeOutput:
+        """The tick itself: bookkeeping, then decide (at a boundary) and drive."""
         key = (int(episode), int(tick))
         if key in self._cache:
             out = self._cache[key]
@@ -109,18 +197,7 @@ class NodeCore:
             raise ProtocolError(f"tick {tick} after tick {self._last_tick}: a tick was skipped or repeated out of order")
 
         cfg = self.cfg
-        if len(samples) != cfg.num_agents or set(samples) != set(range(cfg.num_agents)):
-            raise ProtocolError(f"need every car 0..{cfg.num_agents - 1} for tick {tick}, got {sorted(samples)}")
-
-        # the cars list in agent order, exactly the shape per_coop_obs expects
-        cars = []
-        for i in range(cfg.num_agents):
-            smp = samples[i]
-            s, d = self.frame.project(smp.x, smp.y)
-            entry = dict(i=i, x=smp.x, y=smp.y, theta=smp.theta, v=smp.v, s=s, d=d, lane=lane_of(cfg, d))
-            if i == self.car:
-                entry["delta"] = float(own_delta)
-            cars.append(entry)
+        cars = build_cars()
         me = cars[self.car]
 
         decision = None

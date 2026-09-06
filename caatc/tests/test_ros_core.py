@@ -476,3 +476,82 @@ def test_recorded_decisions_are_the_reference_policys():
                     assert int(rec.decisions[b][j]) == int(policy(obs, cfg)), (name, b, j)
         finally:
             bridge.close()
+
+
+# -- M4.2 in-process: the whole fleet over the digest ------------------------------------------------
+@pytest.mark.parametrize("name", list(PRESETS))
+def test_the_fleet_over_the_digest_equals_the_headless_run_exactly(name):
+    """All K cars as nodes, each seeing only its own odometry and its digest, no wire:
+    bit for bit the headless LocalSquad run, every car, every tick."""
+    cfg = PRESETS[name]()
+    K = cfg.num_cooperators
+    for seed in (0, 1):
+        ref = headless(cfg, seed)
+        bridge = run_lockstep_inprocess(cfg, seed, ros_cars=list(range(1, K + 1)), emulate_wire=False, v2v=True)
+        try:
+            got = bridge.episode_metrics()
+            assert got["cum_reward"] == ref["cum_reward"] and got["lane_changes"] == ref["lane_changes"], (name, seed)
+            worst, differing = compare_tick_by_tick(cfg, seed, bridge.record)
+            assert differing == 0, (name, seed, differing)
+            # check 12 on the record: every node observation equals the bridge's snapshot
+            for b in range(len(bridge.record.boundary_ticks)):
+                assert np.array_equal(bridge.record.node_obs[b], bridge.record.obs_t[b]), (name, seed, b)
+        finally:
+            bridge.close()
+
+
+def test_the_fleet_on_the_exported_policy_matches_its_headless_run_and_the_published_result():
+    """K nodes running the numpy actor over the digest, wire emulated: the same outcomes as the
+    headless run of that actor, and the published STRICT result (success, 3 yields)."""
+    from caatc.ros_node_core import policy_from_name
+
+    cfg = strict_preset()
+    K = cfg.num_cooperators
+    actor = policy_from_name("numpy:caatc/policies/ippo-strict")
+    for seed in (0, 1, 2):
+        env = ClearanceEnv(cfg)
+        try:
+            ref = run_episode(env, LocalSquad(agent=actor), seed=seed)
+        finally:
+            env.close()
+        bridge = run_lockstep_inprocess(cfg, seed, ros_cars=list(range(1, K + 1)), node_policy=actor,
+                                        emulate_wire=True, v2v=True)
+        try:
+            got = bridge.episode_metrics()
+            assert (got["success"], got["collision"], got["lane_changes"]) == (ref["success"], ref["collision"], ref["lane_changes"]), seed
+            assert abs(got["t_clear"] - ref["t_clear"]) <= cfg.dt + 1e-9, seed
+            assert got["success"] and got["lane_changes"] == 3, ("the published STRICT result", seed, got)
+        finally:
+            bridge.close()
+
+
+def test_policy_from_name():
+    from caatc.ros_node_core import policy_from_name
+    from caatc.actions import SPEED_UP, STAY
+
+    cfg = easy_preset()
+    obs = np.zeros(26, np.float32)
+    assert policy_from_name("naive")(obs, cfg) == STAY
+    assert policy_from_name("speedup")(obs, cfg) == SPEED_UP
+    assert policy_from_name("local-ideal")(obs, cfg) == STAY          # nothing heard: hold the lane
+    assert 0 <= policy_from_name("numpy:caatc/policies/ippo-strict")(obs, cfg) <= 4
+    with pytest.raises(ValueError):
+        policy_from_name("random")
+
+
+def test_speedup_nodes_on_strict_are_capped_through_the_digest():
+    """check 10/11 in-process: a fleet that only speeds up cannot clear STRICT, and the plant caps it."""
+    from caatc.ros_node_core import policy_from_name
+
+    cfg = strict_preset()
+    K = cfg.num_cooperators
+    bridge = run_lockstep_inprocess(cfg, 0, ros_cars=list(range(1, K + 1)), node_policy=policy_from_name("speedup"), v2v=True)
+    try:
+        m = bridge.episode_metrics()
+        assert not m["success"] and m["lane_changes"] == 0
+        rec = bridge.record
+        capped = sum(int(rec.rows_applied[t][i, 1] < float(rec.wire[t][i - 1, 1]))
+                     for t in range(len(rec.rows_applied)) for i in range(1, K + 1))
+        assert capped > 0
+    finally:
+        bridge.close()
