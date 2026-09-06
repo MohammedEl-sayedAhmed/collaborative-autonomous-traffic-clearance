@@ -56,8 +56,12 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
     the exported numpy policy (`caatc/policies/ippo-strict`), a gate node for the allow-list, and
     `./run.sh ros-gate` running every check (fleet on strict/hard/easy, naive and speedup must fail on
     strict, the stress run). **M4.3 done:** rosbag replay (check 8), the RViz scene (`ros-demo` +
-    `ros-view 42`), `ros-video`, and a dashboard run. The M4.1 and M4.2 contracts are at the end of the
-    design doc.
+    `ros-view 42`), `ros-video`, and a dashboard run. **M4.4 done:** the bridge's `--async` mode
+    (nobody waits; check 13 measures command age, held ticks and the real-time factor: at real time
+    about 7% of ticks reuse a 10 ms old command and the outcome is unchanged, `./run.sh ros-async`) and
+    the loss/delay sweep (`./run.sh ros-sweep`): on STRICT the policy yields even with a blind radio;
+    on HARD a lost or 500 ms old broadcast makes an occupied lane look empty and the cars collide. The
+    tables and the M4.1 / M4.2 contracts are in the design doc. Left: M4.5, the docs pass and the PR.
 - Big decisions and their reasons are in **`docs/adr/`**. Ideas for later are in **`ROADMAP.md`**.
 
 ## Repository map
@@ -101,8 +105,9 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
   `./run.sh ros-smoke --preset easy|hard|strict --seeds 0,1 [--stress]` (one car) ·
   `./run.sh ros-fleet` (all K cars, relay, learned policy, gate, bag, dashboard) · `./run.sh ros-gate`
   (every check) · `./run.sh ros-video <record.npz>` · `./run.sh ros-view-build` + `./run.sh ros-demo`
-  and `./run.sh ros-view 42` (RViz) · `./run.sh export-policy <zip> --out caatc/policies/<name>` ·
-  `./run.sh ros-shell`. Nodes always start as `python3 -m caatc_ros.<node>` inside the image, never
+  and `./run.sh ros-view 42` (RViz) · `./run.sh ros-async` (check 13, nobody waits) ·
+  `./run.sh ros-sweep [--preset hard --seeds 0,1,2,3,4 --losses 0,0.5,1 --delays 0,10,50]` (loss and
+  delay tables) · `./run.sh export-policy <zip> --out caatc/policies/<name>` · `./run.sh ros-shell`. Nodes always start as `python3 -m caatc_ros.<node>` inside the image, never
   via `ros2 run`.
 - **Dashboard:** `./run.sh dashboard` (reads `saved_variables/runs/`) · `./run.sh dashboard-demo`
 - **Thesis:** `./run.sh thesis`
@@ -138,11 +143,11 @@ Work in order: (1) ~~Python 3.12 and re-check every published table~~ done; (2) 
 with the headroom check run inside it~~ done (IDENTICAL); (4) ~~one car node in lockstep~~ done
 (0 differing ticks); (5) ~~the full fleet, the V2V relay, the exported numpy policy and the remaining
 checks~~ done (`./run.sh ros-gate` all green); (6) ~~the RViz view, a rosbag and a dashboard run~~ done;
-(7) the async mode with measured delay and loss (the relay already takes `--loss` and `--delay-ticks`);
-(8) the final docs pass, then the PR to master.
+(7) ~~the async mode with measured delay and loss~~ done (`ros-async`, `ros-sweep`; the tables are in
+the design doc); (8) the final docs pass, then the PR to master.
 
-Also open: a richer V2V model (train against drops and delay, not just measure them) and the bigger
-scenarios in the roadmap. `docs/upstream-candidates.md` holds four `f1tenth_gym` findings; **nothing has
+Also open: a richer V2V model (train against drops and delay, not just measure them; M4.4 showed why:
+on HARD a lost broadcast reads as an empty lane) and the bigger scenarios in the roadmap. `docs/upstream-candidates.md` holds four `f1tenth_gym` findings; **nothing has
 been sent upstream**, that is a separate decision.
 
 Always run `./run.sh clearance-smoke` before training, and use `--preset strict` when the claim is about

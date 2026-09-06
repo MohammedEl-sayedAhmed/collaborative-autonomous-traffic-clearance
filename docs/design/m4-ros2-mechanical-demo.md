@@ -26,8 +26,13 @@ four-topic allow-list, and the naive and speeding baselines fail on STRICT throu
 **M4.3 is done too:** a
 rosbag of only the allow-listed topics replays into fresh car nodes with identical decisions and
 commands (check 8), the scene is published for RViz (`./run.sh ros-demo` + `./run.sh ros-view 42`),
-a record draws as a video (`./run.sh ros-video`), and the run lands on the dashboard. Next is M4.4:
-the async mode and the loss and delay columns.
+a record draws as a video (`./run.sh ros-video`), and the run lands on the dashboard. **M4.4 is
+done:** the bridge can run without waiting for anyone (`./run.sh ros-async`): at real time the outcome
+is still the headless one, with about one tick in fourteen reusing a 10 ms old command. The loss and
+delay tables are measured (`./run.sh ros-sweep`), and they split the two presets: on STRICT the learned
+policy yields without using the radio at all (the outcome is the same even when no car hears anything),
+while on HARD a lost or 500 ms old broadcast makes an occupied lane look empty and the cars collide.
+The numbers are in the M4.4 results section at the end. What is left is M4.5: the docs pass and the PR.
 
 M3 proved that each car can decide alone, using a Python wrapper (`LocalOnlyView`) and a pipe harness
 (`proc_fleet.py`). M4's job is to make the same property hold when the transport is **real**: DDS
@@ -229,7 +234,8 @@ ones in bold:
   the proof and the in-process squad for speed.
 - **The scenario is still the scenario:** check 10 on STRICT.
 - **Columns headless runs cannot fill:** the float32 wire's effect on `t_clear` and outcomes; and
-  `t_clear` / success against transport delay ∈ {0, 20, 50 ms} and loss p ∈ {0, 0.1, 0.3}.
+  `t_clear` / success against transport delay ∈ {0, 20, 50 ms} and loss p ∈ {0, 0.1, 0.3} (measured
+  over a wider grid in the end: loss 0 to 1, delay 0 to 500 ms; see the M4.4 results).
 - **Artifacts:** mp4s of `naive`, `speedup` and `ippo-strict` on the *same* graph; a bag; a dashboard
   run laid over the headless curve.
 
@@ -294,8 +300,12 @@ required); RViz being slow on the integrated GPU.
    the bridge's `--pace` runs at real time; `./run.sh ros-demo` and `./run.sh ros-view 42` show it.
    `caatc/ros_video.py` draws a record as an mp4 without ROS; `--dashboard` writes the run for the
    dashboard. `./run.sh ros-gate` includes the bag check and passes.
-5. **M4.4, the two measured variants** (about 1 day). The float32 wire's effect; the async delay and
-   loss sweeps; check 13. M4's only new result tables.
+5. ~~**M4.4, the two measured variants**~~ done. The float32 wire changed nothing (0 differing ticks,
+   part of the M4.1 result). The bridge's `--async` mode advances on a wall clock without waiting and
+   holds a late car's previous command for one tick; check 13 measures command age, held ticks and the
+   real-time factor (`./run.sh ros-async`). `ros_sweep.py` runs the lockstep fleet through the relay
+   with message loss or delay and writes a results table (`./run.sh ros-sweep`). The results, M4's only
+   new tables, are in the M4.4 section at the end of this document.
 6. **M4.5, the record** (about 1 day). This doc, ADR 0011, README / CLAUDE / ROADMAP / `run.sh`.
 
 **Honest estimate: 8 to 10 focused working days**, no training compute. The tempting estimate is about
@@ -617,6 +627,8 @@ so a run can be replayed) and `--delay-ticks d` (a digest at tick t carries the 
 t - d; `Broadcast.tick` says how old each one is; the first d ticks carry nothing). Under loss or
 delay the node's observation legitimately differs from the simulator's, so check 4 runs with
 `p = 0, d = 0` only; the loss and delay columns are M4.4's measured results, not faithfulness checks.
+`p = 1` is allowed and means a blind radio: no car ever hears any other car. The measured tables are in
+the M4.4 results section at the end of this document.
 
 ### The learned policy
 
@@ -668,3 +680,93 @@ for the result.
 | RADIO | `/v2v_relay` | every car's odom, Episode | a real radio |
 | SIMULATOR + REFEREE | `/clearance_bridge` | the K drive and decision topics | a 3D simulator or hardware (M5) |
 | GATE | `/ros_gate` | the graph, and the topics it audits | nothing |
+
+## M4.4 results: nobody waits, and an imperfect radio
+
+Everything before this point is a faithfulness check: with a perfect radio, and a bridge that waits for
+every car's command, the ROS run equals the headless run. M4.4 asks two questions the headless runs
+cannot answer. The answers are measurements, not pass/fail checks: nothing here is required to match
+anything, and every number is reported as it came out.
+
+### 1. The async run: the bridge does not wait (check 13)
+
+`./run.sh ros-async` runs the strict fleet on the exported policy with `--async --pace 1.0`. The bridge
+advances the physics every 10 ms of wall time whether or not a car's new command has arrived. When a
+command is late, the bridge keeps that car's previous command for one more tick and counts it. A car that
+has never answered is held at zero steering and the cooperators' cruise speed. Two seeds, one episode each:
+
+| seed | real-time factor | simulated / wall | mean command age | oldest command | ticks on a held command | outcome |
+|---:|---:|---|---:|---:|---:|---|
+| 0 | 1.00 | 6.09 s / 6.09 s | 0.09 ticks | 1 tick | 8.6% (157 of 1,827) | success, `t_clear` 6.10 s, 3 yields, return 102.1 |
+| 1 | 1.00 | 6.10 s / 6.11 s | 0.06 ticks | 1 tick | 6.2% (114 of 1,830) | success, `t_clear` 6.10 s, 3 yields, return 102.2 |
+
+The lockstep run of the same seeds gives success, `t_clear` 6.10 s, 3 yields and return 102.2. So at
+real time, with nobody waiting, about one tick in fourteen ran on a command that was 10 ms old, no
+command was ever older than that, and the outcome did not move. Checks 3, 4 and 6 are skipped in this
+mode on purpose: they compare a car's numbers with the bridge's state *at the same tick*, and in async a
+command applied at a tick may have been decided one tick earlier. They pass in lockstep, which is where
+they belong. Check 5b (the same outcome as the headless run, within the declared tolerance) still runs,
+and passes.
+
+### 2. Loss and delay through the relay
+
+`./run.sh ros-sweep` runs the fleet in lockstep (so timing plays no part) with the relay dropping each
+broadcast with probability `loss`, or handing every broadcast over `delay` ticks late (one tick is
+10 ms). The policy is `ippo-strict` on every row. The first row of each table, a perfect radio, is the
+reference the other rows are compared with. `loss = 1` is a blind radio: no car ever hears any other
+car. The loss really is applied: at `loss = 0.5` on STRICT the relay dropped 2,687 broadcasts in one
+episode and the cars' observations differed from the simulator's at all 61 decision boundaries.
+
+**STRICT**, seeds 0 and 1 (`saved_variables/ros/sweep/results.md`, plus the blind row):
+
+| loss | delay (ticks) | success | collisions | mean `t_clear` | EV speed | yields | return |
+|-----:|--------------:|--------:|-----------:|---------------:|---------:|-------:|-------:|
+| 0 | 0 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0.1 | 0 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0.3 | 0 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0.5 | 0 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0.7 | 0 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0.9 | 0 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 1 (blind) | 0 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0 | 2 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0 | 5 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0 | 10 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0 | 20 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+| 0 | 50 | 100% | 0% | 6.10 s | 7.29 m/s | 3.0 | 102.2 |
+
+**HARD**, seeds 0 to 4 (`saved_variables/ros/sweep-hard/results.md`):
+
+| loss | delay (ticks) | success | collisions | mean `t_clear` | EV speed | yields | return |
+|-----:|--------------:|--------:|-----------:|---------------:|---------:|-------:|-------:|
+| 0 | 0 | 100% | 0% | 6.14 s | 7.32 m/s | 3.0 | 102.3 |
+| 0.3 | 0 | 40% | 60% | 6.10 s | 7.37 m/s | 3.0 | 8.9 |
+| 0.5 | 0 | 20% | 80% | 6.00 s | 7.36 m/s | 3.0 | -23.6 |
+| 0.9 | 0 | 40% | 60% | 6.15 s | 7.33 m/s | 3.0 | 10.1 |
+| 1 (blind) | 0 | 0% | 100% | — | 4.47 m/s | 3.0 | -95.1 |
+| 0 | 10 | 100% | 0% | 6.14 s | 7.29 m/s | 3.0 | 102.2 |
+| 0 | 20 | 100% | 0% | 6.14 s | 7.29 m/s | 3.0 | 102.2 |
+| 0 | 50 | 0% | 100% | — | 4.45 m/s | 3.0 | -95.2 |
+
+(`t_clear` is averaged over the successful runs of a row, so a row with few successes has a noisy value.)
+
+### What the two tables say
+
+- **On STRICT the radio does not matter to this policy.** Perfect radio, 90% loss, 500 ms delay, or a
+  blind radio: the same 6.10 s, the same three yields, the same return. STRICT caps a cooperator's speed
+  while it is in the EV's lane, so the best move is to leave that lane at once, before the EV is anywhere
+  near, and that is what the policy learned. It does not wait to hear the EV. This matches M3's
+  observation that on STRICT the yields happen in the first second. It also means the STRICT rows say
+  nothing about how robust the cooperation is to a bad radio; they say the cooperation there is
+  unconditional.
+- **On HARD the radio carries the decision.** One side lane is occupied, and a car must hear that
+  occupant to know which side is free. When a broadcast is lost, the car node fills the slot with a
+  far-away placeholder (the M4.2 rule that makes the observation exact under a perfect radio), and the
+  side-lane flag then reads "empty". The car merges into the occupied lane: at 30% loss, 60% of the runs
+  end in a collision; blind, every run does. A delay of 100 or 200 ms is harmless (the occupant's
+  position is at most 1.5 m stale); 500 ms is not (3.5 m stale at 7 m/s, and every run collides). The
+  loss rows are not monotone (40%, 20%, 40% success at 0.3, 0.5, 0.9) because each is five seeds, and
+  each seed is one coin flip of whether the occupant was heard at the boundary that mattered.
+- **The lesson for a real radio** (roadmap item 20): "not heard" must not mean "not there". A deployed
+  node should keep the last position it heard for a short while, treat a lane with no recent broadcast as
+  not clear, and the policy should be trained with loss and delay in the loop. M4 measures this and does
+  not fix it, because a fix changes the observation the published numbers were trained on.

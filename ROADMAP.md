@@ -65,7 +65,10 @@ Legend: ⚡ quick win · 🚀 bigger bet · 🐞 known bug (see [docs/legacy/KNO
 19. ⚡ Fix the **range check that is not applied everywhere** (car footprints are written regardless
     of `comm_range`).
 20. 🚀 Model a real radio: lost packets, delay, limited bandwidth, and cars joining and leaving beyond
-    the hard limit of 6 cars.
+    the hard limit of 6 cars. M4.4 measured why this matters (design doc, M4.4 results): on HARD a lost
+    or 500 ms old broadcast makes the occupied lane look empty and the cars collide, while on STRICT the
+    policy never needed the radio. A real fix keeps the last heard position for a while, treats silence
+    as "not clear", and trains with loss and delay in the loop.
 
 ---
 
@@ -98,7 +101,8 @@ Each item here supports one project change above.
 > **Where the v1.0.0 line stands (2026-09):** items 1, 2, 3, 4, 6, 15 and 17 are done in `caatc/` on
 > `f1tenth_gym`. M1 built the Gymnasium environment with a multi-car action, a shared reward and the
 > "is the side lane free" features. M2 trained it with PPO. M3 made each car decide alone (item 6) and
-> added the range check (item 19) and message-loss evaluation (part of 20). M4 is moving it onto
-> ROS 2 (item 15). Still open: intention sharing (7), generated scenarios and a benchmark set (10),
+> added the range check (item 19) and message-loss evaluation (part of 20). M4 moved it onto ROS 2
+> (item 15) and measured message loss and delay through a relay on the real bus (the measuring half
+> of 20). Still open: intention sharing (7), generated scenarios and a benchmark set (10),
 > CI (16), a realistic radio (20), and most of the dashboard items. The old headless simulator that
 > tried this on the ROS 1 line is at tag `v0.3.0`, `tools/rl_harness/train.py`.

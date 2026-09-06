@@ -26,7 +26,7 @@ ROS 2.
 
 | Line | State |
 |------|-------|
-| **v1.0.0**, ROS 2 / Python 3 (this `master`) | **In progress.** Done: **M0** (the simulator runs), **M1** (the `ClearanceEnv` scenario, baselines and a headroom check), **M2** (one central learned controller matches the hand-written ideal), **M3** (each car decides on its own and still matches). Now: **M4** (a ROS 2 Jazzy demo). |
+| **v1.0.0**, ROS 2 / Python 3 (this `master`) | **In progress.** Done: **M0** (the simulator runs), **M1** (the `ClearanceEnv` scenario, baselines and a headroom check), **M2** (one central learned controller matches the hand-written ideal), **M3** (each car decides on its own and still matches). **M4** (the same cars as separate programs on ROS 2 Jazzy, checked against the plain run) is built and measured; the last docs pass is under way. |
 | **v0.x**, ROS 1 Kinetic / Python 2 (legacy) | Frozen at tags `v0.1.0` to `v0.3.0`. Run `git checkout v0.3.0` for the full Gazebo project. Removed from `master` in M1 ([ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md)). Its docs are in [`docs/legacy/`](docs/legacy/). |
 
 Every big decision, and why we made it, is written down as a short **Architecture Decision Record**
@@ -207,7 +207,7 @@ The view draws the road as a straight strip (the lanes are offsets from the road
 is the natural way to look at it). Each of our cars is coloured by whether it has left the EV lane, and
 the EV's state is shown as **BLOCKED, held at convoy speed** or **CLEAR, sprinting**.
 
-## M4: running it on ROS 2 (in progress)
+## M4: running it on ROS 2
 
 So far everything runs inside one Python program. M4 moves the cars onto **ROS 2**, the standard
 robotics middleware, so each car becomes its **own program on a real message bus**. That is the same
@@ -236,7 +236,14 @@ numpy (no torch on the robot), and publishes a steering and speed command every 
 waits for every car's command before it moves the physics by one tick, so timing cannot blur the
 comparison. A gate node watches the live graph and checks that no car listens to anything but its own
 four topics. On all three presets, the ROS run and the plain run **agree on every tick**; the cars that
-should fail (never moving, or only speeding up) do fail through the full graph. Try it:
+should fail (never moving, or only speeding up) do fail through the full graph.
+
+The bridge can also run **without waiting** for anyone (`ros-async`): at real time, about one tick in
+fourteen reuses a 10 ms old command, and the outcome is still the plain one. And the relay can **drop or
+delay** messages (`ros-sweep`). That gave M4's one new result: on STRICT the learned policy yields even
+with a blind radio, because leaving the EV's lane at once is the best move there anyway; on HARD the cars
+must hear the car in the side lane, and a lost or 500 ms old message makes a busy lane look empty, so they
+collide. The tables are in the design doc. Try it:
 
 ```bash
 ./run.sh ros-build                          # once: ros:jazzy + our package + our messages
@@ -247,6 +254,8 @@ should fail (never moving, or only speeding up) do fail through the full graph. 
 ./run.sh ros-video saved_variables/ros/fleet/strict-seed0-ep0.npz   # a ROS run as a top-down mp4
 ./run.sh ros-view-build && ./run.sh ros-demo      # watch it: the fleet at real time ...
 ./run.sh ros-view 42                              # ... and RViz beside it (second terminal)
+./run.sh ros-async                          # nobody waits: real-time factor, command age and held ticks measured
+./run.sh ros-sweep --preset hard --seeds 0,1,2,3,4   # message loss and delay through the relay -> a results table
 ```
 
 A recorded run can also be **replayed from a rosbag** into a fresh car node with nothing but the
