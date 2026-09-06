@@ -21,13 +21,19 @@ What happens, in order:
 
    * check 1 (lite): the bridge exited 0, a record exists per seed, none is aborted,
      and the record's config equals ``preset_config(preset)`` (configuration identity);
-   * check 2 (lite): ``stale_commands == 0`` everywhere (duplicates are allowed), and
-     both logs show the venv interpreter and this image's numpy;
+   * check 2 (lite): ``stale_commands == 0`` everywhere, duplicates within one echo per
+     re-publish, and both logs show the venv interpreter and this image's numpy; with
+     ``--stress`` the bridge re-publishes on every idle spin and the run must show that
+     the echo path was exercised;
    * check 3: frame agreement, the node's ``s, d, lane, tangent`` at every boundary
      equal the bridge's state (exact; lane equal);
    * check 4: observation agreement, the node's 26 numbers against the bridge's
      boundary snapshot: exact everywhere but ``heading_err``, which may differ by at
      most one float32 unit; the largest difference per element is printed;
+   * check 6: every decision equals the reference policy on the observation it was
+     taken from, and every drive command equals the reference controller on the car's
+     own targets (steer within the wire tolerance, speed exactly); without this a node
+     that clears the lane to the other side would still pass;
    * check 5a: the record replays exactly through a fresh ``ClearanceEnv``;
    * check 5b: the ROS run against a headless run of the same seed: same outcome,
      ``t_clear`` within one decision step, the EV's ``s`` at the same tick within one EV
@@ -59,7 +65,9 @@ import numpy as np
 from caatc.clearance_env import ClearanceEnv
 from caatc.clearance_eval import preset_config, run_episode
 from caatc.clearance_smoke import Gate
-from caatc.decentralized import LocalSquad
+from caatc.actions import apply_decision
+from caatc.controllers import coop_lowlevel
+from caatc.decentralized import LocalIdealCooperator, LocalSquad
 from caatc.frenet import CenterlineFrame
 from caatc.obs_spec import feature_count, obs_layout
 from caatc.ros_bridge_core import Record, cars_to_array, record_glob, record_metrics, replay
@@ -70,6 +78,7 @@ MARKER = ".caatc-ros-smoke"               # written into an out-dir this smoke c
 DEFAULT_OUT_DIR = "/src/saved_variables/ros/smoke"
 DEFAULT_TIMEOUT_S = 600.0
 NODE_HEAD_START_S = 1.0                   # let the node come up before the bridge publishes tick 0
+STRESS_NODE_DELAY_S = 12.0                # stress: the node arrives after the bridge published tick 0 (first reset ~9 s)
 STOP_GRACE_S = 10.0                       # SIGTERM, then SIGKILL after this long
 LOG_TAIL_LINES = 40
 
@@ -104,11 +113,15 @@ def _stop(proc: subprocess.Popen, name: str) -> Optional[int]:
 
 
 def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, car: int,
-                 timeout_s: float, domain: int) -> RunResult:
+                 timeout_s: float, domain: int, republish_period: Optional[float] = None,
+                 node_delay_s: float = 0.0) -> RunResult:
     """Start the car node, then the bridge; wait for the bridge; stop the node.
 
     Both children get their own DDS domain (``ROS_DOMAIN_ID``), so two smoke runs on one
-    machine, or a node left over from an earlier run, cannot hear each other."""
+    machine, or a node left over from an earlier run, cannot hear each other.
+    With ``node_delay_s`` > 0 the order flips: the bridge starts first and the node only
+    that many seconds later, so tick 0 can only be answered from a re-publish. That is
+    the stress mode: it exercises discovery, the re-publish and the echo path."""
     env = dict(os.environ, PYTHONUNBUFFERED="1", ROS_DOMAIN_ID=str(domain))    # complete, ordered logs
     node_log = os.path.join(out_dir, "car_node.log")
     bridge_log = os.path.join(out_dir, "bridge.log")
@@ -116,6 +129,8 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, car: int,
     bridge_cmd = [sys.executable, "-m", "caatc_ros.clearance_bridge", "--preset", preset,
                   "--seeds", ",".join(str(s) for s in seeds), "--ros-cars", str(car),
                   "--out-dir", out_dir]
+    if republish_period is not None:
+        bridge_cmd += ["--republish-period", str(republish_period)]
     print(f"Starting the lockstep run (ROS_DOMAIN_ID={domain}):")
     print("  car node: " + " ".join(node_cmd))
     print("  bridge:   " + " ".join(bridge_cmd))
@@ -126,16 +141,22 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, car: int,
     node_exited_early: Optional[int] = None
     timed_out = False
     with open(node_log, "wb") as nf, open(bridge_log, "wb") as bf:
+        if node_delay_s > 0:
+            # stress mode: the bridge first, so the node can only join through a re-publish
+            print(f"  stress: the bridge starts first, the car node {node_delay_s:.0f} s later")
+            bridge = subprocess.Popen(bridge_cmd, stdout=bf, stderr=subprocess.STDOUT, env=env)
+            time.sleep(node_delay_s)
         node = subprocess.Popen(node_cmd, stdout=nf, stderr=subprocess.STDOUT, env=env)
         try:
             time.sleep(NODE_HEAD_START_S)
-            if node.poll() is not None:
+            if node.poll() is not None and bridge is None:
                 # no point in starting a bridge that would wait 30 s for a dead node
                 node_exited_early = node.returncode
                 print(f"  the car node exited during start-up with code {node_exited_early}; "
                       "the bridge is not started")
             else:
-                bridge = subprocess.Popen(bridge_cmd, stdout=bf, stderr=subprocess.STDOUT, env=env)
+                if bridge is None:
+                    bridge = subprocess.Popen(bridge_cmd, stdout=bf, stderr=subprocess.STDOUT, env=env)
                 deadline = t0 + timeout_s
                 while bridge.poll() is None:
                     if node_exited_early is None and node.poll() is not None:
@@ -258,7 +279,7 @@ def check_run(g: Gate, run: Optional[RunResult], records: List[Tuple[str, Record
 
 # -- check 2 (lite): bookkeeping and the interpreter fingerprint -------------------------------
 def check_bookkeeping_and_fingerprint(g: Gate, records: List[Tuple[str, Record]],
-                                      logs: Dict[str, str]) -> None:
+                                      logs: Dict[str, str], stress: bool = False) -> None:
     print("\nCheck 2 (lite): lockstep bookkeeping and the interpreter fingerprint")
     if records:
         stale = [rec.meta.get("stale_commands") for _p, rec in records]
@@ -266,6 +287,17 @@ def check_bookkeeping_and_fingerprint(g: Gate, records: List[Tuple[str, Record]]
         repub = [int(sum(rec.republishes)) for _p, rec in records]
         g.check("stale_commands == 0 in every record", all(s == 0 for s in stale),
                 f"stale={stale} duplicate={dup} (allowed) republished ticks={repub}")
+        # each re-publish may earn one Drive echo, plus one Decision echo at a boundary,
+        # and nothing more (a node answering every arriving message would blow this)
+        for _p, rec in records:
+            boundaries = set(rec.boundary_ticks)
+            bound = sum(int(r) * (2 if t in boundaries else 1) for t, r in enumerate(rec.republishes))
+            g.check(f"{label_of(rec)}: duplicates within one echo per re-publish",
+                    int(rec.meta.get("duplicate_commands", 0)) <= bound,
+                    f"duplicates={rec.meta.get('duplicate_commands')} bound={bound}")
+        if stress:
+            g.check("stress: the re-publish path was exercised", all(r > 0 for r in repub) and all(d > 0 for d in dup),
+                    f"republished ticks={repub} duplicates={dup}")
 
     want_np = np.__version__
     g.check(f"this orchestrator runs {VENV_PYTHON}", sys.executable == VENV_PYTHON,
@@ -365,6 +397,47 @@ def check_observation_agreement(g: Gate, records: List[Tuple[str, Record]]) -> N
             "" if exact_bad == 0 else f"{exact_bad} of {n} observations differ")
     g.check("heading_err within one float32 unit", n > 0 and he_bad == 0,
             f"worst {he_worst_units:.2f} units, max |diff|={fmt(float(per_elem[he][0]))}")
+
+
+# -- check 6: the decisions and the drive commands are the reference's ------------------------------
+def check_decision_and_controller_agreement(g: Gate, records: List[Tuple[str, Record]]) -> None:
+    """Without this, a node that clears the EV's lane to the OTHER side, or steers from the
+    previous tick's samples, would still pass checks 3, 4, 5a and 5b."""
+    print("\nCheck 6: every decision is the reference policy's, every drive command the reference controller's")
+    policy = LocalIdealCooperator()
+    for _p, rec in records:
+        cfg = record_cfg(rec)
+        frame = CenterlineFrame(*centerline_xy(cfg))
+        K = cfg.num_cooperators
+        ros_cars = [int(i) for i in rec.meta.get("ros_cars", [])]
+        mism = n = 0
+        for b in range(len(rec.boundary_ticks)):
+            for j in range(K):
+                obs = rec.node_obs[b][j] if (j + 1) in ros_cars else rec.obs_t[b][j]
+                n += 1
+                mism += int(int(rec.decisions[b][j]) != int(policy(obs, cfg)))
+        g.check(f"{label_of(rec)}: every decision equals LocalIdealCooperator on the observation it was taken from",
+                n > 0 and mism == 0, f"{mism} of {n} differ")
+        boundary_of = {t: b for b, t in enumerate(rec.boundary_ticks)}
+        T = len(rec.rows_applied)
+        for i in ros_cars:
+            lane, speed = cfg.ev_lane, cfg.coop_speed
+            worst = 0.0
+            bad_steer = bad_speed = 0
+            for t in range(T):
+                if t in boundary_of:
+                    lane, speed, _ = apply_decision(cfg, lane, speed, int(rec.decisions[boundary_of[t]][i - 1]))
+                st = rec.cars_state[t][i]
+                steer, spd = coop_lowlevel(cfg, frame, float(st[5]), float(st[6]), float(st[2]), float(st[3]), lane, speed)
+                w = rec.wire[t][i - 1]
+                d = abs(float(w[0]) - steer)
+                worst = max(worst, d)
+                bad_steer += int(d > abs(steer) * 6e-8 + 1e-9)
+                bad_speed += int(np.float32(spd) != w[1])
+            g.check(f"{label_of(rec)}: car {i} steer within the wire tolerance of coop_lowlevel on its own targets",
+                    T > 0 and bad_steer == 0, f"{bad_steer} of {T} ticks off; worst |wire - steer|={fmt(worst)}")
+            g.check(f"{label_of(rec)}: car {i} speed equals float32(coop_lowlevel speed) on every tick",
+                    T > 0 and bad_speed == 0, f"{bad_speed} of {T} ticks off")
 
 
 # -- check 5a: the exact replay -------------------------------------------------------------------
@@ -556,12 +629,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="skip the processes; run the checks on the records already in --out-dir")
     ap.add_argument("--domain", type=int, default=None,
                     help="ROS_DOMAIN_ID for this run (default: one derived from the process id)")
+    ap.add_argument("--republish-period", type=float, default=None,
+                    help="passed to the bridge; the contract's default is 0.2 s")
+    ap.add_argument("--stress", action="store_true",
+                    help="the bridge starts first and re-publishes every 20 ms; the node arrives late, so the "
+                         "re-publish and echo path is exercised, and the checks require that it was")
     a = ap.parse_args(argv)
     seeds: Optional[List[int]] = a.seeds
     domain = a.domain if a.domain is not None else 1 + os.getpid() % 100
 
     if seeds is None and not a.checks_only:
         seeds = [0, 1]
+    republish_period = 0.02 if a.stress else a.republish_period   # stress: re-publish every 20 ms while idle
+    node_delay_s = STRESS_NODE_DELAY_S if a.stress else 0.0
     print(f"=== M4.1 ROS 2 lockstep smoke: preset={a.preset} seeds={seeds if seeds is not None else 'from the records'} car={a.car} ===")
     print(f"interpreter {sys.executable}, numpy {np.__version__}, out-dir {a.out_dir}")
 
@@ -578,7 +658,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                   file=sys.stderr)
             return 2
         prepare_out_dir(a.out_dir, a.keep, a.preset)
-        run = run_lockstep(a.preset, seeds, a.out_dir, a.car, a.timeout, domain)
+        run = run_lockstep(a.preset, seeds, a.out_dir, a.car, a.timeout, domain, republish_period, node_delay_s)
         if not run.ok:
             print_tails(run)
 
@@ -594,10 +674,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     check_run(g, run, records, seeds, a.preset)
     logs = {"bridge": read_log(os.path.join(a.out_dir, "bridge.log")),
             "car node": read_log(os.path.join(a.out_dir, "car_node.log"))}
-    check_bookkeeping_and_fingerprint(g, records, logs)
+    check_bookkeeping_and_fingerprint(g, records, logs, stress=a.stress)
     if records:
         check_frame_agreement(g, records)
         check_observation_agreement(g, records)
+        check_decision_and_controller_agreement(g, records)
         check_exact_replay(g, records)
         check_against_headless(g, records)
         check_speed_rule(g, records)

@@ -103,7 +103,7 @@ class Record:
 
     def save(self, path: str) -> None:
         """Write the record; an episode aborted before anything happened still saves."""
-        N = self.cars_state[0].shape[0]
+        N = int(self.meta.get("num_agents") or self.cars_state[0].shape[0])
         K = int(self.meta["cfg"]["num_cooperators"])
         F = int(self.meta["feature_count"])
 
@@ -115,7 +115,7 @@ class Record:
 
         np.savez_compressed(
             path, meta=json.dumps(self.meta),
-            cars_state=np.stack(self.cars_state), rows_applied=stk(self.rows_applied, (0, N, 2)),
+            cars_state=stk(self.cars_state, (0, N, len(STATE_FIELDS))), rows_applied=stk(self.rows_applied, (0, N, 2)),
             wire=stk(self.wire, (0, K, 2), np.float32), speed_before_rule=stk(self.speed_before_rule, (0, K)),
             done=st(self.done, bool), republishes=st(self.republishes, np.int64),
             boundary_ticks=st(self.boundary_ticks, np.int64), decisions=stk(self.decisions, (0, K), np.int64),
@@ -175,8 +175,9 @@ class BridgeCore:
         self.total_duplicate_commands = 0    # whole process
         self.total_stale_commands = 0
         self._republishes_this_tick = 0
-        self._prev_key: Optional[Tuple[int, int]] = None   # the tick that just finished ...
-        self._prev_republished = False                      # ... and whether it was re-published
+        # every (episode, tick) that was re-published within the last decision step: an
+        # echo of one of those may still be on its way, and it is a duplicate, not a fault
+        self._republished_keys: Dict[Tuple[int, int], bool] = {}
         self._episode_starts: List[Tuple[int, int]] = []    # (start_tick, episode), in order
         self.wire_dtype = wire_dtype
         self._pending_drive: Dict[int, Tuple[np.floating, np.floating]] = {}
@@ -192,18 +193,20 @@ class BridgeCore:
         self.tick = 0
         self._pending_drive.clear(); self._pending_decision.clear()
         self._republishes_this_tick = 0
-        # _prev_key / _prev_republished are kept: a late echo of the previous episode's
-        # re-published final tick may still arrive, and it is a duplicate, not a fault
+        # _republished_keys is kept: a late echo of the previous episode's re-published
+        # final ticks may still arrive, and it is a duplicate, not a fault
         self.duplicate_commands = 0
         self.stale_commands = 0
         self._episode_over = False
         self._episode_starts.append((self.start_tick, self.episode))
-        self.env.reset(seed=seed)
+        # the record exists before the reset: the first reset costs seconds of numba
+        # compilation, and a signal in that window must still leave a record behind
         self.record = Record(meta=dict(
             preset=cfg.preset, cfg=asdict(cfg), seed=int(seed), episode=self.episode,
             start_tick=self.start_tick, ros_cars=list(self.ros_cars), versions=self.versions,
-            aborted=False, abort_reason="", feature_count=feature_count(cfg),
+            aborted=False, abort_reason="", feature_count=feature_count(cfg), num_agents=cfg.num_agents,
         ))
+        self.env.reset(seed=seed)
         self.record.cars_state.append(cars_to_array(self.env.cars))
         self._snapshot()
         return self.state()
@@ -247,10 +250,11 @@ class BridgeCore:
         if car not in self.ros_cars:
             raise ProtocolError(f"a command for car {car}, which is not ROS-driven ({self.ros_cars})")
         key, now = (int(episode), int(tick)), (self.episode, self.tick)
-        if key == self._prev_key and self._prev_republished:
-            # an echo of a re-published tick that arrived after the tick moved on (even
-            # after the episode ended, or the next one began): the node did what the
-            # contract asks; it is a duplicate, not a fault
+        if key in self._republished_keys:
+            # an echo of a recently re-published tick that arrived after the tick moved
+            # on (even after the episode ended, or the next one began): the node did what
+            # the contract asks; it is a duplicate, not a fault. Drive and Decision are
+            # different writers, so such an echo can trail the next tick's command.
             return self._count_duplicate()
         if self._episode_over:
             # the final state was published with ENDED; nothing should answer it, and
@@ -368,9 +372,15 @@ class BridgeCore:
                 self.abort("the seam ended a step early without ending the episode")
                 raise ProtocolError("the seam ended a step early without ending the episode")
 
-        self._prev_key = (self.episode, self.tick)
-        self._prev_republished = self._republishes_this_tick > 0
+        if self._republishes_this_tick > 0:
+            self._republished_keys[(self.episode, self.tick)] = True
         self.tick += 1
+        # keep the window to one decision step; anything older is genuinely stale
+        for k in [k for k in self._republished_keys
+                  if k[0] < self.episode - 1
+                  or (k[0] == self.episode and k[1] < self.tick - cfg.substeps)
+                  or (k[0] == self.episode - 1 and self.tick > cfg.substeps)]:
+            del self._republished_keys[k]
         self._pending_drive.clear(); self._pending_decision.clear()
         self._republishes_this_tick = 0
         over = bool(terminated or truncated)
@@ -513,7 +523,7 @@ def run_lockstep_inprocess(cfg: ScenarioConfig, seed: int, ros_cars: Sequence[in
     bridge.node_intents = []            # per tick: {car: (steer_intent, speed_intent)}, for the tests
     while True:
         intents = {}
-        for _ in range(1 + republish_every):
+        for copy in range(1 + republish_every):
             for i, node in nodes.items():
                 samples = {}
                 for c in st.cars:
@@ -528,7 +538,7 @@ def run_lockstep_inprocess(cfg: ScenarioConfig, seed: int, ros_cars: Sequence[in
                 else:
                     bridge.offer_drive(i, st.episode, st.tick, out.steer_intent, out.speed_intent)
                 intents[i] = (out.steer_intent, out.speed_intent)
-            if republish_every:
+            if copy:
                 bridge.note_republish()
         bridge.node_intents.append(intents)
         res = bridge.advance()

@@ -27,6 +27,35 @@ def headless(cfg, seed):
         env.close()
 
 
+def compare_tick_by_tick(cfg, seed, rec):
+    """Drive a headless LocalSquad episode beside the record; return (worst |d ev_s|, ticks differing)."""
+    from caatc.ros_bridge_core import cars_to_array
+
+    env = ClearanceEnv(cfg)
+    try:
+        env.reset(seed=seed)
+        squad = LocalSquad()
+        worst, differing, t = 0.0, 0, 0
+        while t < len(rec.rows_applied):
+            if env.substeps_done == 0:
+                act = squad(env)
+                for j in range(cfg.num_cooperators):
+                    env.set_decision(j, act[j])
+            done = env.substep(env.joint_action_rows())
+            t += 1
+            got = cars_to_array(env.cars)
+            worst = max(worst, abs(rec.cars_state[t][0, 5] - got[0, 5]))
+            if not np.array_equal(rec.cars_state[t], got):
+                differing += 1
+            if done or env.substeps_done == cfg.substeps:
+                _, _, te, tr, _ = env.commit_step()
+                if te or tr:
+                    break
+        return worst, differing
+    finally:
+        env.close()
+
+
 @pytest.mark.parametrize("name", list(PRESETS))
 def test_without_the_wire_the_protocol_is_exact(name):
     """float64 straight through: the lockstep run must equal the headless run to the bit."""
@@ -40,6 +69,8 @@ def test_without_the_wire_the_protocol_is_exact(name):
                 assert got[k] == ref[k], (name, seed, k, got[k], ref[k])
             assert got["cum_reward"] == ref["cum_reward"], (name, seed)
             assert got["ev_mean_speed"] == ref["ev_mean_speed"], (name, seed)
+            worst, differing = compare_tick_by_tick(cfg, seed, bridge.record)
+            assert differing == 0 and worst == 0.0, (name, seed, differing, worst)   # every car, every tick
         finally:
             bridge.close()
 
@@ -57,34 +88,9 @@ def test_with_the_wire_outcomes_hold_within_the_declared_tolerances(name):
             assert (got["success"], got["collision"], got["lane_changes"]) == (ref["success"], ref["collision"], ref["lane_changes"])
             assert got["t_clear"] == ref["t_clear"] or abs(got["t_clear"] - ref["t_clear"]) <= cfg.dt + 1e-9
             # EV s per tick against a headless replay of the same seed, tick by tick
-            env = ClearanceEnv(cfg)
-            try:
-                env.reset(seed=seed)
-                squad = LocalSquad()
-                rec = bridge.record
-                t = 0
-                worst = 0.0
-                differing = 0
-                while t < len(rec.rows_applied):
-                    if env.substeps_done == 0:
-                        act = squad(env)
-                        for j in range(cfg.num_cooperators):
-                            env.set_decision(j, act[j])
-                    done = env.substep(env.joint_action_rows())
-                    t += 1
-                    ev_s_ros = rec.cars_state[t][0, 5]
-                    ev_s_head = env.cars[0]["s"]
-                    worst = max(worst, abs(ev_s_ros - ev_s_head))
-                    if not np.array_equal(rec.cars_state[t], np.array([[float(c[k]) for k in ("x", "y", "theta", "v", "delta", "s", "d", "lane")] for c in env.cars])):
-                        differing += 1
-                    if done or env.substeps_done == cfg.substeps:
-                        _, _, te, tr, _ = env.commit_step()
-                        if te or tr:
-                            break
-                assert worst <= ev_tick, (name, seed, worst)
-                print(f"\n{name} seed {seed}: ticks with any state difference = {differing}, worst |d ev_s| = {worst:.3e}")
-            finally:
-                env.close()
+            worst, differing = compare_tick_by_tick(cfg, seed, bridge.record)
+            assert worst <= ev_tick, (name, seed, worst)
+            print(f"\n{name} seed {seed}: ticks with any state difference = {differing}, worst |d ev_s| = {worst:.3e}")
         finally:
             bridge.close()
 
@@ -149,9 +155,10 @@ def test_duplicates_are_harmless_and_counted_apart_from_stale():
     b = run_lockstep_inprocess(cfg, 0, ros_cars=[1], republish_every=2)
     try:
         assert a.episode_metrics() == b.episode_metrics()
-        assert a.duplicate_commands == 0 and a.stale_commands == 0
-        assert b.duplicate_commands > 0 and b.stale_commands == 0
-        assert sum(b.record.republishes) > 0
+        assert a.duplicate_commands == 0 and a.stale_commands == 0 and sum(a.record.republishes) == 0
+        T, B = len(b.record.rows_applied), len(b.record.boundary_ticks)
+        assert sum(b.record.republishes) == 2 * T                       # two extra copies per tick
+        assert b.duplicate_commands == 2 * (T + B) and b.stale_commands == 0   # one Drive (+ one Decision) echo per copy
     finally:
         a.close(); b.close()
 
@@ -256,14 +263,21 @@ def test_two_episodes_back_to_back_reset_the_node_and_keep_time_monotone():
     bridge = BridgeCore(cfg, ros_cars=[1], wire_dtype=np.float64)
     nodes = {1: NodeCore(cfg, 1)}
     try:
+        from caatc.ros_tick import EPISODE_GAP_TICKS, EPOCH_TICKS
+
+        starts = []
         for seed in (0, 1):
             run_lockstep_inprocess(cfg, seed, ros_cars=[1], emulate_wire=False, bridge=bridge, nodes=nodes)
             ref = headless(cfg, seed)
             got = bridge.episode_metrics()
             assert got["cum_reward"] == ref["cum_reward"] and got["lane_changes"] == ref["lane_changes"], seed
+            m = bridge.record.meta
+            assert m["end_tick"] == m["start_tick"] + len(bridge.record.rows_applied)
+            starts.append((m["start_tick"], m["end_tick"]))
         assert bridge.episode == 1
-        assert bridge.start_tick > bridge.record.meta["start_tick"] - 1  # second episode started later on the clock
-        assert bridge.record.meta["start_tick"] >= 100 + 1  # after the first episode's end + gap
+        assert starts[0][0] == EPOCH_TICKS
+        assert starts[1][0] == starts[0][1] + EPISODE_GAP_TICKS      # strictly after the first episode ended
+        assert bridge.start_tick == starts[1][0]
     finally:
         bridge.close()
 
@@ -282,12 +296,13 @@ def test_counters_are_per_episode_and_late_echoes_are_duplicates_not_stale():
         bridge.offer_drive(1, 0, 1, 0.0, 2.0)
         bridge.advance()                              # tick 1 was NOT re-published
         assert bridge.offer_drive(1, 0, 1, 0.0, 2.0) == "stale"       # a late copy is genuinely stale
-        assert bridge.offer_drive(1, 0, 0, 0.0, 2.0) == "stale"       # two ticks ago: stale
-        assert (bridge.duplicate_commands, bridge.stale_commands) == (1, 2)
+        assert bridge.offer_drive(1, 0, 0, 0.0, 2.0) == "duplicate"   # re-published within the last step: a duplicate
+        assert bridge.offer_decision(1, 0, 0, STAY, obs, 0.0, 0.0, 1, 0.0) == "duplicate"   # a Decision echo too
+        assert (bridge.duplicate_commands, bridge.stale_commands) == (3, 1)
         # a new episode starts its counters from zero; the process totals keep counting
         bridge.begin_episode(1)
         assert (bridge.duplicate_commands, bridge.stale_commands) == (0, 0)
-        assert (bridge.total_duplicate_commands, bridge.total_stale_commands) == (1, 2)
+        assert (bridge.total_duplicate_commands, bridge.total_stale_commands) == (3, 1)
     finally:
         bridge.close()
 
@@ -327,7 +342,8 @@ def test_a_late_echo_of_a_republished_final_tick_is_a_duplicate_even_across_epis
         assert bridge.offer_drive(1, ep, last, 0.0, 2.0) == "duplicate"          # after ENDED
         bridge.begin_episode(1)
         assert bridge.offer_drive(1, ep, last, 0.0, 2.0) == "duplicate"          # after the next episode began
-        assert bridge.offer_drive(1, ep, last - 1, 0.0, 2.0) == "stale"          # two ticks back: stale
+        assert bridge.offer_drive(1, ep, last - 1, 0.0, 2.0) == "duplicate"      # within the window (every tick was re-published)
+        assert bridge.offer_drive(1, ep, last - cfg.substeps - 1, 0.0, 2.0) == "stale"   # older than one decision step
         # the shell's way in: a stamp -> (episode, tick), across episodes
         start0 = bridge._episode_starts[0][0]
         assert bridge.key_for_stamp_tick(start0 + last) == (ep, last)
@@ -416,3 +432,47 @@ def test_echo_gate_answers_once_per_republish():
     assert g.allow(100, fresh=False) and not g.allow(100, fresh=False)
     g.own_odom(101)                                  # the next tick clears the old bookkeeping
     assert g.allow(101, fresh=True) and not g.allow(101, fresh=False)
+
+
+
+def test_a_signal_during_the_first_reset_still_leaves_a_record(tmp_path):
+    """The bridge's first reset takes seconds; a Ctrl-C then must not lose the record."""
+    cfg = easy_preset()
+    bridge = BridgeCore(cfg, ros_cars=[1])
+    try:
+        real_reset = bridge.env.reset
+
+        def interrupted(*a, **k):
+            raise KeyboardInterrupt
+
+        bridge.env.reset = interrupted
+        with pytest.raises(KeyboardInterrupt):
+            bridge.begin_episode(0)
+        assert bridge.record is not None and bridge.record.meta["episode"] == bridge.episode == 0
+        bridge.abort("stopped by a signal (KeyboardInterrupt)")
+        path = str(tmp_path / "interrupted.npz")
+        bridge.record.save(path)                      # no state yet, still a valid record
+        rec = Record.load(path)
+        assert rec.meta["aborted"] and rec.meta["abort_tick"] == 0 and len(rec.cars_state) == 0
+        bridge.env.reset = real_reset
+    finally:
+        bridge.close()
+
+
+def test_recorded_decisions_are_the_reference_policys():
+    """check 6 in-process: every recorded decision equals LocalIdealCooperator on the
+    observation it was taken from, for the ROS car (node_obs) and the fallback cars (obs_t)."""
+    from caatc.decentralized import LocalIdealCooperator
+
+    policy = LocalIdealCooperator()
+    for name in PRESETS:
+        cfg = PRESETS[name]()
+        bridge = run_lockstep_inprocess(cfg, 1, ros_cars=[1])
+        try:
+            rec = bridge.record
+            for b in range(len(rec.boundary_ticks)):
+                for j in range(cfg.num_cooperators):
+                    obs = rec.node_obs[b][j] if j == 0 else rec.obs_t[b][j]
+                    assert int(rec.decisions[b][j]) == int(policy(obs, cfg)), (name, b, j)
+        finally:
+            bridge.close()

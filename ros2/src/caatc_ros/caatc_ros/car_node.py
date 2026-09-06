@@ -193,17 +193,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     argv = sys.argv if argv is None else argv
     args = parse_args(remove_ros_args(argv)[1:])
     rclpy.init(args=argv)
-    node = CarNode(args.preset, args.car)
+    node = None
     code = 0
     try:
+        node = CarNode(args.preset, args.car)
         rclpy.spin(node)                    # single-threaded: one callback at a time
+    except ValueError as e:                 # a car index that is not a cooperator, and the like
+        print(f"bad configuration: {e}", file=sys.stderr)
+        code = 3
     except ProtocolError as e:
         node.get_logger().error(f"the lockstep contract was broken, stopping: {e}")
         code = 2
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        if node is not None:
+            node.destroy_node()
         rclpy.try_shutdown()
     return code
 

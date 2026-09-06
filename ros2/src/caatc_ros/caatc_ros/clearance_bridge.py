@@ -26,8 +26,8 @@ Start it inside the ``caatc-ros`` image::
 
 Every setting is also a ROS parameter (``--ros-args -p preset:=hard``); a ROS override
 wins over the command line. Exit codes: 0 when every seed finished; 2 when a run was
-aborted (a timeout waiting for a car, or a protocol breach), in which case the partial
-record is written with ``aborted: true`` and the reason.
+aborted (a timeout waiting for a car, a protocol breach, or a signal), in which case the
+partial record is written with ``aborted: true`` and the reason; 3 for a bad setting.
 """
 from __future__ import annotations
 
@@ -46,6 +46,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from caatc_msgs.msg import Decision, Episode
 from nav_msgs.msg import Odometry
 from rcl_interfaces.msg import ParameterDescriptor
+from rclpy.exceptions import InvalidParameterTypeException
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
@@ -68,6 +69,7 @@ except ImportError:                    # pragma: no cover
 
 EXIT_OK = 0
 EXIT_ABORTED = 2
+EXIT_BAD_ARGS = 3
 SPIN_TIMEOUT_S = 0.005        # how long one spin_once waits for a callback
 REPUBLISH_GRACE_S = 0.02      # after a re-publish: let the node's cached echoes land before advancing
 PRESETS = ("easy", "hard", "strict")
@@ -159,9 +161,11 @@ class ClearanceBridge(Node):
         self.declare_parameter("seeds", ",".join(map(str, cli.seeds)), loose)
         self.declare_parameter("ros_cars", ",".join(map(str, cli.ros_cars)), loose)
         self.declare_parameter("out_dir", cli.out_dir)
-        self.declare_parameter("per_tick_timeout", float(cli.per_tick_timeout))
-        self.declare_parameter("first_tick_timeout", float(cli.first_tick_timeout))
-        self.declare_parameter("republish_period", float(cli.republish_period))
+        # dynamically typed too: an override such as -p per_tick_timeout:=7 arrives as an
+        # INTEGER and would be refused by a statically DOUBLE parameter
+        self.declare_parameter("per_tick_timeout", float(cli.per_tick_timeout), loose)
+        self.declare_parameter("first_tick_timeout", float(cli.first_tick_timeout), loose)
+        self.declare_parameter("republish_period", float(cli.republish_period), loose)
         p = lambda name: self.get_parameter(name).value  # noqa: E731
         preset = str(p("preset")).lower()
         if preset not in PRESETS:
@@ -288,6 +292,9 @@ def run_episode(bridge: ClearanceBridge, seed: int,
         # is numpy only and still writes; the rclpy logger may not, so print instead
         reason = f"stopped by a signal ({type(e).__name__})"
         core.abort(reason)
+        if core.record is None or core.record.meta.get("episode") != core.episode:
+            print(f"ABORTED before episode {core.episode} had a record: {reason}", file=sys.stderr)
+            return EXIT_ABORTED
         path = bridge.save_record()
         print(f"ABORTED episode {core.episode} at tick {core.tick}: {reason} -> {path}", file=sys.stderr)
         return EXIT_ABORTED
@@ -367,7 +374,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rclpy.init(args=argv)
     bridge = None
     try:
-        bridge = ClearanceBridge(parse_settings(remove_ros_args(argv)[1:]))
+        try:
+            bridge = ClearanceBridge(parse_settings(remove_ros_args(argv)[1:]))
+        except (InvalidParameterTypeException, ValueError) as e:
+            print(f"bad configuration: {e}", file=sys.stderr)
+            return EXIT_BAD_ARGS
         return run_bridge(bridge)
     except (KeyboardInterrupt, ExternalShutdownException):
         return EXIT_ABORTED
