@@ -13,12 +13,14 @@ results and ROS 2 for the mechanical proof, on a stack that is not end-of-life. 
 [ADR 0011](../adr/0011-m4-ros2-mechanical-demo.md), which replaces only the "via `f1tenth_gym_ros`
 (1–2 cars)" part of ADR 0005.
 
-**Where it stands (2026-09-05):** M4.0 and M4.1 are done. The images run Python 3.12, all 17
-published rows were re-checked, the seam in `ClearanceEnv` is proven to change nothing, and the
-`caatc-ros` image is a numerical twin (check 1: **IDENTICAL**). **One car now drives over ROS 2 in
+**Where it stands (2026-09-06):** M4.0 and M4.1 are done and reviewed. The images run Python 3.12, all
+17 published rows were re-checked, the seam in `ClearanceEnv` is proven to change nothing, and the
+`caatc-ros` image is a numerical twin (check 1: **IDENTICAL**). **One car drives over ROS 2 in
 lockstep** (`./run.sh ros-smoke`): on strict, easy and hard the ROS run differs from the headless run
 on **zero ticks**, the replay is exact, the node's 26 numbers equal the bridge's exactly at every
-boundary, and no command was ever stale. Next is M4.2: all K cars, the V2V relay, the exported policy.
+boundary, its decisions and drive commands are the reference's, and no command was ever stale. M4.2 is
+under way: the relay, the gate and the exported policy exist and are checked (see the M4.2 contract at
+the end); wiring them into the car node and the smoke is next.
 
 M3 proved that each car can decide alone, using a Python wrapper (`LocalOnlyView`) and a pipe harness
 (`proc_fleet.py`). M4's job is to make the same property hold when the transport is **real**: DDS
@@ -625,8 +627,20 @@ observations it picks the same action every time (`test_policy_export.py`).
 
 ### Records
 
-The relay writes one record per episode too: per tick, for every receiver, the set of cars heard and
-the drops. The bridge's record is unchanged, except that `ros_cars` now lists all K.
+The relay writes one file per episode too (`relay-<preset>-seed<seed>-ep<n>.json`): its settings and
+every drop it made, so a lossy run can be replayed. The bridge's record is unchanged, except that
+`ros_cars` now lists all K.
+
+### Where M4.2 stands
+
+Done: the relay's brain and the node-side digest rule (`caatc/ros_v2v.py`), with the in-process proof
+that the observation built from a digest equals the simulator's to the bit on all three presets; the
+exported numpy actor (`caatc/policy_export.py`, `caatc/policies/`), which picks the same action as the
+torch model on all 10,000 real observations tried; the relay node (`v2v_relay.py`: 1,824 digests over
+one episode, every one equal to `RelayCore` on the bridge's recorded positions) and the gate node
+(`ros_gate.py`, check 7), both checked on a live graph. Still to do: the car node reading its digest
+instead of the raw odometry and taking `--policy`; all K cars over ROS; the smoke's fleet mode with the
+relay, the gate and checks 6, 7, 10, 11 and 12.
 
 ### Node roles, restated
 
