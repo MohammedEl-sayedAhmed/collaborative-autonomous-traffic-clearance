@@ -32,7 +32,7 @@ is still the headless one, with about one tick in fourteen reusing a 10 ms old c
 delay tables are measured (`./run.sh ros-sweep`), and they split the two presets: on STRICT the learned
 policy yields without using the radio at all (the outcome is the same even when no car hears anything),
 while on HARD a lost or 500 ms old broadcast makes an occupied lane look empty and the cars collide.
-The numbers are in the M4.4 results section at the end. What is left is M4.5: the docs pass and the PR.
+The numbers are in the M4.4 results section at the end. What is left is the PR to master.
 
 M3 proved that each car can decide alone, using a Python wrapper (`LocalOnlyView`) and a pipe harness
 (`proc_fleet.py`). M4's job is to make the same property hold when the transport is **real**: DDS
@@ -311,6 +311,8 @@ required); RViz being slow on the integrated GPU.
 **Honest estimate: 8 to 10 focused working days**, no training compute. The tempting estimate is about
 5.5, which is the sum of the parts. It ignores that this is the repo's *first* ROS 2 code (colcon in a
 volume, DDS in Docker, simulated time, launch files) and that the 14 checks are about 40% of the work.
+(What happened: the design was accepted on 2026-09-04 and M4.4 was done on 2026-09-06, in long
+sessions. The checks and the two rounds of review on the contracts were about half of the work.)
 
 ## Risks
 

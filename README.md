@@ -270,7 +270,7 @@ things instead, each with a check that fails loudly if it is not true:
 3. no car program can see anything it should not. We publish the full ground truth on purpose and then
    check that **no car is subscribed to it**.
 
-Full plan: [`docs/design/m4-ros2-mechanical-demo.md`](docs/design/m4-ros2-mechanical-demo.md) and
+Full plan, contracts and results: [`docs/design/m4-ros2-mechanical-demo.md`](docs/design/m4-ros2-mechanical-demo.md) and
 [ADR 0011](docs/adr/0011-m4-ros2-mechanical-demo.md).
 
 ## Training dashboard
@@ -359,7 +359,7 @@ collaborative-autonomous-traffic-clearance/
 | [design/m3-decentralized-execution.md](docs/design/m3-decentralized-execution.md) | The M3 design, its checks, and the measured results |
 | [adr/0009](docs/adr/0009-decentralized-execution-ippo.md) | Why M3 uses one shared per-car policy (IPPO) |
 | [adr/0010](docs/adr/0010-strict-preset-removes-the-convoying-substitution.md) | Why the STRICT preset exists: speeding up must not count as cooperation |
-| [design/m4-ros2-mechanical-demo.md](docs/design/m4-ros2-mechanical-demo.md) | The M4 ROS 2 demo plan and its checks |
+| [design/m4-ros2-mechanical-demo.md](docs/design/m4-ros2-mechanical-demo.md) | The M4 ROS 2 demo: plan, contracts, checks and the measured results |
 | [adr/0011](docs/adr/0011-m4-ros2-mechanical-demo.md), [adr/0012](docs/adr/0012-target-ros2-jazzy-not-humble.md) | Why M4 is built as one simulator plus K car nodes, and why on Jazzy |
 | [DASHBOARD.md](docs/DASHBOARD.md) | The live training dashboard: stream metrics, compare runs across code changes |
 | [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | A plain guide to reading the dashboard (RL, episode, epsilon…) |

@@ -1,6 +1,6 @@
 # 0011. M4: the ROS 2 Jazzy demo, one simulator plus K car nodes
 
-- **Status:** accepted
+- **Status:** accepted; built (M4.0 to M4.4 done on 2026-09-06, see Outcome below)
 - **Date:** 2026-09-04
 - **Deciders:** Mohammed El-sayed Ahmed
 - **Supersedes:** only the part of [ADR 0005](0005-phase-migration-gym-first.md) that said the demo
@@ -126,3 +126,36 @@ extra work, and to depend on nothing end-of-life. Two of the three go against wh
   bridge clause is replaced. The four seam calls on `ClearanceEnv` are the only simulator interface in
   M4; a separate `Plant` protocol with a second implementation (3D, hardware) would be M5, with its own
   ADR, checks and re-measuring budget.
+
+## Outcome (2026-09-06)
+
+Everything the decision asked for was built, and the checks say what the plan hoped they would say:
+
+- **The simulator did not change.** `step()` is the four seam calls, and golden traces recorded before
+  the seam replay bit for bit (2,998 steps). The `caatc-ros` image on Jazzy replays them bit for bit too
+  (check 1: IDENTICAL), so the M1 to M3 tables carry over as they are.
+- **One car, then all three, drive over ROS 2 with zero differing ticks** against the headless run on
+  every preset. The float32 wire, the quaternion heading and the missing steering field in `Odometry`
+  cost nothing in the end: the declared tolerance was never needed, and the measured difference is
+  printed as 0 on every run. The record replays exactly (check 5a).
+- **Locality survived the move.** Each car's 26 numbers, rebuilt from its own odometry and the relay's
+  digest, equal the simulator's to the bit (checks 4 and 12); the gate finds every car node subscribed to
+  exactly its four topics and nobody subscribed to the ground truth (check 7); a rosbag of only those
+  four topics replays into a fresh node with identical decisions and commands (check 8); `naive` and
+  `speedup` still fail on STRICT through the full graph (checks 10 and 11).
+- **The honest demo runs at real time.** In async mode nobody waits: real-time factor 1.00, about one
+  tick in fourteen on a 10 ms old command, never older, and the same outcome (check 13).
+- **The one new result** came from the loss and delay tables, and it was not the one expected. On
+  STRICT the learned policy leaves the EV's lane at once and never needs the radio: the outcome is the
+  same with a blind radio. On HARD the radio carries the decision, and a lost or 500 ms old broadcast
+  makes the occupied lane look empty, so the cars collide (20% to 40% success at 30% to 90% loss, 0%
+  blind or at 500 ms). "Not heard" must not mean "not there" in a deployed node; that is roadmap
+  item 20, measured here and deliberately not fixed here, because a fix changes the observation the
+  published numbers were trained on.
+
+Two things the plan got slightly wrong. The estimate was 8 to 10 working days; the design was accepted
+on 2026-09-04 and M4.4 was done on 2026-09-06, in long sessions. And the plan expected the loss and
+delay columns to measure how *robust* the cooperation is; on STRICT they instead showed that the
+cooperation there is unconditional, which is a fact about the scenario, not about the radio.
+
+The full numbers, the M4.1 and M4.2 contracts and the M4.4 tables are in the design doc.

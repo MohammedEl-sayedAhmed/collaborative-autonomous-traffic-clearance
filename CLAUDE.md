@@ -44,7 +44,7 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
     the EV's lane, which closes that loophole, and there the same learner yields 3.0 out of 3.0 and
     matches the ideal. EASY and HARD are unchanged so the published numbers stay valid; `--policy
     speedup` plus two checks keep the loophole visible.
-  - **M4, in progress:** the ROS 2 Jazzy demo (ADR 0011, ADR 0012). Done so far: Python 3.12
+  - **M4, done:** the ROS 2 Jazzy demo (ADR 0011, ADR 0012). Python 3.12
     everywhere with all 17 published rows re-checked (one model retrained and re-measured); the
     **seam** in `ClearanceEnv` (`set_decision` / `joint_action_rows` / `substep` / `commit_step`) with
     golden traces and tests proving `step()` did not change by a single bit; the `caatc-ros` image on
@@ -61,7 +61,7 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
     about 7% of ticks reuse a 10 ms old command and the outcome is unchanged, `./run.sh ros-async`) and
     the loss/delay sweep (`./run.sh ros-sweep`): on STRICT the policy yields even with a blind radio;
     on HARD a lost or 500 ms old broadcast makes an occupied lane look empty and the cars collide. The
-    tables and the M4.1 / M4.2 contracts are in the design doc. Left: M4.5, the docs pass and the PR.
+    tables and the M4.1 / M4.2 contracts are in the design doc; ADR 0011 has the outcome.
 - Big decisions and their reasons are in **`docs/adr/`**. Ideas for later are in **`ROADMAP.md`**.
 
 ## Repository map
@@ -127,10 +127,11 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
 - The network here is flaky. Retry git pushes and pulls and Docker image builds.
 
 ## Next step
-**M4, the ROS 2 Jazzy demo.** The design is **accepted** (ADR 0011) and all three open choices are
-made. The idea in one line: keep **one** `ClearanceEnv` as the only physics, and let **K ROS 2 nodes,
-one per car**, replace exactly rows `1..K` of the per-tick action array. Nothing about the EV, the ACC
-law, the reward or the metrics changes, so the published numbers stay comparable.
+**Merge M4** (branch `feat/m4-ros2-demo`, the PR to `master`), then pick the next milestone. M4 is
+built and measured (ADR 0011, outcome section). Its idea in one line: keep **one** `ClearanceEnv` as the
+only physics, and let **K ROS 2 nodes, one per car**, replace exactly rows `1..K` of the per-tick action
+array. Nothing about the EV, the ACC law, the reward or the metrics changes, so the published numbers
+stay comparable.
 
 The three choices: **ROS 2 Jazzy** (supported to May 2029; Humble stops in May 2027, ADR 0012), which
 means **Python 3.12 everywhere**; **standard ROS messages only** (`nav_msgs/Odometry`,
@@ -144,7 +145,7 @@ with the headroom check run inside it~~ done (IDENTICAL); (4) ~~one car node in 
 (0 differing ticks); (5) ~~the full fleet, the V2V relay, the exported numpy policy and the remaining
 checks~~ done (`./run.sh ros-gate` all green); (6) ~~the RViz view, a rosbag and a dashboard run~~ done;
 (7) ~~the async mode with measured delay and loss~~ done (`ros-async`, `ros-sweep`; the tables are in
-the design doc); (8) the final docs pass, then the PR to master.
+the design doc); (8) ~~the final docs pass~~ done; then the PR to master.
 
 Also open: a richer V2V model (train against drops and delay, not just measure them; M4.4 showed why:
 on HARD a lost broadcast reads as an empty lane) and the bigger scenarios in the roadmap. `docs/upstream-candidates.md` holds four `f1tenth_gym` findings; **nothing has
