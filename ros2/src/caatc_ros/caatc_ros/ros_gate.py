@@ -137,6 +137,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--allowlist", default="m4.1", choices=["m4.1", "m4.2"])
     ap.add_argument("--episodes", type=int, default=1, help="stop after this many ENDED messages")
     ap.add_argument("--relay", action="store_true", help="a /v2v_relay node is expected on the graph")
+    ap.add_argument("--expect-node", action="append", default=[],
+                    help="another node expected on the graph, as name or name:namespace (repeatable), e.g. rosbag2_recorder")
     ap.add_argument("--max-seconds", type=float, default=900.0)
     ap.add_argument("--out", default="/src/saved_variables/ros/gate.json")
     a = ap.parse_args(remove_ros_args(argv)[1:])
@@ -144,6 +146,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     expect = {("clearance_bridge", "/")} | {("agent", f"/car{c}") for c in cars}
     if a.relay:
         expect.add(("v2v_relay", "/"))
+    for item in a.expect_node:
+        name, _, ns = item.partition(":")
+        expect.add((name, ns or "/"))
 
     rclpy.init(args=argv)
     gate = RosGate(a.preset, cars, a.allowlist, a.episodes, expect)

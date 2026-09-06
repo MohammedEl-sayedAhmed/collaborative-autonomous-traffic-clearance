@@ -112,12 +112,22 @@ case "${1:-help}" in
     shift || true; ros_dev caatc-ros python3 -m caatc.ros_fingerprint "$@" ;;
   ros-smoke)                           # M4.1: one car over ROS 2 in lockstep + checks 3/4/5a/5b/6
     shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke "$@" ;;
-  ros-fleet)                           # M4.2: all K cars over the V2V relay on the learned policy, gate on
-    shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --fleet --v2v --gate \
+  ros-fleet)                           # M4.2/3: all K cars over the V2V relay on the learned policy, gate + bag + dashboard
+    shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --fleet --v2v --gate --bag --dashboard \
       --policy numpy:caatc/policies/ippo-strict --out-dir /src/saved_variables/ros/fleet "$@" ;;
+  ros-demo)                            # M4.3: watch it: fleet at real time on domain 42 with the scene; open RViz with ros-view 42
+    shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --fleet --v2v --view --pace 1.0 --domain 42 \
+      --policy numpy:caatc/policies/ippo-strict --preset strict --seeds 0,1,2 --out-dir /src/saved_variables/ros/demo "$@" ;;
+  ros-view-build)                      # M4.3: the viewing image (caatc-ros + rviz2 + X11)
+    docker build -t caatc-ros-view -f docker/ros-view.Dockerfile . ;;
+  ros-view)                            # M4.3: RViz on a running fleet's domain: ./run.sh ros-view <ROS_DOMAIN_ID>
+    shift || true; xhost +local: >/dev/null 2>&1 || true
+    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp --network host --ipc host -e ROS_DOMAIN_ID="${1:-0}" \
+      -e DISPLAY="$DISPLAY" -v /tmp/.X11-unix:/tmp/.X11-unix -v "$PWD":/src -e PYTHONPATH=/src:/src/ros2/src/caatc_ros \
+      -w /src caatc-ros-view rviz2 -d /src/ros2/src/caatc_ros/rviz/clearance.rviz ;;
   ros-gate)                            # M4: every ROS check in one go (exits non-zero on any failure)
     set -e
-    ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --preset strict --seeds 0,1 --fleet --v2v --gate \
+    ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --preset strict --seeds 0,1 --fleet --v2v --gate --bag \
       --policy numpy:caatc/policies/ippo-strict --out-dir /src/saved_variables/ros/gate-strict
     ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --preset strict --seeds 0 --fleet --v2v --policy naive \
       --expect-fail --out-dir /src/saved_variables/ros/gate-naive
@@ -132,6 +142,8 @@ case "${1:-help}" in
     echo "OK: every ROS check passed" ;;
   ros-shell)                           # an interactive shell in the ROS 2 image (ROS sourced)
     ros_dev -it caatc-ros bash ;;
+  ros-video)                           # M4.3: draw a ROS run's record as a top-down mp4 (no ROS needed)
+    shift || true; dev caatc-gym python -m caatc.ros_video "$@" ;;
   export-policy)                       # M4.2: SB3 .zip -> numpy actor (.npz + .json) for the robot image
     shift || true; dev caatc-train python -m caatc.policy_export "$@" ;;
 
@@ -175,7 +187,10 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
     ros-fleet         M4.2: all K cars over the V2V relay on the exported policy, with the gate (check 7)
     ros-gate          every ROS check in one go: fleet on strict/hard/easy, naive and speedup must fail
                         on strict (checks 10/11), and the stress run
+    ros-demo          Watch it: the fleet at real time on DDS domain 42, with the scene markers
+    ros-view-build    Build the viewing image (caatc-ros + rviz2); then, beside ros-demo: ./run.sh ros-view 42
     ros-shell         A shell inside the ROS 2 image, with ROS sourced
+    ros-video         Draw a ROS run's record as a top-down mp4 (saved_variables/ros/<run>/<record>.npz)
     export-policy     Export a trained actor to numpy, so the robot image needs no torch
                         (saved_variables/models/ippo-strict.zip --out caatc/policies/ippo-strict)
 

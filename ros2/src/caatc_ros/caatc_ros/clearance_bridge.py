@@ -86,6 +86,7 @@ class BridgeSettings:
     per_tick_timeout: float = BridgeCore.PER_TICK_TIMEOUT_S
     first_tick_timeout: float = BridgeCore.FIRST_TICK_TIMEOUT_S
     republish_period: float = BridgeCore.REPUBLISH_PERIOD_S
+    pace: float = 0.0            # 0 = as fast as the nodes answer; 1.0 = real time (for watching)
 
 
 def int_list(value) -> List[int]:
@@ -111,12 +112,14 @@ def parse_settings(argv: Sequence[str]) -> BridgeSettings:
                     help="longer, to cover DDS discovery")
     ap.add_argument("--republish-period", type=float, default=d.republish_period,
                     help="re-publish the tick's state this often (wall clock) while waiting")
+    ap.add_argument("--pace", type=float, default=d.pace,
+                    help="real-time factor for watching: 1.0 = one simulated second per wall second; 0 = as fast as possible")
     a = ap.parse_args(list(argv))
     seeds = int_list(a.seeds)
     if not seeds or any(not INT32[0] <= s <= INT32[1] for s in seeds):
         ap.error("--seeds needs at least one int32 seed")
     return BridgeSettings(a.preset, seeds, int_list(a.ros_cars), a.out_dir,
-                          a.per_tick_timeout, a.first_tick_timeout, a.republish_period)
+                          a.per_tick_timeout, a.first_tick_timeout, a.republish_period, a.pace)
 
 
 class ClearanceBridge(Node):
@@ -152,7 +155,7 @@ class ClearanceBridge(Node):
         log.info("versions " + json.dumps(self.versions, sort_keys=True))
         log.info(f"preset={s.preset} N={n} K={self.cfg.num_cooperators} ros_cars={self.core.ros_cars} "
                  f"seeds={s.seeds} out_dir={s.out_dir} timeouts={s.first_tick_timeout}s/{s.per_tick_timeout}s "
-                 f"republish={s.republish_period}s")
+                 f"republish={s.republish_period}s pace={'as fast as possible' if s.pace <= 0 else f'{s.pace:g}x real time'}")
 
     def _declare_settings(self, cli: BridgeSettings) -> BridgeSettings:
         """Declare every setting as a ROS parameter with the CLI value as default; overrides win."""
@@ -166,13 +169,14 @@ class ClearanceBridge(Node):
         self.declare_parameter("per_tick_timeout", float(cli.per_tick_timeout), loose)
         self.declare_parameter("first_tick_timeout", float(cli.first_tick_timeout), loose)
         self.declare_parameter("republish_period", float(cli.republish_period), loose)
+        self.declare_parameter("pace", float(cli.pace), loose)
         p = lambda name: self.get_parameter(name).value  # noqa: E731
         preset = str(p("preset")).lower()
         if preset not in PRESETS:
             raise ValueError(f"unknown preset '{preset}' (easy|hard|strict)")
         return BridgeSettings(preset, int_list(p("seeds")), int_list(p("ros_cars")), str(p("out_dir")),
                               float(p("per_tick_timeout")), float(p("first_tick_timeout")),
-                              float(p("republish_period")))
+                              float(p("republish_period")), float(p("pace")))
 
     # -- outgoing: the tick's state ----------------------------------------------------
     def publish_state(self, st: BridgeState, ended: bool = False) -> None:
@@ -303,7 +307,8 @@ def run_episode(bridge: ClearanceBridge, seed: int,
 def _lockstep(bridge: ClearanceBridge, seed: int, pump: Callable[[], Optional[bool]]) -> int:
     s, core = bridge.settings, bridge.core
     bridge.publish_state(core.begin_episode(seed))
-    tick_started = last_publish = time.monotonic()
+    tick_started = last_publish = wall_start = time.monotonic()
+    tick_s = 1.0 / bridge.cfg.sim_hz
     republished = False          # did this tick's state go out more than once?
     while True:
         worked = bool(pump())
@@ -312,6 +317,11 @@ def _lockstep(bridge: ClearanceBridge, seed: int, pump: Callable[[], Optional[bo
             return bridge.finish_aborted(bridge.failed)
 
         if core.ready():
+            if s.pace > 0:
+                # for watching: hold each tick to its wall-clock slot (pumping meanwhile)
+                target = wall_start + (core.tick + 1) * tick_s / s.pace
+                while time.monotonic() < target:
+                    pump()
             if core.tick == 0:
                 problem = bridge.one_node_per_car()
                 if problem is not None:

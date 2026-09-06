@@ -55,6 +55,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -64,7 +65,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from caatc.clearance_env import ClearanceEnv
-from caatc.clearance_eval import preset_config, run_episode
+from caatc.clearance_eval import default_runs_dir, preset_config, run_episode, write_run
 from caatc.clearance_smoke import Gate
 from caatc.actions import apply_decision
 from caatc.controllers import coop_lowlevel
@@ -74,6 +75,7 @@ from caatc.frenet import CenterlineFrame
 from caatc.obs_spec import feature_count, obs_layout
 from caatc.ros_bridge_core import Record, cars_to_array, record_glob, record_metrics, replay
 from caatc.scenario import ScenarioConfig, centerline_xy
+from caatc_ros import bag_replay
 
 VENV_PYTHON = "/opt/venv/bin/python3"     # the one interpreter every process must run
 MARKER = ".caatc-ros-smoke"               # written into an out-dir this smoke created; only such dirs are cleaned
@@ -127,6 +129,9 @@ class FleetOptions:
     loss: float = 0.0
     delay_ticks: int = 0
     relay_seed: int = 0
+    bag: bool = False
+    view: bool = False
+    pace: float = 0.0
 
 
 def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOptions,
@@ -149,11 +154,16 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOp
                   "--seeds", ",".join(str(s) for s in seeds), "--ros-cars", cars_arg, "--out-dir", out_dir]
     if republish_period is not None:
         bridge_cmd += ["--republish-period", str(republish_period)]
+    if fleet.pace > 0:
+        bridge_cmd += ["--pace", str(fleet.pace)]
+    view_cmd = [sys.executable, "-m", "caatc_ros.scene_view", "--preset", preset]
     relay_cmd = [sys.executable, "-m", "caatc_ros.v2v_relay", "--preset", preset, "--out-dir", out_dir,
                  "--loss", str(fleet.loss), "--delay-ticks", str(fleet.delay_ticks), "--seed", str(fleet.relay_seed)]
     gate_cmd = [sys.executable, "-m", "caatc_ros.ros_gate", "--preset", preset, "--cars", cars_arg,
                 "--allowlist", "m4.2" if fleet.v2v else "m4.1", "--episodes", str(len(seeds)),
-                "--out", os.path.join(out_dir, "gate.json")] + (["--relay"] if fleet.v2v else [])
+                "--out", os.path.join(out_dir, "gate.json")] + (["--relay"] if fleet.v2v else []) \
+               + (["--expect-node", "rosbag2_recorder"] if fleet.bag else []) \
+               + (["--expect-node", "scene_view"] if fleet.view else [])
     print(f"Starting the lockstep run (ROS_DOMAIN_ID={domain}, cars {fleet.cars}, policy {fleet.policy}, "
           f"radio = {'V2V digest' if fleet.v2v else 'raw odometry'}{', gate on' if fleet.gate else ''}):")
     for c, cmd in node_cmds.items():
@@ -189,6 +199,15 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOp
             helpers["relay"] = popen("relay", relay_cmd)
         if fleet.gate:
             helpers["gate"] = popen("gate", gate_cmd)
+        if fleet.view:
+            helpers["view"] = popen("view", view_cmd)
+        recorder = None
+        if fleet.bag:
+            topics = bag_replay.allowlisted_topics(fleet.cars, preset_config(preset).num_agents, fleet.v2v)
+            bag_dir = os.path.join(out_dir, "bag")
+            recorder = popen("recorder", bag_replay.record_command(bag_dir, topics))
+            print("  recorder: ros2 bag record -o " + bag_dir + " (" + str(len(topics)) + " allow-listed topics)")
+            time.sleep(2.0)                        # let the recorder discover its topics
         nodes = {c: popen(f"car_node{c}", cmd) for c, cmd in node_cmds.items()}
         time.sleep(NODE_HEAD_START_S)
         dead = [c for c, pr in nodes.items() if pr.poll() is not None]
@@ -222,6 +241,14 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOp
             _stop(bridge, "the bridge")
         raise
     finally:
+        if "recorder" in locals() and recorder is not None and recorder.poll() is None:
+            time.sleep(1.0)                        # the last messages
+            recorder.send_signal(signal.SIGINT)    # rosbag2 closes the bag cleanly on SIGINT
+            try:
+                recorder.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                recorder.kill()
+            print(f"  recorder stopped (exit code {recorder.returncode})")
         # the nodes and the relay run until killed by design
         for c, pr in list(nodes.items()) if "nodes" in locals() else []:
             code = _stop(pr, f"car node {c}")
@@ -621,6 +648,42 @@ def check_against_headless(g: Gate, records: List[Tuple[str, Record]], policy_na
             env.close()
 
 
+def write_dashboard_run(records: List[Tuple[str, Record]], preset: str, policy_name: str, fleet: "FleetOptions",
+                        runs_dir: Optional[str] = None) -> str:
+    """One dashboard run for the whole smoke, in the same JSONL format the baselines and the
+    trained runs use, so the ROS run sits next to them on the dashboard."""
+    runs_dir = runs_dir or default_runs_dir()
+    rows = []
+    for n, (_p, rec) in enumerate(records):
+        m = record_metrics(rec)
+        m["episode"] = n
+        m["outcome"] = 2 if m["success"] else (4 if m["collision"] else 1)
+        m["outcome_label"] = {1: "max time steps", 2: "ambulance reached goal", 4: "simulation died"}[m["outcome"]]
+        rows.append(m)
+    cfg = record_cfg(records[0][1])
+    radio = "digest" if fleet.v2v else "odom"
+    label = f"ros-{policy_name.split(':')[-1].split('/')[-1]}-{preset}-{radio}"
+    path = write_run(runs_dir, label, cfg, rows)
+    return path
+
+
+def check_bag_replay(g: Gate, out_dir: str, preset: str, fleet: "FleetOptions", domain: int) -> None:
+    """Check 8: only the allow-listed topics, from the bag, into fresh car nodes."""
+    print("\nCheck 8: the bag of allow-listed topics replayed into fresh car nodes")
+    bag_dir = os.path.join(out_dir, "bag")
+    if not os.path.isdir(bag_dir):
+        g.check("the bag exists", False, f"{bag_dir} missing")
+        return
+    reps = bag_replay.replay_all(bag_dir, out_dir, preset, fleet.cars, fleet.policy, fleet.v2v, domain, out_dir)
+    for r in reps:
+        g.check(f"car {r['car']}: every drive command from the bag equals the live one",
+                r["ticks"] > 0 and r["drives_missing"] == 0 and r["drives_differ"] == 0,
+                f"{r['ticks']} ticks, missing {r['drives_missing']}, differ {r['drives_differ']} (player exit {r['player_exit']})")
+        g.check(f"car {r['car']}: every decision (action and observation) from the bag equals the live one",
+                r["decisions_total"] > 0 and r["decisions_missing"] == 0 and r["decisions_differ"] == 0,
+                f"{r['decisions_total']} decisions, missing {r['decisions_missing']}, differ {r['decisions_differ']}")
+
+
 def check_gate_report(g: Gate, out_dir: str, gate_code: Optional[int]) -> None:
     """Check 7 from the gate node's report."""
     print("\nCheck 7: subscription hygiene (the gate node's report)")
@@ -689,10 +752,11 @@ def parse_seeds(text: str) -> List[int]:
 def prepare_out_dir(out_dir: str, keep: bool, preset: str) -> None:
     """Make ``out_dir`` ready. Never deletes a directory the user typed.
 
-    A directory this smoke created carries a marker file. Without ``--keep``, only such a
-    directory is cleaned, and only of the files the smoke itself writes (records of this
-    preset and the two logs); anything else in it stops the run with its name. A
-    directory without the marker is used only if it is empty or ``--keep`` was given.
+    A directory this smoke created carries a marker file, and everything in it is the
+    smoke's (records, logs, the gate report, the relay's record, the bag, videos drawn
+    from the records). Without ``--keep`` such a directory is emptied. A directory
+    without the marker is used only if it is empty (it then gets the marker) or if
+    ``--keep`` was given; otherwise the run stops and says so.
     """
     out_dir = os.path.abspath(out_dir)
     marker = os.path.join(out_dir, MARKER)
@@ -709,16 +773,12 @@ def prepare_out_dir(out_dir: str, keep: bool, preset: str) -> None:
                              f"pass --keep, or a dedicated --out-dir")
         open(marker, "w").close()
         return
-    ours = set(os.path.basename(p) for p in glob.glob(os.path.join(out_dir, record_glob(preset))))
-    ours |= {"bridge.log", "car_node.log"}
-    ours |= set(e for e in entries if re.fullmatch(r"[a-z]+-seed-?\d+-ep\d+\.npz", e))   # other presets' records
-    strangers = [e for e in entries if e not in ours]
-    if strangers:
-        raise SystemExit(f"{out_dir} holds files this smoke did not write ({', '.join(strangers[:5])}"
-                         f"{', ...' if len(strangers) > 5 else ''}); not deleting anything. "
-                         "Pass --keep, or a dedicated --out-dir")
     for e in entries:
-        os.remove(os.path.join(out_dir, e))
+        path = os.path.join(out_dir, e)
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
 
 
 def modules_present(names: Sequence[str]) -> List[str]:
@@ -758,6 +818,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--gate", action="store_true", help="start the gate node and read its report (check 7)")
     ap.add_argument("--expect-fail", action="store_true",
                     help="checks 10/11: this is a baseline that must NOT clear the road (naive, speedup)")
+    ap.add_argument("--bag", action="store_true",
+                    help="record the allow-listed topics into a rosbag2 and replay them into fresh nodes (check 8)")
+    ap.add_argument("--view", action="store_true", help="start the scene_view node (markers on /caatc/scene, frames on /tf)")
+    ap.add_argument("--pace", type=float, default=0.0, help="bridge real-time factor for watching (1.0 = real time)")
+    ap.add_argument("--dashboard", action="store_true",
+                    help="also write the run to saved_variables/runs/ so it shows on the dashboard")
     ap.add_argument("--loss", type=float, default=0.0, help="relay: drop probability per broadcast (M4.4)")
     ap.add_argument("--delay-ticks", type=int, default=0, help="relay: digest carries positions this many ticks old (M4.4)")
     a = ap.parse_args(argv)
@@ -770,7 +836,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     node_delay_s = STRESS_NODE_DELAY_S if a.stress else 0.0
     cfg0 = preset_config(a.preset)
     cars = list(range(1, cfg0.num_cooperators + 1)) if a.fleet else [a.car]
-    fleet = FleetOptions(cars=cars, v2v=a.v2v, policy=a.policy, gate=a.gate, loss=a.loss, delay_ticks=a.delay_ticks)
+    fleet = FleetOptions(cars=cars, v2v=a.v2v, policy=a.policy, gate=a.gate, loss=a.loss, delay_ticks=a.delay_ticks,
+                         bag=a.bag, view=a.view, pace=a.pace)
     radio_perfect = a.loss == 0.0 and a.delay_ticks == 0
     if a.v2v and not a.fleet and a.gate:
         pass    # a single car over the digest with the gate is fine too
@@ -808,7 +875,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     check_run(g, run, records, seeds, a.preset)
     log_paths = (run.logs if run is not None and run.logs else
                  {os.path.splitext(os.path.basename(p))[0]: p for p in glob.glob(os.path.join(a.out_dir, "*.log"))})
-    logs = {name: read_log(path) for name, path in log_paths.items() if name != "gate"}
+    # only OUR nodes must run on the venv Python; the gate and the rosbag2 recorder are tools
+    logs = {name: read_log(path) for name, path in log_paths.items() if name not in ("gate", "recorder", "view")}
     check_bookkeeping_and_fingerprint(g, records, logs, stress=a.stress)
     if records:
         check_frame_agreement(g, records)
@@ -824,8 +892,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         check_speed_rule(g, records)
         if a.gate:
             check_gate_report(g, a.out_dir, run.gate_code if run is not None else None)
+        if a.bag and run is not None:
+            check_bag_replay(g, a.out_dir, a.preset, fleet, (domain + 57) % 232)
     else:
         print("\nno records: checks 3, 4, 5a, 5b and the speed rule cannot run")
+
+    if a.dashboard and records:
+        path = write_dashboard_run(records, a.preset, a.policy, fleet)
+        print(f"\ndashboard run written -> {path}  (./run.sh dashboard)")
 
     ok = g.passed() and bool(records)
     if not ok and run is not None and run.ok:
