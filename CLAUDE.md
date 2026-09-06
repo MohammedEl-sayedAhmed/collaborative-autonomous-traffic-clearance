@@ -127,7 +127,7 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
 - The network here is flaky. Retry git pushes and pulls and Docker image builds.
 
 ## Next step
-**M4 is done and merged (PR #18).** Pick the next milestone. The strongest candidate is roadmap item 20,
+**M4 is done; PR #18 merges it into `master`.** Then pick the next milestone. The strongest candidate is roadmap item 20,
 a realistic radio: M4.4 showed on HARD that "not heard" must not mean "not there". The likely shape:
 keep the last heard position of a car for a short while, treat a lane with no recent broadcast as not
 clear, and retrain with loss and delay in the loop. That changes the observation, so the published
