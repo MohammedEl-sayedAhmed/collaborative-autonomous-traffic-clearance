@@ -73,7 +73,7 @@ from caatc.decentralized import LocalIdealCooperator, LocalSquad
 from caatc.ros_node_core import policy_from_name
 from caatc.frenet import CenterlineFrame
 from caatc.obs_spec import feature_count, obs_layout
-from caatc.ros_bridge_core import Record, cars_to_array, record_glob, record_metrics, replay
+from caatc.ros_bridge_core import Record, cars_to_array, record_glob, record_metrics, replay, timing_summary
 from caatc.scenario import ScenarioConfig, centerline_xy
 from caatc_ros import bag_replay
 
@@ -688,21 +688,27 @@ def check_bag_replay(g: Gate, out_dir: str, preset: str, fleet: "FleetOptions", 
 
 
 def check_timing(g: Gate, records: List[Tuple[str, Record]], pace: float) -> None:
-    """Check 13: measured, not required. The real-time factor, command age and drops of an async run."""
+    """Check 13: measured, not required. The real-time factor, command age and held ticks of an
+    async run. The one thing that fails it: a car that never sent a command, because then the run
+    measures nothing for that car."""
     print("\nCheck 13: timing of the async run (measured, published, not required)")
     for _p, rec in records:
         m = rec.meta
-        g.check(f"{label_of(rec)}: the run is an async run with timing recorded", m.get("mode") == "async" and m.get("real_time_factor") is not None,
-                f"mode={m.get('mode')}")
+        g.check(f"{label_of(rec)}: the run is an async run with timing recorded",
+                m.get("mode") == "async" and m.get("real_time_factor") is not None, f"mode={m.get('mode')}")
         if m.get("real_time_factor") is None:
             continue
+        ts = timing_summary(rec)
+        g.check(f"{label_of(rec)}: every car sent at least one command", not ts["cars_that_never_answered"],
+                f"cars {ts['cars_that_never_answered']} never answered")
+        mean = "-" if ts["mean_command_age"] is None else f"{ts['mean_command_age']:.2f}"
         print(f"    {label_of(rec)}: pace {m.get('pace')}x, real-time factor {m['real_time_factor']:.2f} "
-              f"({m['sim_seconds']:.2f} simulated s in {m['wall_seconds']:.2f} wall s), mean command age "
-              f"{m['mean_command_age']:.2f} ticks, max {m['max_command_age']}, drop fraction {m['drop_fraction']:.3f}")
-        ages = np.stack(rec.command_age) if rec.command_age else None
-        if ages is not None:
-            hist = np.bincount(ages[:, [i - 1 for i in m['ros_cars']]].reshape(-1), minlength=4)
-            print(f"    command age histogram (ticks 0,1,2,3+): {hist[0]}, {hist[1]}, {hist[2]}, {int(hist[3:].sum())}")
+              f"({m['sim_seconds']:.2f} simulated s in {m['wall_seconds']:.2f} wall s)")
+        print(f"    commands: mean age {mean} ticks, oldest {ts['max_command_age']}; ticks on a held command "
+              f"{ts['held_ticks']} of {ts['slots']} ({(ts['held_fraction'] or 0.0):.1%}); ticks before a car's first "
+              f"command {ts['never_answered_ticks']} (per car {ts['never_answered_per_car']})")
+        h = ts["age_histogram"]
+        print(f"    command age histogram (ticks 0,1,2,3+): {h[0]}, {h[1]}, {h[2]}, {h[3]}")
 
 
 def check_gate_report(g: Gate, out_dir: str, gate_code: Optional[int]) -> None:
@@ -735,11 +741,15 @@ def check_speed_rule(g: Gate, records: List[Tuple[str, Record]]) -> None:
         bad_before = 0
         engaged = 0
         n = 0
+        no_command = 0
         for t in range(len(rec.rows_applied)):
             for i in rec.meta["ros_cars"]:
-                n += 1
                 wire_steer = float(rec.wire[t][i - 1, 0])
                 wire_speed = float(rec.wire[t][i - 1, 1])
+                if np.isnan(wire_steer) or np.isnan(wire_speed):
+                    no_command += 1                 # async: no command yet, the plant's own row stood
+                    continue
+                n += 1
                 lane_before = int(rec.cars_state[t][i, 7])
                 expect = float(np.clip(wire_speed, cfg.coop_speed_min, cfg.coop_speed_max))
                 if cap is not None and lane_before == cfg.ev_lane:
@@ -754,7 +764,7 @@ def check_speed_rule(g: Gate, records: List[Tuple[str, Record]]) -> None:
                 engaged += int(expect != wire_speed)
         cap_txt = "no cap" if cap is None else f"cap {cap} m/s in lane {cfg.ev_lane}"
         g.check(f"{label_of(rec)}: applied speed == the rule on the wire speed", n > 0 and bad_speed == 0,
-                f"{n} ticks, {cap_txt}; the rule changed the value on {engaged} ticks"
+                f"{n} ticks, {cap_txt}; the rule changed the value on {engaged} ticks; {no_command} slots had no command yet"
                 + ("" if bad_speed == 0 else f"; {bad_speed} differ"))
         g.check(f"{label_of(rec)}: applied steer == the wire steer exactly", n > 0 and bad_steer == 0,
                 "" if bad_steer == 0 else f"{bad_steer} differ")

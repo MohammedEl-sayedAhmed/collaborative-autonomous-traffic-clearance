@@ -54,7 +54,7 @@ from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 
-from caatc.ros_bridge_core import BridgeCore, BridgeState, record_filename
+from caatc.ros_bridge_core import BridgeCore, BridgeState, record_filename, timing_summary
 from caatc.ros_fingerprint import versions
 from caatc.ros_node_core import ProtocolError
 from caatc.scenario import preset_config
@@ -142,7 +142,7 @@ class ClearanceBridge(Node):
         self.received = 0                    # every Drive or Decision that reached a callback
         # async mode: the newest command each car sent, and the decisions not yet applied
         self.latest_drive: Dict[int, tuple] = {}
-        self.pending_decision: Dict[int, dict] = {}
+        self.pending_decision: Dict[int, list] = {}     # async: every decision heard since the last boundary, per car
 
         n = self.cfg.num_agents
         self.pub_episode = self.create_publisher(Episode, "/caatc/episode", 10)
@@ -220,6 +220,9 @@ class ClearanceBridge(Node):
             # the node echoes the Odometry stamp; a stamp off the tick grid is a breach
             stamp_tick = stamp_tick_or_breach(f"/car{car}/drive", msg.header.stamp, self.cfg.sim_hz)
             if self.settings.async_mode:
+                if stamp_tick < core.start_tick:
+                    core.note_stale()                  # left over from an earlier episode
+                    return
                 prev = self.latest_drive.get(car)
                 if prev is None or stamp_tick >= prev[2]:
                     self.latest_drive[car] = (msg.drive.steering_angle, msg.drive.speed, stamp_tick)
@@ -240,9 +243,14 @@ class ClearanceBridge(Node):
             if int(msg.car) != car:
                 raise ProtocolError(f"Decision.car = {int(msg.car)} arrived on /car{car}/decision")
             if self.settings.async_mode:
-                self.pending_decision[car] = dict(action=int(msg.action), obs=np.asarray(msg.obs, dtype=np.float32),
-                                                  s=float(msg.s), d=float(msg.d), lane=int(msg.lane), tangent=float(msg.tangent),
-                                                  episode=int(msg.episode), tick=int(msg.tick))
+                if int(msg.episode) != self.core.episode:
+                    self.core.note_stale()             # a decision from another episode
+                    return
+                # keep every decision, in the order it arrived: a late one is applied before the next
+                self.pending_decision.setdefault(car, []).append(
+                    dict(action=int(msg.action), obs=np.asarray(msg.obs, dtype=np.float32),
+                         s=float(msg.s), d=float(msg.d), lane=int(msg.lane), tangent=float(msg.tangent),
+                         episode=int(msg.episode), tick=int(msg.tick)))
                 return
             self.core.offer_decision(car, int(msg.episode), int(msg.tick), int(msg.action),
                                      np.asarray(msg.obs, dtype=np.float32),
@@ -356,23 +364,25 @@ def _async(bridge: ClearanceBridge, seed: int, pump: Callable[[], Optional[bool]
         if out.episode_over:
             wall = time.monotonic() - wall_start
             rec = core.record
-            ages = np.stack(rec.command_age) if rec.command_age else np.zeros((0, cfg.num_cooperators))
-            fresh = np.stack(rec.command_fresh) if rec.command_fresh else np.zeros((0, cfg.num_cooperators), bool)
-            ros = [i - 1 for i in core.ros_cars]
+            ts = timing_summary(rec)
             rec.meta.update(
                 pace=s.pace, wall_seconds=wall, sim_seconds=core.tick * tick_s,
                 real_time_factor=(core.tick * tick_s) / wall if wall > 0 else None,
-                mean_command_age=float(ages[:, ros].mean()) if ages.size else None,
-                max_command_age=int(ages[:, ros].max()) if ages.size else None,
-                drop_fraction=float(1.0 - fresh[:, ros].mean()) if fresh.size else None,
+                mean_command_age=ts["mean_command_age"], max_command_age=ts["max_command_age"],
+                held_fraction=ts["held_fraction"], never_answered_ticks=ts["never_answered_ticks"],
+                cars_that_never_answered=ts["cars_that_never_answered"],
+                # every slot without a fresh command: held ones plus the ones before a car's first command
+                drop_fraction=(ts["held_ticks"] + ts["never_answered_ticks"]) / ts["slots"] if ts["slots"] else None,
             )
             bridge.publish_state(st, ended=True)
             path = bridge.save_record()
             bridge.log_summary(path)
             m = rec.meta
+            mean = "-" if m["mean_command_age"] is None else f"{m['mean_command_age']:.2f}"
             bridge.get_logger().info(f"async: pace {s.pace:g}x, real-time factor {m['real_time_factor']:.2f}, "
-                                     f"mean command age {m['mean_command_age']:.2f} ticks, max {m['max_command_age']}, "
-                                     f"drop fraction {m['drop_fraction']:.3f}")
+                                     f"mean command age {mean} ticks, oldest {m['max_command_age']}, "
+                                     f"held ticks {ts['held_ticks']} of {ts['slots']}, ticks before a car's first "
+                                     f"command {m['never_answered_ticks']}, stale {core.stale_commands}")
             return EXIT_OK
         bridge.publish_state(st)
 

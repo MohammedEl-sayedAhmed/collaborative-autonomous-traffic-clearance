@@ -56,6 +56,9 @@ def table(rows: List[dict], preset: str, policy: str, seeds: List[int]) -> str:
            "| loss | delay (ticks) | success | collisions | mean `t_clear` | EV speed | yields | return |",
            "|-----:|--------------:|--------:|-----------:|---------------:|---------:|-------:|-------:|"]
     for r in rows:
+        if not r["seeds"]:
+            out.append(f"| {r['loss']:g} | {r['delay_ticks']} | aborted (bridge exit {r['bridge_exit']}) | — | — | — | — | — |")
+            continue
         out.append(f"| {r['loss']:g} | {r['delay_ticks']} | {f(r['success'], '.0%')} | {f(r['collisions'], '.0%')} | "
                    f"{f(r['t_clear'], '.2f')} s | {f(r['ev_speed'], '.2f')} m/s | {f(r['yields'], '.1f')} | {f(r['ret'], '.1f')} |")
     return "\n".join(out) + "\n"

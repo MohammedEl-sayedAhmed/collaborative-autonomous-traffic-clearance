@@ -7,6 +7,10 @@ tests prove carries over to the rclpy shells, which only move bytes.
 import numpy as np
 import pytest
 
+from caatc.actions import MERGE_LEFT, MERGE_RIGHT, STAY
+from caatc.clearance_env import ClearanceEnv
+from caatc.ros_bridge_core import NO_COMMAND_YET, cars_to_array, timing_summary
+
 from caatc.actions import MERGE_LEFT, SPEED_UP, STAY
 from caatc.clearance_env import ClearanceEnv
 from caatc.clearance_eval import run_episode
@@ -577,7 +581,8 @@ def test_async_advance_holds_the_latest_command_and_records_its_age():
             out = node.on_tick(st.episode, st.tick, samples, own_delta=st.cars[1]["delta"])
             if out.decision is not None:
                 d = out.decision
-                latest_decision[1] = dict(action=d.action, obs=d.obs, s=d.s, d=d.d, lane=d.lane, tangent=d.tangent)
+                latest_decision[1] = [dict(action=d.action, obs=d.obs, s=d.s, d=d.d, lane=d.lane, tangent=d.tangent,
+                                           tick=st.tick, episode=st.episode)]
             if st.tick % 2 == 0:
                 latest_drive[1] = (float(out.steer), float(out.speed), st.stamp_tick)
             res = bridge.advance_async(latest_drive, latest_decision)
@@ -591,6 +596,9 @@ def test_async_advance_holds_the_latest_command_and_records_its_age():
         fresh = np.stack(rec.command_fresh)[:, 0]
         assert rec.meta["mode"] == "async"
         assert set(ages.tolist()) == {0, 1} and fresh.mean() == pytest.approx(0.5, abs=0.01)
+        ts = timing_summary(rec)
+        assert ts["never_answered_ticks"] == 0 and ts["max_command_age"] == 1 and ts["held_fraction"] == pytest.approx(0.5, abs=0.01)
+        assert ts["age_histogram"][0] + ts["age_histogram"][1] == ts["slots"]
         assert len(rec.command_age) == len(rec.rows_applied)
         # the plant never stopped: every tick got a row for the ROS car, and the episode ended
         assert rec.terminated[-1] or rec.truncated[-1]
@@ -602,18 +610,91 @@ def test_async_advance_holds_the_latest_command_and_records_its_age():
         bridge.close()
 
 
-def test_async_with_a_car_that_never_answers_uses_the_neutral_hold():
+def test_async_with_a_car_that_never_answers_keeps_the_plants_own_row():
+    """Until a car's first command arrives the plant drives it with its own lane-keeping row,
+    exactly as a headless run would, and those ticks are counted apart from real commands."""
     cfg = easy_preset()
-    bridge = BridgeCore(cfg, ros_cars=[1])
+    K = cfg.num_cooperators
+    bridge = BridgeCore(cfg, ros_cars=list(range(1, K + 1)))     # every cooperator on ROS, none answers
+    twin = ClearanceEnv(cfg)
     try:
         bridge.begin_episode(0)
-        res = bridge.advance_async({}, {})
+        twin.reset(seed=0)
+        for _ in range(2):
+            bridge.advance_async({}, {})
+            if twin.substeps_done == 0:
+                for j in range(K):
+                    twin.set_decision(j, STAY)
+            twin.substep(twin.joint_action_rows())
         rec = bridge.record
-        assert rec.wire[0][0, 1] == np.float32(cfg.coop_speed) and rec.wire[0][0, 0] == 0.0
-        assert rec.command_age[0][0] == 0 and not rec.command_fresh[0][0]   # nothing ever arrived: not fresh, age = ticks so far
-        bridge.advance_async({}, {})
-        assert rec.command_age[1][0] == 1
-        assert int(rec.decisions[0][0]) == 0                                # STAY when no decision arrived
+        for t in range(2):
+            assert np.isnan(rec.wire[t][0]).all()                       # nothing was on the wire
+            assert rec.command_age[t][0] == NO_COMMAND_YET and not rec.command_fresh[t][0]
+        assert np.array_equal(rec.rows_applied[1], twin.rows_applied)    # the headless row, all cars
+        assert np.array_equal(rec.cars_state[2], cars_to_array(twin.cars))
+        assert int(rec.decisions[0][0]) == STAY and rec.decisions_applied[0][0] == [STAY]
+        ts = timing_summary(rec)
+        assert ts["never_answered_ticks"] == 2 * K and ts["cars_that_never_answered"] == list(range(1, K + 1))
+        assert ts["mean_command_age"] is None and ts["held_ticks"] == 0
+        assert replay(rec).exact
+    finally:
+        bridge.close(); twin.close()
+
+
+def test_async_applies_a_late_decision_before_the_next_one_so_the_plant_follows_the_node():
+    """A decision that misses its boundary by a tick must not be lost: it is applied at the
+    next boundary, before the on-time one, so the plant's targets equal the node's."""
+    cfg = easy_preset()
+    twin = ClearanceEnv(cfg); twin.reset(seed=0)
+    merge = MERGE_LEFT if twin.set_decision(0, MERGE_LEFT) == 1 else MERGE_RIGHT   # whichever way is open
+    twin.close()
+    K = cfg.num_cooperators
+    bridge = BridgeCore(cfg, ros_cars=list(range(1, K + 1)))
+    try:
+        st = bridge.begin_episode(0)
+        nan = dict(obs=None, s=np.nan, d=np.nan, lane=-1, tangent=np.nan, episode=0)
+        drive = lambda: {i: (0.0, cfg.coop_speed, bridge.stamp_tick) for i in range(1, K + 1)}
+        bridge.advance_async(drive(), {})                                # boundary 0: the MERGE is late -> STAY
+        for _ in range(9):
+            bridge.advance_async(drive(), {})
+        assert bridge.env._lane_changes == 0
+        late = dict(action=merge, tick=0, **nan)
+        on_time = dict(action=STAY, tick=10, **nan)
+        bridge.advance_async(drive(), {1: [late, on_time]})               # boundary 10: late first, then on time
+        rec = bridge.record
+        assert bridge.env._lane_changes == 1                              # the late merge counted
+        assert rec.decisions_applied[1][0] == [merge, STAY] and int(rec.decisions[1][0]) == STAY
+        assert rec.decisions_applied[0][0] == [STAY]
+        assert replay(rec).exact                                          # the replay applies both, in order
+    finally:
+        bridge.close()
+
+
+def test_async_ignores_a_command_from_an_earlier_episode_and_refuses_one_from_the_future():
+    cfg = easy_preset()
+    K = cfg.num_cooperators
+    cars = list(range(1, K + 1))
+    bridge = BridgeCore(cfg, ros_cars=cars)
+    fresh = lambda: {i: (0.0, cfg.coop_speed, bridge.stamp_tick) for i in cars}
+    try:
+        st = bridge.begin_episode(0)
+        old_stamp = st.stamp_tick
+        while not bridge.advance_async(fresh(), {}).episode_over:
+            pass
+        st = bridge.begin_episode(1)
+        assert old_stamp < st.start_tick
+        nan = dict(obs=None, s=np.nan, d=np.nan, lane=-1, tangent=np.nan)
+        with pytest.raises(ProtocolError):                                # a decision for a tick still to come
+            bridge.advance_async(fresh(), {1: [dict(action=STAY, tick=10, episode=1, **nan)]})
+        with pytest.raises(ProtocolError):                                # a drive stamped in the future
+            bridge.advance_async({**fresh(), 1: (0.0, cfg.coop_speed, st.stamp_tick + 5)}, {})
+        # a leftover drive from episode 0, and a decision from episode 0: both ignored, counted stale
+        bridge.advance_async({**fresh(), 1: (0.3, 1.0, old_stamp)}, {1: [dict(action=MERGE_LEFT, tick=0, episode=0, **nan)]})
+        rec = bridge.record
+        assert rec.command_age[0][0] == NO_COMMAND_YET and not rec.command_fresh[0][0]
+        assert np.isnan(rec.wire[0][0]).all()
+        assert rec.decisions_applied[0][0] == [STAY] and bridge.env._lane_changes == 0
+        assert bridge.stale_commands == 2
     finally:
         bridge.close()
 

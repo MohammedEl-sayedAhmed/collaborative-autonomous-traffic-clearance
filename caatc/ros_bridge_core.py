@@ -29,6 +29,8 @@ from .ros_node_core import CarSample, NodeCore, ProtocolError
 from .ros_tick import episode_start_tick
 from .scenario import ScenarioConfig
 
+NO_COMMAND_YET = -1   # command_age sentinel: the car has not sent any command in this episode yet
+
 STATE_FIELDS = ("x", "y", "theta", "v", "delta", "s", "d", "lane")
 
 
@@ -93,7 +95,8 @@ class Record:
     command_age: List[np.ndarray] = field(default_factory=list)     # T x (K,) ticks: how old each applied command was
     command_fresh: List[np.ndarray] = field(default_factory=list)   # T x (K,) bool: a new command arrived for this tick
     boundary_ticks: List[int] = field(default_factory=list)
-    decisions: List[np.ndarray] = field(default_factory=list)      # B x (K,)
+    decisions: List[np.ndarray] = field(default_factory=list)      # B x (K,): the last action applied per car
+    decisions_applied: List[List[List[int]]] = field(default_factory=list)  # B x K x (n,): every action applied, in order
     obs_t: List[np.ndarray] = field(default_factory=list)          # B x (K, F) float32
     node_obs: List[np.ndarray] = field(default_factory=list)       # B x (K, F) float32, NaN if simulator-driven
     node_frame: List[np.ndarray] = field(default_factory=list)     # B x (K, 4): s, d, lane, tangent
@@ -128,6 +131,7 @@ class Record:
             commit_ticks=st(self.commit_ticks, np.int64), rewards=st(self.rewards, np.float64),
             terminated=st(self.terminated, bool), truncated=st(self.truncated, bool),
             commit_obs=stk(self.commit_obs, (0, K * F), np.float32), infos=json.dumps(self.infos),
+            decisions_applied=json.dumps(self.decisions_applied),
         )
 
     @classmethod
@@ -144,6 +148,7 @@ class Record:
         rec.commit_ticks = [int(x) for x in g["commit_ticks"]]; rec.rewards = [float(x) for x in g["rewards"]]
         rec.terminated = [bool(x) for x in g["terminated"]]; rec.truncated = [bool(x) for x in g["truncated"]]
         rec.commit_obs = list(g["commit_obs"]); rec.infos = json.loads(str(g["infos"]))
+        rec.decisions_applied = json.loads(str(g["decisions_applied"])) if "decisions_applied" in g else []
         return rec
 
 
@@ -323,39 +328,64 @@ class BridgeCore:
         if not self.ready():
             raise ProtocolError(f"not ready: missing {self.missing()}")
         drives = {i: self._pending_drive[i] for i in self.ros_cars}
-        decisions = {i: self._pending_decision[i] for i in self.ros_cars} if self.boundary else {}
+        decisions = {i: [self._pending_decision[i]] for i in self.ros_cars} if self.boundary else {}
         ages = {i: 0 for i in self.ros_cars}
         return self._apply(drives, decisions, ages, {i: True for i in self.ros_cars}, mode="lockstep")
 
     def advance_async(self, latest_drive: Dict[int, Tuple[float, float, int]],
-                      latest_decision: Dict[int, Optional[dict]]) -> StepOutcome:
-        """Async: the wall clock decides when the plant moves; apply the LATEST command each
-        car has sent, whatever tick it was for.
+                      decisions: Dict[int, Optional[Sequence[dict]]]) -> StepOutcome:
+        """Async: the wall clock decides when the plant moves; apply the LATEST drive command
+        each car has sent, whatever tick it was for, and EVERY decision not applied yet.
 
         ``latest_drive[i] = (steer, speed, stamp_tick)`` is the newest drive command heard
-        from car i (the stamp tells how old it is); a car that has never answered gets the
-        neutral hold ``(0.0, coop_speed)`` with an age of the whole episode so far. At a
-        boundary ``latest_decision[i]`` is the newest decision dict not yet applied, or None
-        (which means STAY: the targets do not change). Command age, freshness, and the
-        decisions actually applied are recorded, so the run is replayable and measurable.
+        from car i; the stamp says how old it is. A stamp from before this episode began is a
+        leftover from an earlier one and is ignored (counted as stale); a stamp from the future
+        is a protocol breach. A car that has not sent any command yet in this episode keeps the
+        plant's own row (the seam's default: the lane-keeping controller in its current lane),
+        recorded with age ``NO_COMMAND_YET`` and not fresh, so those ticks are counted apart
+        from real commands.
+
+        At a boundary ``decisions[i]`` lists the decision dicts heard from car i since the last
+        boundary, in the order they were sent, each with its ``tick`` (and ``episode``). All of
+        them are applied in that order, so a decision that arrived one tick late is applied at
+        the next boundary before the on-time one, and the plant's targets follow the node's.
+        None or an empty list means STAY. A decision for another episode is ignored (stale);
+        one for a tick that has not happened yet is a protocol breach.
         """
-        drives, ages, fresh, decisions = {}, {}, {}, {}
+        drives, ages, fresh, decs = {}, {}, {}, {}
         for i in self.ros_cars:
-            if i in latest_drive and latest_drive[i] is not None:
-                steer, speed, stamp = latest_drive[i]
+            cmd = latest_drive.get(i)
+            if cmd is not None:
+                steer, speed, stamp = cmd
+                stamp = int(stamp)
+                if stamp > self.stamp_tick:
+                    raise ProtocolError(f"car {i}: a drive stamped for tick {stamp - self.start_tick}, "
+                                        f"which has not happened yet (now tick {self.tick})")
+                if stamp < self.start_tick:
+                    self._count_stale()              # left over from an earlier episode
+                    cmd = None
+            if cmd is not None:
                 drives[i] = (self.wire_dtype(steer), self.wire_dtype(speed))
-                ages[i] = max(0, self.stamp_tick - int(stamp))
+                ages[i] = self.stamp_tick - stamp
                 fresh[i] = ages[i] == 0
             else:
-                drives[i] = (self.wire_dtype(0.0), self.wire_dtype(self.cfg.coop_speed))
-                ages[i] = self.tick
+                drives[i] = None
+                ages[i] = NO_COMMAND_YET
                 fresh[i] = False
             if self.boundary:
-                d = latest_decision.get(i)
-                decisions[i] = d if d is not None else dict(action=STAY, obs=None, s=np.nan, d=np.nan, lane=-1, tangent=np.nan)
-        return self._apply(drives, decisions, ages, fresh, mode="async")
+                kept = []
+                for d in (decisions.get(i) or []):
+                    if d.get("episode") is not None and int(d["episode"]) != self.episode:
+                        self._count_stale()
+                        continue
+                    if d.get("tick") is not None and int(d["tick"]) > self.tick:
+                        raise ProtocolError(f"car {i}: a decision for tick {int(d['tick'])}, "
+                                            f"which has not happened yet (now tick {self.tick})")
+                    kept.append(d)
+                decs[i] = kept
+        return self._apply(drives, decs, ages, fresh, mode="async")
 
-    def _apply(self, drives: Dict[int, Tuple], decisions: Dict[int, dict], ages: Dict[int, int],
+    def _apply(self, drives: Dict[int, Optional[Tuple]], decisions: Dict[int, Sequence[dict]], ages: Dict[int, int],
                fresh: Dict[int, bool], mode: str) -> StepOutcome:
         env, cfg, rec = self.env, self.cfg, self.record
         K = cfg.num_cooperators
@@ -366,22 +396,29 @@ class BridgeCore:
 
         if boundary:
             dec_arr = np.zeros(K, dtype=np.int64)
+            applied: List[List[int]] = [[] for _ in range(K)]
             node_obs = np.full((K, feature_count(cfg)), np.nan, dtype=np.float32)
             node_frame = np.full((K, 4), np.nan, dtype=np.float64)
             for i in self.ros_cars:
-                dec = decisions[i]
-                env.set_decision(i - 1, dec["action"])
-                dec_arr[i - 1] = dec["action"]
-                if dec.get("obs") is not None:
-                    node_obs[i - 1] = dec["obs"]
-                    node_frame[i - 1] = (dec["s"], dec["d"], dec["lane"], dec["tangent"])
+                decs = list(decisions.get(i) or [])
+                if not decs:
+                    decs = [dict(action=STAY, obs=None, s=np.nan, d=np.nan, lane=-1, tangent=np.nan)]
+                for dec in decs:                       # in the order the node took them
+                    env.set_decision(i - 1, int(dec["action"]))
+                    applied[i - 1].append(int(dec["action"]))
+                    if dec.get("obs") is not None:
+                        node_obs[i - 1] = dec["obs"]
+                        node_frame[i - 1] = (dec["s"], dec["d"], dec["lane"], dec["tangent"])
+                dec_arr[i - 1] = applied[i - 1][-1]
             for j in range(K):
                 if (1 + j) not in self.ros_cars:
                     a = int(self.fallback(self._obs_t[j], cfg))
                     env.set_decision(j, a)
                     dec_arr[j] = a
+                    applied[j] = [a]
             rec.boundary_ticks.append(self.tick)
             rec.decisions.append(dec_arr)
+            rec.decisions_applied.append(applied)
             rec.obs_t.append(self._obs_t.copy())
             rec.node_obs.append(node_obs)
             rec.node_frame.append(node_frame)
@@ -391,11 +428,13 @@ class BridgeCore:
         age_arr = np.zeros(K, dtype=np.int64)
         fresh_arr = np.zeros(K, dtype=bool)
         for i in self.ros_cars:
+            age_arr[i - 1] = ages[i]
+            fresh_arr[i - 1] = bool(fresh[i])
+            if drives[i] is None:
+                continue                           # no command yet: the plant's own row stands
             s32, v32 = drives[i]
             rows[i] = (float(s32), float(v32))     # exactly the value that was on the wire
             wire[i - 1] = (s32, v32)
-            age_arr[i - 1] = ages[i]
-            fresh_arr[i - 1] = bool(fresh[i])
         speed_before = rows[1:1 + K, 1].copy()
         done = env.substep(rows)
         rec.rows_applied.append(env.rows_applied.copy())
@@ -488,6 +527,35 @@ def record_metrics(rec: Record) -> dict:
     }
 
 
+def timing_summary(rec: Record) -> dict:
+    """Check 13's numbers from a record. The real-time factor lives in ``meta`` (the shell
+    measures the wall clock); the rest comes from ``command_age`` / ``command_fresh`` over the
+    ROS cars. Ticks before a car's first command (age ``NO_COMMAND_YET``) are counted apart and
+    left out of the age statistics, which describe real commands only."""
+    K = int(rec.meta["cfg"]["num_cooperators"])
+    ros = [int(i) - 1 for i in rec.meta.get("ros_cars", range(1, K + 1))]
+    if not rec.command_age:
+        return dict(ticks=0, slots=0, never_answered_ticks=0, never_answered_per_car={}, cars_that_never_answered=[],
+                    held_ticks=0, held_fraction=None, mean_command_age=None, max_command_age=None,
+                    age_histogram=[0, 0, 0, 0])
+    ages = np.stack(rec.command_age)[:, ros]
+    fresh = np.stack(rec.command_fresh)[:, ros]
+    real = ages >= 0
+    never = ~real
+    held = real & ~fresh
+    hist = np.bincount(ages[real].reshape(-1), minlength=4) if real.any() else np.zeros(4, dtype=np.int64)
+    return dict(
+        ticks=int(ages.shape[0]), slots=int(ages.size),
+        never_answered_ticks=int(never.sum()),
+        never_answered_per_car={int(i + 1): int(never[:, k].sum()) for k, i in enumerate(ros)},
+        cars_that_never_answered=[int(i + 1) for k, i in enumerate(ros) if not fresh[:, k].any()],
+        held_ticks=int(held.sum()), held_fraction=float(held.sum() / ages.size),
+        mean_command_age=float(ages[real].mean()) if real.any() else None,
+        max_command_age=int(ages[real].max()) if real.any() else None,
+        age_histogram=[int(hist[0]), int(hist[1]), int(hist[2]), int(hist[3:].sum())],
+    )
+
+
 # -- the exact replay (check 5a) -----------------------------------------------------
 @dataclass
 class ReplayReport:
@@ -520,8 +588,11 @@ def replay(rec: Record) -> ReplayReport:
             return diff(0, "the state after reset differs")
         for t in range(T):
             if t in boundaries:
+                b = boundaries[t]
                 for j in range(K):
-                    env.set_decision(j, int(rec.decisions[boundaries[t]][j]))
+                    acts = rec.decisions_applied[b][j] if rec.decisions_applied else [int(rec.decisions[b][j])]
+                    for a in acts:
+                        env.set_decision(j, int(a))
             env.joint_action_rows()
             try:
                 done = env.substep(rec.rows_applied[t])
