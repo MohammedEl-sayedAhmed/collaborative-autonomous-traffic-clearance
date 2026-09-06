@@ -3,7 +3,7 @@
 > Several small self-driving cars work together to open a path for an emergency vehicle.
 > They talk to each other over car-to-car radio, and they learn *when and how* to move aside.
 
-![Stack](https://img.shields.io/badge/ROS%202-Jazzy%20(in%20progress)-22314E?logo=ros&logoColor=white)
+![Stack](https://img.shields.io/badge/ROS%202-Jazzy-22314E?logo=ros&logoColor=white)
 ![Gym](https://img.shields.io/badge/RL-f1tenth__gym-4B8BBE)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Docker](https://img.shields.io/badge/Run-Dockerized-2496ED?logo=docker&logoColor=white)
@@ -26,7 +26,7 @@ ROS 2.
 
 | Line | State |
 |------|-------|
-| **v1.0.0**, ROS 2 / Python 3 (this `master`) | **In progress.** Done: **M0** (the simulator runs), **M1** (the `ClearanceEnv` scenario, baselines and a headroom check), **M2** (one central learned controller matches the hand-written ideal), **M3** (each car decides on its own and still matches). **M4** (the same cars as separate programs on ROS 2 Jazzy, checked against the plain run) is done. |
+| **v1.0.0**, ROS 2 Jazzy / Python 3.12 (this `master`) | **Done.** **M0** (the simulator runs), **M1** (the `ClearanceEnv` scenario, baselines and a headroom check), **M2** (one central learned controller matches the hand-written ideal), **M3** (each car decides on its own and still matches), **M4** (the same cars as separate programs on ROS 2 Jazzy, checked against the plain run). |
 | **v0.x**, ROS 1 Kinetic / Python 2 (legacy) | Frozen at tags `v0.1.0` to `v0.3.0`. Run `git checkout v0.3.0` for the full Gazebo project. Removed from `master` in M1 ([ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md)). Its docs are in [`docs/legacy/`](docs/legacy/). |
 
 Every big decision, and why we made it, is written down as a short **Architecture Decision Record**
