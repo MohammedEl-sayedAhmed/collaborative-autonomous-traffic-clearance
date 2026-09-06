@@ -555,3 +555,75 @@ def test_speedup_nodes_on_strict_are_capped_through_the_digest():
         assert capped > 0
     finally:
         bridge.close()
+
+
+# -- M4.4 in-process: the async path ---------------------------------------------------------------
+def test_async_advance_holds_the_latest_command_and_records_its_age():
+    """A slow node that answers only every other tick: the plant keeps moving with the last
+    command it heard, and the record says how old each applied command was."""
+    from caatc.ros_geometry import quat_to_yaw, yaw_to_quat
+
+    cfg = strict_preset()
+    K = cfg.num_cooperators
+    bridge = BridgeCore(cfg, ros_cars=[1])
+    node = NodeCore(cfg, 1)
+    try:
+        st = bridge.begin_episode(0)
+        latest_drive, latest_decision = {}, {}
+        while True:
+            # the node sees every state (the bridge publishes every tick), but its answer only
+            # reaches the bridge in time every second tick: a slow wire
+            samples = {c["i"]: CarSample(c["x"], c["y"], quat_to_yaw(*yaw_to_quat(c["theta"])), c["v"]) for c in st.cars}
+            out = node.on_tick(st.episode, st.tick, samples, own_delta=st.cars[1]["delta"])
+            if out.decision is not None:
+                d = out.decision
+                latest_decision[1] = dict(action=d.action, obs=d.obs, s=d.s, d=d.d, lane=d.lane, tangent=d.tangent)
+            if st.tick % 2 == 0:
+                latest_drive[1] = (float(out.steer), float(out.speed), st.stamp_tick)
+            res = bridge.advance_async(latest_drive, latest_decision)
+            if bridge.boundary:
+                latest_decision = {}                 # a decision is applied once
+            if res.episode_over:
+                break
+            st = bridge.state()
+        rec = bridge.record
+        ages = np.stack(rec.command_age)[:, 0]
+        fresh = np.stack(rec.command_fresh)[:, 0]
+        assert rec.meta["mode"] == "async"
+        assert set(ages.tolist()) == {0, 1} and fresh.mean() == pytest.approx(0.5, abs=0.01)
+        assert len(rec.command_age) == len(rec.rows_applied)
+        # the plant never stopped: every tick got a row for the ROS car, and the episode ended
+        assert rec.terminated[-1] or rec.truncated[-1]
+        # a record from the async path still replays exactly
+        assert replay(rec).exact
+        m = bridge.episode_metrics()
+        print(f"\nasync, node at half rate: success={m['success']} t_clear={m['t_clear']} yields={m['lane_changes']}")
+    finally:
+        bridge.close()
+
+
+def test_async_with_a_car_that_never_answers_uses_the_neutral_hold():
+    cfg = easy_preset()
+    bridge = BridgeCore(cfg, ros_cars=[1])
+    try:
+        bridge.begin_episode(0)
+        res = bridge.advance_async({}, {})
+        rec = bridge.record
+        assert rec.wire[0][0, 1] == np.float32(cfg.coop_speed) and rec.wire[0][0, 0] == 0.0
+        assert rec.command_age[0][0] == 0 and not rec.command_fresh[0][0]   # nothing ever arrived: not fresh, age = ticks so far
+        bridge.advance_async({}, {})
+        assert rec.command_age[1][0] == 1
+        assert int(rec.decisions[0][0]) == 0                                # STAY when no decision arrived
+    finally:
+        bridge.close()
+
+
+def test_lockstep_records_say_lockstep_and_are_always_fresh():
+    cfg = easy_preset()
+    bridge = run_lockstep_inprocess(cfg, 0, ros_cars=[1])
+    try:
+        rec = bridge.record
+        assert rec.meta["mode"] == "lockstep"
+        assert all(bool(f[0]) for f in rec.command_fresh) and all(int(a[0]) == 0 for a in rec.command_age)
+    finally:
+        bridge.close()

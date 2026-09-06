@@ -20,6 +20,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from .actions import STAY
 from .clearance_env import ClearanceEnv
 from .decentralized import LocalIdealCooperator
 from .obs_spec import feature_count
@@ -89,6 +90,8 @@ class Record:
     speed_before_rule: List[np.ndarray] = field(default_factory=list)  # T x (K,)
     done: List[bool] = field(default_factory=list)
     republishes: List[int] = field(default_factory=list)
+    command_age: List[np.ndarray] = field(default_factory=list)     # T x (K,) ticks: how old each applied command was
+    command_fresh: List[np.ndarray] = field(default_factory=list)   # T x (K,) bool: a new command arrived for this tick
     boundary_ticks: List[int] = field(default_factory=list)
     decisions: List[np.ndarray] = field(default_factory=list)      # B x (K,)
     obs_t: List[np.ndarray] = field(default_factory=list)          # B x (K, F) float32
@@ -118,6 +121,7 @@ class Record:
             cars_state=stk(self.cars_state, (0, N, len(STATE_FIELDS))), rows_applied=stk(self.rows_applied, (0, N, 2)),
             wire=stk(self.wire, (0, K, 2), np.float32), speed_before_rule=stk(self.speed_before_rule, (0, K)),
             done=st(self.done, bool), republishes=st(self.republishes, np.int64),
+            command_age=stk(self.command_age, (0, K), np.int64), command_fresh=stk(self.command_fresh, (0, K), bool),
             boundary_ticks=st(self.boundary_ticks, np.int64), decisions=stk(self.decisions, (0, K), np.int64),
             obs_t=stk(self.obs_t, (0, K, F), np.float32), node_obs=stk(self.node_obs, (0, K, F), np.float32),
             node_frame=stk(self.node_frame, (0, K, 4)),
@@ -133,6 +137,8 @@ class Record:
         rec.cars_state = list(g["cars_state"]); rec.rows_applied = list(g["rows_applied"])
         rec.wire = list(g["wire"]); rec.speed_before_rule = list(g["speed_before_rule"])
         rec.done = [bool(x) for x in g["done"]]; rec.republishes = [int(x) for x in g["republishes"]]
+        rec.command_age = list(g["command_age"]) if "command_age" in g else []
+        rec.command_fresh = list(g["command_fresh"]) if "command_fresh" in g else []
         rec.boundary_ticks = [int(x) for x in g["boundary_ticks"]]; rec.decisions = list(g["decisions"])
         rec.obs_t = list(g["obs_t"]); rec.node_obs = list(g["node_obs"]); rec.node_frame = list(g["node_frame"])
         rec.commit_ticks = [int(x) for x in g["commit_ticks"]]; rec.rewards = [float(x) for x in g["rewards"]]
@@ -313,41 +319,83 @@ class BridgeCore:
 
     # -- the tick ------------------------------------------------------------------
     def advance(self) -> StepOutcome:
+        """Lockstep: every ROS car's command for THIS tick is in; apply them."""
         if not self.ready():
             raise ProtocolError(f"not ready: missing {self.missing()}")
+        drives = {i: self._pending_drive[i] for i in self.ros_cars}
+        decisions = {i: self._pending_decision[i] for i in self.ros_cars} if self.boundary else {}
+        ages = {i: 0 for i in self.ros_cars}
+        return self._apply(drives, decisions, ages, {i: True for i in self.ros_cars}, mode="lockstep")
+
+    def advance_async(self, latest_drive: Dict[int, Tuple[float, float, int]],
+                      latest_decision: Dict[int, Optional[dict]]) -> StepOutcome:
+        """Async: the wall clock decides when the plant moves; apply the LATEST command each
+        car has sent, whatever tick it was for.
+
+        ``latest_drive[i] = (steer, speed, stamp_tick)`` is the newest drive command heard
+        from car i (the stamp tells how old it is); a car that has never answered gets the
+        neutral hold ``(0.0, coop_speed)`` with an age of the whole episode so far. At a
+        boundary ``latest_decision[i]`` is the newest decision dict not yet applied, or None
+        (which means STAY: the targets do not change). Command age, freshness, and the
+        decisions actually applied are recorded, so the run is replayable and measurable.
+        """
+        drives, ages, fresh, decisions = {}, {}, {}, {}
+        for i in self.ros_cars:
+            if i in latest_drive and latest_drive[i] is not None:
+                steer, speed, stamp = latest_drive[i]
+                drives[i] = (self.wire_dtype(steer), self.wire_dtype(speed))
+                ages[i] = max(0, self.stamp_tick - int(stamp))
+                fresh[i] = ages[i] == 0
+            else:
+                drives[i] = (self.wire_dtype(0.0), self.wire_dtype(self.cfg.coop_speed))
+                ages[i] = self.tick
+                fresh[i] = False
+            if self.boundary:
+                d = latest_decision.get(i)
+                decisions[i] = d if d is not None else dict(action=STAY, obs=None, s=np.nan, d=np.nan, lane=-1, tangent=np.nan)
+        return self._apply(drives, decisions, ages, fresh, mode="async")
+
+    def _apply(self, drives: Dict[int, Tuple], decisions: Dict[int, dict], ages: Dict[int, int],
+               fresh: Dict[int, bool], mode: str) -> StepOutcome:
         env, cfg, rec = self.env, self.cfg, self.record
         K = cfg.num_cooperators
         boundary = self.boundary
         if boundary != (self.tick % cfg.substeps == 0):
             raise ProtocolError(f"the seam and the tick disagree on the step boundary at tick {self.tick}")
+        rec.meta.setdefault("mode", mode)
 
         if boundary:
-            decisions = np.zeros(K, dtype=np.int64)
+            dec_arr = np.zeros(K, dtype=np.int64)
             node_obs = np.full((K, feature_count(cfg)), np.nan, dtype=np.float32)
             node_frame = np.full((K, 4), np.nan, dtype=np.float64)
             for i in self.ros_cars:
-                dec = self._pending_decision[i]
+                dec = decisions[i]
                 env.set_decision(i - 1, dec["action"])
-                decisions[i - 1] = dec["action"]
-                node_obs[i - 1] = dec["obs"]
-                node_frame[i - 1] = (dec["s"], dec["d"], dec["lane"], dec["tangent"])
+                dec_arr[i - 1] = dec["action"]
+                if dec.get("obs") is not None:
+                    node_obs[i - 1] = dec["obs"]
+                    node_frame[i - 1] = (dec["s"], dec["d"], dec["lane"], dec["tangent"])
             for j in range(K):
                 if (1 + j) not in self.ros_cars:
                     a = int(self.fallback(self._obs_t[j], cfg))
                     env.set_decision(j, a)
-                    decisions[j] = a
+                    dec_arr[j] = a
             rec.boundary_ticks.append(self.tick)
-            rec.decisions.append(decisions)
+            rec.decisions.append(dec_arr)
             rec.obs_t.append(self._obs_t.copy())
             rec.node_obs.append(node_obs)
             rec.node_frame.append(node_frame)
 
         rows = env.joint_action_rows()
         wire = np.full((K, 2), np.nan, dtype=self.wire_dtype)
+        age_arr = np.zeros(K, dtype=np.int64)
+        fresh_arr = np.zeros(K, dtype=bool)
         for i in self.ros_cars:
-            s32, v32 = self._pending_drive[i]
+            s32, v32 = drives[i]
             rows[i] = (float(s32), float(v32))     # exactly the value that was on the wire
             wire[i - 1] = (s32, v32)
+            age_arr[i - 1] = ages[i]
+            fresh_arr[i - 1] = bool(fresh[i])
         speed_before = rows[1:1 + K, 1].copy()
         done = env.substep(rows)
         rec.rows_applied.append(env.rows_applied.copy())
@@ -355,6 +403,8 @@ class BridgeCore:
         rec.speed_before_rule.append(speed_before)
         rec.done.append(bool(done))
         rec.republishes.append(self._republishes_this_tick)
+        rec.command_age.append(age_arr)
+        rec.command_fresh.append(fresh_arr)
         rec.cars_state.append(cars_to_array(env.cars))
 
         committed = None
