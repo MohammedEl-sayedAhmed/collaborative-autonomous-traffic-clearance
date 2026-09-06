@@ -4,13 +4,13 @@
 **Collaborative Autonomous Traffic Clearance**: several 1/10-scale self-driving cars learn to clear a
 path for an **emergency vehicle**, talking to each other over V2V (vehicle-to-vehicle radio). It was a
 2020 graduation project on ROS Kinetic / Gazebo 7 / Python 2 (the F1TENTH / MIT racecar stack). It is
-now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tenth_gym`.
+now rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tenth_gym`.
 
 ## Where things stand (read this first)
 - **The old ROS 1 / Python 2 line** is frozen at tags **`v0.1.0`** (as it was), **`v0.2.0`** (fixed and
   reproducible), **`v0.3.0`** (improved). `git checkout v0.3.0` to see it. It was **removed from
   `master` in M1** (ADR 0003). Its docs are in **`docs/legacy/`**.
-- **The v1.0.0 rewrite (ROS 2 Jazzy / Python 3.12)** is in progress, learning first (see `docs/adr/`):
+- **The v1.0.0 rewrite (ROS 2 Jazzy / Python 3.12)** is complete, M0 to M4, built learning first (see `docs/adr/`):
   - **M0, done:** the `caatc/` package on **f1tenth_gym v1.0.0** (Gymnasium API, several cars), in
     Docker, no screen needed. Check: `./run.sh gym-build && ./run.sh gym-smoke`.
   - **M1, done:** the `ClearanceEnv` wrapper. `agent_0` is the scripted emergency vehicle; K
