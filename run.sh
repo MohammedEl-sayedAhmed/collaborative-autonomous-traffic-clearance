@@ -115,6 +115,11 @@ case "${1:-help}" in
   ros-fleet)                           # M4.2/3: all K cars over the V2V relay on the learned policy, gate + bag + dashboard
     shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --fleet --v2v --gate --bag --dashboard \
       --policy numpy:caatc/policies/ippo-strict --out-dir /src/saved_variables/ros/fleet "$@" ;;
+  ros-async)                           # M4.4: the honest demo: nobody waits; command age, drops and real-time factor measured
+    shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --fleet --v2v --async --pace 1.0 \
+      --policy numpy:caatc/policies/ippo-strict --preset strict --seeds 0,1 --out-dir /src/saved_variables/ros/async "$@" ;;
+  ros-sweep)                           # M4.4: the measured columns: message loss and delay through the relay -> results.md
+    shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_sweep "$@" ;;
   ros-demo)                            # M4.3: watch it: fleet at real time on domain 42 with the scene; open RViz with ros-view 42
     shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --fleet --v2v --view --pace 1.0 --domain 42 \
       --policy numpy:caatc/policies/ippo-strict --preset strict --seeds 0,1,2 --out-dir /src/saved_variables/ros/demo "$@" ;;
@@ -187,6 +192,8 @@ Collaborative Autonomous Traffic Clearance — ./run.sh <command> [extra args]
     ros-fleet         M4.2: all K cars over the V2V relay on the exported policy, with the gate (check 7)
     ros-gate          every ROS check in one go: fleet on strict/hard/easy, naive and speedup must fail
                         on strict (checks 10/11), and the stress run
+    ros-async         M4.4: the async run (nobody waits): command age, drops, real-time factor (check 13)
+    ros-sweep         M4.4 results: the fleet under message loss and delay (saved_variables/ros/sweep/results.md)
     ros-demo          Watch it: the fleet at real time on DDS domain 42, with the scene markers
     ros-view-build    Build the viewing image (caatc-ros + rviz2); then, beside ros-demo: ./run.sh ros-view 42
     ros-shell         A shell inside the ROS 2 image, with ROS sourced

@@ -132,6 +132,7 @@ class FleetOptions:
     bag: bool = False
     view: bool = False
     pace: float = 0.0
+    async_mode: bool = False
 
 
 def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOptions,
@@ -156,6 +157,8 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOp
         bridge_cmd += ["--republish-period", str(republish_period)]
     if fleet.pace > 0:
         bridge_cmd += ["--pace", str(fleet.pace)]
+    if fleet.async_mode:
+        bridge_cmd += ["--async"]
     view_cmd = [sys.executable, "-m", "caatc_ros.scene_view", "--preset", preset]
     relay_cmd = [sys.executable, "-m", "caatc_ros.v2v_relay", "--preset", preset, "--out-dir", out_dir,
                  "--loss", str(fleet.loss), "--delay-ticks", str(fleet.delay_ticks), "--seed", str(fleet.relay_seed)]
@@ -684,6 +687,24 @@ def check_bag_replay(g: Gate, out_dir: str, preset: str, fleet: "FleetOptions", 
                 f"{r['decisions_total']} decisions, missing {r['decisions_missing']}, differ {r['decisions_differ']}")
 
 
+def check_timing(g: Gate, records: List[Tuple[str, Record]], pace: float) -> None:
+    """Check 13: measured, not required. The real-time factor, command age and drops of an async run."""
+    print("\nCheck 13: timing of the async run (measured, published, not required)")
+    for _p, rec in records:
+        m = rec.meta
+        g.check(f"{label_of(rec)}: the run is an async run with timing recorded", m.get("mode") == "async" and m.get("real_time_factor") is not None,
+                f"mode={m.get('mode')}")
+        if m.get("real_time_factor") is None:
+            continue
+        print(f"    {label_of(rec)}: pace {m.get('pace')}x, real-time factor {m['real_time_factor']:.2f} "
+              f"({m['sim_seconds']:.2f} simulated s in {m['wall_seconds']:.2f} wall s), mean command age "
+              f"{m['mean_command_age']:.2f} ticks, max {m['max_command_age']}, drop fraction {m['drop_fraction']:.3f}")
+        ages = np.stack(rec.command_age) if rec.command_age else None
+        if ages is not None:
+            hist = np.bincount(ages[:, [i - 1 for i in m['ros_cars']]].reshape(-1), minlength=4)
+            print(f"    command age histogram (ticks 0,1,2,3+): {hist[0]}, {hist[1]}, {hist[2]}, {int(hist[3:].sum())}")
+
+
 def check_gate_report(g: Gate, out_dir: str, gate_code: Optional[int]) -> None:
     """Check 7 from the gate node's report."""
     print("\nCheck 7: subscription hygiene (the gate node's report)")
@@ -822,6 +843,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="record the allow-listed topics into a rosbag2 and replay them into fresh nodes (check 8)")
     ap.add_argument("--view", action="store_true", help="start the scene_view node (markers on /caatc/scene, frames on /tf)")
     ap.add_argument("--pace", type=float, default=0.0, help="bridge real-time factor for watching (1.0 = real time)")
+    ap.add_argument("--async", dest="async_mode", action="store_true",
+                    help="M4.4: the bridge advances on the wall clock with the latest commands; check 13 measures the timing")
     ap.add_argument("--dashboard", action="store_true",
                     help="also write the run to saved_variables/runs/ so it shows on the dashboard")
     ap.add_argument("--loss", type=float, default=0.0, help="relay: drop probability per broadcast (M4.4)")
@@ -837,8 +860,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     cfg0 = preset_config(a.preset)
     cars = list(range(1, cfg0.num_cooperators + 1)) if a.fleet else [a.car]
     fleet = FleetOptions(cars=cars, v2v=a.v2v, policy=a.policy, gate=a.gate, loss=a.loss, delay_ticks=a.delay_ticks,
-                         bag=a.bag, view=a.view, pace=a.pace)
-    radio_perfect = a.loss == 0.0 and a.delay_ticks == 0
+                         bag=a.bag, view=a.view, pace=a.pace, async_mode=a.async_mode)
+    radio_perfect = a.loss == 0.0 and a.delay_ticks == 0 and not a.async_mode   # async: timing, not faithfulness
     if a.v2v and not a.fleet and a.gate:
         pass    # a single car over the digest with the gate is fine too
     print(f"=== ROS 2 lockstep smoke: preset={a.preset} seeds={seeds if seeds is not None else 'from the records'} "
@@ -879,7 +902,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     logs = {name: read_log(path) for name, path in log_paths.items() if name not in ("gate", "recorder", "view")}
     check_bookkeeping_and_fingerprint(g, records, logs, stress=a.stress)
     if records:
-        check_frame_agreement(g, records)
+        if a.async_mode:
+            print("\nasync: checks 3, 4 and 6 compare a node's numbers with the bridge's state at the SAME tick; a "
+                  "decision applied at a boundary may have been taken a tick earlier, so they belong to lockstep "
+                  "(where they pass) and are skipped here; check 13 measures the timing instead")
+        else:
+            check_frame_agreement(g, records)
         if radio_perfect:
             if a.v2v:
                 print("\n(check 4 below is check 12 too: the nodes built their observation from the digest alone)")
@@ -890,6 +918,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         check_exact_replay(g, records)
         check_against_headless(g, records, a.policy, a.expect_fail, radio_perfect)
         check_speed_rule(g, records)
+        if a.async_mode:
+            check_timing(g, records, a.pace)
         if a.gate:
             check_gate_report(g, a.out_dir, run.gate_code if run is not None else None)
         if a.bag and run is not None:

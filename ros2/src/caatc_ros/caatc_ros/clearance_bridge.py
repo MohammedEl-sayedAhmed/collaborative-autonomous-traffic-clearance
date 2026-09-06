@@ -38,7 +38,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 import rclpy
@@ -87,6 +87,7 @@ class BridgeSettings:
     first_tick_timeout: float = BridgeCore.FIRST_TICK_TIMEOUT_S
     republish_period: float = BridgeCore.REPUBLISH_PERIOD_S
     pace: float = 0.0            # 0 = as fast as the nodes answer; 1.0 = real time (for watching)
+    async_mode: bool = False     # the wall clock decides when the plant moves; the latest command counts
 
 
 def int_list(value) -> List[int]:
@@ -114,12 +115,16 @@ def parse_settings(argv: Sequence[str]) -> BridgeSettings:
                     help="re-publish the tick's state this often (wall clock) while waiting")
     ap.add_argument("--pace", type=float, default=d.pace,
                     help="real-time factor for watching: 1.0 = one simulated second per wall second; 0 = as fast as possible")
+    ap.add_argument("--async", dest="async_mode", action="store_true",
+                    help="M4.4: do not wait for the cars; advance on the wall clock (--pace, default 1.0) with the "
+                         "latest command each car sent, and measure command age, drops and the real-time factor")
     a = ap.parse_args(list(argv))
     seeds = int_list(a.seeds)
     if not seeds or any(not INT32[0] <= s <= INT32[1] for s in seeds):
         ap.error("--seeds needs at least one int32 seed")
+    pace = a.pace if not a.async_mode or a.pace > 0 else 1.0
     return BridgeSettings(a.preset, seeds, int_list(a.ros_cars), a.out_dir,
-                          a.per_tick_timeout, a.first_tick_timeout, a.republish_period, a.pace)
+                          a.per_tick_timeout, a.first_tick_timeout, a.republish_period, pace, a.async_mode)
 
 
 class ClearanceBridge(Node):
@@ -135,6 +140,9 @@ class ClearanceBridge(Node):
         self.seed = 0                        # the running episode's reset seed (Episode.seed)
         self.failed: Optional[str] = None    # set by a callback that saw a protocol breach
         self.received = 0                    # every Drive or Decision that reached a callback
+        # async mode: the newest command each car sent, and the decisions not yet applied
+        self.latest_drive: Dict[int, tuple] = {}
+        self.pending_decision: Dict[int, dict] = {}
 
         n = self.cfg.num_agents
         self.pub_episode = self.create_publisher(Episode, "/caatc/episode", 10)
@@ -155,7 +163,8 @@ class ClearanceBridge(Node):
         log.info("versions " + json.dumps(self.versions, sort_keys=True))
         log.info(f"preset={s.preset} N={n} K={self.cfg.num_cooperators} ros_cars={self.core.ros_cars} "
                  f"seeds={s.seeds} out_dir={s.out_dir} timeouts={s.first_tick_timeout}s/{s.per_tick_timeout}s "
-                 f"republish={s.republish_period}s pace={'as fast as possible' if s.pace <= 0 else f'{s.pace:g}x real time'}")
+                 f"republish={s.republish_period}s pace={'as fast as possible' if s.pace <= 0 else f'{s.pace:g}x real time'} "
+                 f"mode={'async' if s.async_mode else 'lockstep'}")
 
     def _declare_settings(self, cli: BridgeSettings) -> BridgeSettings:
         """Declare every setting as a ROS parameter with the CLI value as default; overrides win."""
@@ -170,13 +179,14 @@ class ClearanceBridge(Node):
         self.declare_parameter("first_tick_timeout", float(cli.first_tick_timeout), loose)
         self.declare_parameter("republish_period", float(cli.republish_period), loose)
         self.declare_parameter("pace", float(cli.pace), loose)
+        self.declare_parameter("async_mode", bool(cli.async_mode))
         p = lambda name: self.get_parameter(name).value  # noqa: E731
         preset = str(p("preset")).lower()
         if preset not in PRESETS:
             raise ValueError(f"unknown preset '{preset}' (easy|hard|strict)")
         return BridgeSettings(preset, int_list(p("seeds")), int_list(p("ros_cars")), str(p("out_dir")),
                               float(p("per_tick_timeout")), float(p("first_tick_timeout")),
-                              float(p("republish_period")), float(p("pace")))
+                              float(p("republish_period")), float(p("pace")), bool(p("async_mode")))
 
     # -- outgoing: the tick's state ----------------------------------------------------
     def publish_state(self, st: BridgeState, ended: bool = False) -> None:
@@ -209,6 +219,11 @@ class ClearanceBridge(Node):
         try:
             # the node echoes the Odometry stamp; a stamp off the tick grid is a breach
             stamp_tick = stamp_tick_or_breach(f"/car{car}/drive", msg.header.stamp, self.cfg.sim_hz)
+            if self.settings.async_mode:
+                prev = self.latest_drive.get(car)
+                if prev is None or stamp_tick >= prev[2]:
+                    self.latest_drive[car] = (msg.drive.steering_angle, msg.drive.speed, stamp_tick)
+                return
             key = core.key_for_stamp_tick(stamp_tick)
             if key is None:
                 core.note_stale()                  # stamped before the first episode began
@@ -224,6 +239,11 @@ class ClearanceBridge(Node):
         try:
             if int(msg.car) != car:
                 raise ProtocolError(f"Decision.car = {int(msg.car)} arrived on /car{car}/decision")
+            if self.settings.async_mode:
+                self.pending_decision[car] = dict(action=int(msg.action), obs=np.asarray(msg.obs, dtype=np.float32),
+                                                  s=float(msg.s), d=float(msg.d), lane=int(msg.lane), tangent=float(msg.tangent),
+                                                  episode=int(msg.episode), tick=int(msg.tick))
+                return
             self.core.offer_decision(car, int(msg.episode), int(msg.tick), int(msg.action),
                                      np.asarray(msg.obs, dtype=np.float32),
                                      float(msg.s), float(msg.d), int(msg.lane), float(msg.tangent))
@@ -290,7 +310,7 @@ def run_episode(bridge: ClearanceBridge, seed: int,
 
     bridge.seed = int(seed)
     try:
-        return _lockstep(bridge, seed, pump)
+        return _async(bridge, seed, pump) if bridge.settings.async_mode else _lockstep(bridge, seed, pump)
     except (KeyboardInterrupt, ExternalShutdownException, RCLError) as e:
         # a signal (the smoke's timeout, or Ctrl-C) shut rclpy down under us: the record
         # is numpy only and still writes; the rclpy logger may not, so print instead
@@ -302,6 +322,59 @@ def run_episode(bridge: ClearanceBridge, seed: int,
         path = bridge.save_record()
         print(f"ABORTED episode {core.episode} at tick {core.tick}: {reason} -> {path}", file=sys.stderr)
         return EXIT_ABORTED
+
+
+def _async(bridge: ClearanceBridge, seed: int, pump: Callable[[], Optional[bool]]) -> int:
+    """Async mode: publish the state, hold each tick to its wall-clock slot while callbacks
+    arrive, then advance with the LATEST command from each car. Nothing waits for anyone.
+    Command age, freshness and the real-time factor are measured and written to the record."""
+    s, core, cfg = bridge.settings, bridge.core, bridge.cfg
+    bridge.latest_drive.clear(); bridge.pending_decision.clear()
+    bridge.publish_state(core.begin_episode(seed))
+    tick_s = 1.0 / cfg.sim_hz
+    wall_start = time.monotonic()
+    while True:
+        target = wall_start + (core.tick + 1) * tick_s / s.pace
+        while time.monotonic() < target:
+            pump()
+        if bridge.failed is not None:
+            return bridge.finish_aborted(bridge.failed)
+        if core.tick == 0:
+            problem = bridge.one_node_per_car()
+            if problem is not None:
+                core.abort(problem)
+                return bridge.finish_aborted(problem)
+        boundary = core.boundary
+        try:
+            out = core.advance_async(bridge.latest_drive, bridge.pending_decision)
+        except ProtocolError as e:
+            core.abort(str(e))
+            return bridge.finish_aborted(str(e))
+        if boundary:
+            bridge.pending_decision.clear()          # a decision is applied once
+        st = core.state()
+        if out.episode_over:
+            wall = time.monotonic() - wall_start
+            rec = core.record
+            ages = np.stack(rec.command_age) if rec.command_age else np.zeros((0, cfg.num_cooperators))
+            fresh = np.stack(rec.command_fresh) if rec.command_fresh else np.zeros((0, cfg.num_cooperators), bool)
+            ros = [i - 1 for i in core.ros_cars]
+            rec.meta.update(
+                pace=s.pace, wall_seconds=wall, sim_seconds=core.tick * tick_s,
+                real_time_factor=(core.tick * tick_s) / wall if wall > 0 else None,
+                mean_command_age=float(ages[:, ros].mean()) if ages.size else None,
+                max_command_age=int(ages[:, ros].max()) if ages.size else None,
+                drop_fraction=float(1.0 - fresh[:, ros].mean()) if fresh.size else None,
+            )
+            bridge.publish_state(st, ended=True)
+            path = bridge.save_record()
+            bridge.log_summary(path)
+            m = rec.meta
+            bridge.get_logger().info(f"async: pace {s.pace:g}x, real-time factor {m['real_time_factor']:.2f}, "
+                                     f"mean command age {m['mean_command_age']:.2f} ticks, max {m['max_command_age']}, "
+                                     f"drop fraction {m['drop_fraction']:.3f}")
+            return EXIT_OK
+        bridge.publish_state(st)
 
 
 def _lockstep(bridge: ClearanceBridge, seed: int, pump: Callable[[], Optional[bool]]) -> int:
