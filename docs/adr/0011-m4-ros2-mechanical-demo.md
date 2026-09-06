@@ -144,7 +144,7 @@ Everything the decision asked for was built, and the checks say what the plan ho
   four topics replays into a fresh node with identical decisions and commands (check 8); `naive` and
   `speedup` still fail on STRICT through the full graph (checks 10 and 11).
 - **The honest demo runs at real time.** In async mode nobody waits: real-time factor 1.00, about one
-  tick in fourteen on a 10 ms old command, never older, and the same outcome (check 13).
+  tick in twelve on a 10 ms old command, never older, and the same outcome (check 13).
 - **The one new result** came from the loss and delay tables, and it was not the one expected. On
   STRICT the learned policy leaves the EV's lane at once and never needs the radio: the outcome is the
   same with a blind radio. On HARD the radio carries the decision, and a lost or 500 ms old broadcast

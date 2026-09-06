@@ -26,7 +26,7 @@ ROS 2.
 
 | Line | State |
 |------|-------|
-| **v1.0.0**, ROS 2 / Python 3 (this `master`) | **In progress.** Done: **M0** (the simulator runs), **M1** (the `ClearanceEnv` scenario, baselines and a headroom check), **M2** (one central learned controller matches the hand-written ideal), **M3** (each car decides on its own and still matches). **M4** (the same cars as separate programs on ROS 2 Jazzy, checked against the plain run) is built and measured; the last docs pass is under way. |
+| **v1.0.0**, ROS 2 / Python 3 (this `master`) | **In progress.** Done: **M0** (the simulator runs), **M1** (the `ClearanceEnv` scenario, baselines and a headroom check), **M2** (one central learned controller matches the hand-written ideal), **M3** (each car decides on its own and still matches). **M4** (the same cars as separate programs on ROS 2 Jazzy, checked against the plain run) is done. |
 | **v0.x**, ROS 1 Kinetic / Python 2 (legacy) | Frozen at tags `v0.1.0` to `v0.3.0`. Run `git checkout v0.3.0` for the full Gazebo project. Removed from `master` in M1 ([ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md)). Its docs are in [`docs/legacy/`](docs/legacy/). |
 
 Every big decision, and why we made it, is written down as a short **Architecture Decision Record**
@@ -239,7 +239,7 @@ four topics. On all three presets, the ROS run and the plain run **agree on ever
 should fail (never moving, or only speeding up) do fail through the full graph.
 
 The bridge can also run **without waiting** for anyone (`ros-async`): at real time, about one tick in
-fourteen reuses a 10 ms old command, and the outcome is still the plain one. And the relay can **drop or
+twelve reuses a 10 ms old command, and the outcome is still the plain one. And the relay can **drop or
 delay** messages (`ros-sweep`). That gave M4's one new result: on STRICT the learned policy yields even
 with a blind radio, because leaving the EV's lane at once is the best move there anyway; on HARD the cars
 must hear the car in the side lane, and a lost or 500 ms old message makes a busy lane look empty, so they

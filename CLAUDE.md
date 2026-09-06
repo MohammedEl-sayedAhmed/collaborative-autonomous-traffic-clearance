@@ -58,7 +58,7 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
     strict, the stress run). **M4.3 done:** rosbag replay (check 8), the RViz scene (`ros-demo` +
     `ros-view 42`), `ros-video`, and a dashboard run. **M4.4 done:** the bridge's `--async` mode
     (nobody waits; check 13 measures command age, held ticks and the real-time factor: at real time
-    about 7% of ticks reuse a 10 ms old command and the outcome is unchanged, `./run.sh ros-async`) and
+    about 8% of ticks reuse a 10 ms old command and the outcome is unchanged, `./run.sh ros-async`) and
     the loss/delay sweep (`./run.sh ros-sweep`): on STRICT the policy yields even with a blind radio;
     on HARD a lost or 500 ms old broadcast makes an occupied lane look empty and the cars collide. The
     tables and the M4.1 / M4.2 contracts are in the design doc; ADR 0011 has the outcome.
@@ -127,11 +127,16 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
 - The network here is flaky. Retry git pushes and pulls and Docker image builds.
 
 ## Next step
-**Merge M4** (branch `feat/m4-ros2-demo`, the PR to `master`), then pick the next milestone. M4 is
-built and measured (ADR 0011, outcome section). Its idea in one line: keep **one** `ClearanceEnv` as the
-only physics, and let **K ROS 2 nodes, one per car**, replace exactly rows `1..K` of the per-tick action
-array. Nothing about the EV, the ACC law, the reward or the metrics changes, so the published numbers
-stay comparable.
+**M4 is done and merged (PR #18).** Pick the next milestone. The strongest candidate is roadmap item 20,
+a realistic radio: M4.4 showed on HARD that "not heard" must not mean "not there". The likely shape:
+keep the last heard position of a car for a short while, treat a lane with no recent broadcast as not
+clear, and retrain with loss and delay in the loop. That changes the observation, so the published
+tables get a **new** row, never a changed one. Also open: the bigger scenarios (roadmap 10), CI (16),
+and whether `master` now gets the `v1.0.0` tag (ADR 0003), which is the owner's call.
+
+M4's idea in one line, for context: keep **one** `ClearanceEnv` as the only physics, and let **K ROS 2
+nodes, one per car**, replace exactly rows `1..K` of the per-tick action array. Nothing about the EV,
+the ACC law, the reward or the metrics changes, so the published numbers stay comparable.
 
 The three choices: **ROS 2 Jazzy** (supported to May 2029; Humble stops in May 2027, ADR 0012), which
 means **Python 3.12 everywhere**; **standard ROS messages only** (`nav_msgs/Odometry`,

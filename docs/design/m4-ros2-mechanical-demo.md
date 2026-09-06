@@ -28,7 +28,7 @@ rosbag of only the allow-listed topics replays into fresh car nodes with identic
 commands (check 8), the scene is published for RViz (`./run.sh ros-demo` + `./run.sh ros-view 42`),
 a record draws as a video (`./run.sh ros-video`), and the run lands on the dashboard. **M4.4 is
 done:** the bridge can run without waiting for anyone (`./run.sh ros-async`): at real time the outcome
-is still the headless one, with about one tick in fourteen reusing a 10 ms old command. The loss and
+is still the headless one, with about one tick in twelve reusing a 10 ms old command. The loss and
 delay tables are measured (`./run.sh ros-sweep`), and they split the two presets: on STRICT the learned
 policy yields without using the radio at all (the outcome is the same even when no car hears anything),
 while on HARD a lost or 500 ms old broadcast makes an occupied lane look empty and the cars collide.
@@ -301,9 +301,10 @@ required); RViz being slow on the integrated GPU.
    `caatc/ros_video.py` draws a record as an mp4 without ROS; `--dashboard` writes the run for the
    dashboard. `./run.sh ros-gate` includes the bag check and passes.
 5. ~~**M4.4, the two measured variants**~~ done. The float32 wire changed nothing (0 differing ticks,
-   part of the M4.1 result). The bridge's `--async` mode advances on a wall clock without waiting and
-   holds a late car's previous command for one tick; check 13 measures command age, held ticks and the
-   real-time factor (`./run.sh ros-async`). `ros_sweep.py` runs the lockstep fleet through the relay
+   part of the M4.1 result). The bridge's `--async` mode advances on a wall clock without waiting: it
+   keeps a late car's previous command until a new one arrives, applies a decision that missed its
+   boundary at the next one, and drives a car with the plant's own row until its first command; check 13
+   measures command age, held ticks and the real-time factor (`./run.sh ros-async`). `ros_sweep.py` runs the lockstep fleet through the relay
    with message loss or delay and writes a results table (`./run.sh ros-sweep`). The results, M4's only
    new tables, are in the M4.4 section at the end of this document.
 6. **M4.5, the record** (about 1 day). This doc, ADR 0011, README / CLAUDE / ROADMAP / `run.sh`.
@@ -694,21 +695,28 @@ anything, and every number is reported as it came out.
 
 `./run.sh ros-async` runs the strict fleet on the exported policy with `--async --pace 1.0`. The bridge
 advances the physics every 10 ms of wall time whether or not a car's new command has arrived. When a
-command is late, the bridge keeps that car's previous command for one more tick and counts it. A car that
-has never answered is held at zero steering and the cooperators' cruise speed. Two seeds, one episode each:
+command is late, the bridge keeps that car's previous command until a new one arrives and counts every
+tick it did so. Until a car's first command arrives, the plant drives it with its own lane-keeping row,
+exactly as a headless run would, and counts those ticks apart (there were none here). A decision that
+misses its boundary is not lost: it is applied at the next boundary, before the on-time one, so the
+plant's lane bookkeeping (the yield count, the oscillation penalty) follows what the car actually did. A
+command stamped in an earlier episode is ignored; one stamped in the future stops the run. Two seeds, one
+episode each:
 
 | seed | real-time factor | simulated / wall | mean command age | oldest command | ticks on a held command | outcome |
 |---:|---:|---|---:|---:|---:|---|
-| 0 | 1.00 | 6.09 s / 6.09 s | 0.09 ticks | 1 tick | 8.6% (157 of 1,827) | success, `t_clear` 6.10 s, 3 yields, return 102.1 |
-| 1 | 1.00 | 6.10 s / 6.11 s | 0.06 ticks | 1 tick | 6.2% (114 of 1,830) | success, `t_clear` 6.10 s, 3 yields, return 102.2 |
+| 0 | 1.00 | 6.09 s / 6.09 s | 0.09 ticks | 1 tick | 9.4% (171 of 1,827) | success, `t_clear` 6.10 s, 3 yields, return 102.1 |
+| 1 | 1.00 | 6.10 s / 6.10 s | 0.07 ticks | 1 tick | 7.4% (135 of 1,830) | success, `t_clear` 6.10 s, 3 yields, return 102.2 |
 
 The lockstep run of the same seeds gives success, `t_clear` 6.10 s, 3 yields and return 102.2. So at
-real time, with nobody waiting, about one tick in fourteen ran on a command that was 10 ms old, no
-command was ever older than that, and the outcome did not move. Checks 3, 4 and 6 are skipped in this
+real time, with nobody waiting, about one tick in twelve ran on a command that was 10 ms old, no
+command was ever older than that, 21 and 19 decisions arrived one tick late and were applied at the next
+boundary, and the outcome did not move. Checks 3, 4 and 6 are skipped in this
 mode on purpose: they compare a car's numbers with the bridge's state *at the same tick*, and in async a
 command applied at a tick may have been decided one tick earlier. They pass in lockstep, which is where
-they belong. Check 5b (the same outcome as the headless run, within the declared tolerance) still runs,
-and passes.
+they belong. Check 5b's comparison with the headless run is printed, not required, in this mode: by
+the design's own rule a changed outcome in async is a measurement, not a failure. In these two runs the
+outcomes equalled the lockstep ones.
 
 ### 2. Loss and delay through the relay
 
