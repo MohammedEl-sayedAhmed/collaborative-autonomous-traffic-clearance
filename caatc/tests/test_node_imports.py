@@ -8,7 +8,7 @@ import sys
 
 NODE_MODULES = ["caatc.actions", "caatc.scenario", "caatc.frenet", "caatc.controllers",
                 "caatc.obs_spec", "caatc.decentralized", "caatc.ros_geometry", "caatc.ros_tick",
-                "caatc.ros_node_core", "caatc.policy_export"]
+                "caatc.ros_node_core", "caatc.policy_export", "caatc.ros_v2v"]
 
 
 def test_node_side_modules_do_not_import_the_simulator():
