@@ -261,8 +261,10 @@ required); RViz being slow on the integrated GPU.
    msgs_io,ros_smoke}.py`. **Result** (`./run.sh ros-smoke`, strict / easy / hard, seeds 0 and 1):
    every check passes; the replay is exact (608 to 609 ticks per episode); over 122 (boundary, car)
    pairs every observation element is exact, `heading_err` included; s, d and tangent exact; the ROS
-   run and the headless run differ on **0 ticks**; `stale_commands` 0. Checks 2 (lite), 3, 4, 5a, 5b
-   and 9 are in place. **Stop point 2: passed.**
+   run and the headless run differ on **0 ticks**; `stale_commands` 0; every decision equals the
+   reference policy's and every drive command the reference controller's (check 6, in-image).
+   Checks 2 (lite), 3, 4, 5a, 5b, 6 and 9 are in place; `./run.sh ros-smoke --stress` re-publishes
+   on every idle spin so the echo path is exercised on the bus too. **Stop point 2: passed.**
    **Stop point 2:** observation agreement and in-image replay agreement on one car, or the transport
    is wrong and nothing built on top could be trusted.
 3. **M4.2, the fleet, the radio, the constraint** (about 2 days). K car nodes, `v2v_relay` with the
@@ -543,3 +545,94 @@ A run that needs a looser tolerance than this **fails**. The measured values are
 import `caatc.clearance_env`, gymnasium or f1tenth_gym: the node has no simulator. A test
 (`test_node_imports.py`) imports the allowed modules in a fresh interpreter and fails if any of the
 forbidden ones appears in `sys.modules`.
+
+## M4.2 contract: the fleet, the radio, the learned policy
+
+M4.1 drove one car over ROS 2 while it could still hear every other car's raw odometry. M4.2 drives
+all K cars, replaces the raw odometry with a **relay** that models the radio, and runs the **learned**
+policy, exported to numpy, instead of the hand-written one. Everything from the M4.1 contract stays;
+this section adds to it.
+
+### What changes on the bus
+
+| topic | type | from → to | when |
+|---|---|---|---|
+| `/car{i}/v2v` | `caatc_msgs/V2VDigest` | relay → car node i, for every cooperator i | every tick, after the relay heard every car's odometry for that tick |
+
+The relay `/v2v_relay` subscribes to `/caatc/episode` and `/car{k}/odom` for every car k (it is the
+air: it hears everyone who broadcasts, the EV and the side traffic included). For each cooperator i
+and each tick it publishes one `V2VDigest(header.stamp echoed, tick, receiver = i, heard = [...])`
+holding one `Broadcast(car, role, x, y, theta, v, tick)` per car k != i whose distance along the road
+`|s_k - s_i|` is within the relay's range, after loss and delay (below). The EV is car 0 with role 0;
+cooperators role 1; side traffic role 2.
+
+**The car node's allow-list (M4.2):** `/caatc/episode`, `/car{i}/odom`, `/car{i}/joint_states`,
+`/car{i}/v2v`. Four topics. It no longer hears any other car directly. From here on checks 7 and 8
+test locality, not plumbing.
+
+**Completeness** now means: own odom, own joint_states, the Episode and the digest all carry the
+newest stamp. A re-published tick makes the relay re-publish its digests (from its cache, never
+recomputed), so the node's rule is unchanged.
+
+### Why the digest is enough (check 12)
+
+The observation builder reads, for every car other than the receiver, only `s, d, v, lane`, and it
+uses three gates: the EV block within `v2v_range` (25 m), the neighbour slots within `neighbor_gate`
+(= `v2v_range` unless overridden), and the side-lane flags within `clear_window` (6 m). So a digest
+that carries every car within `relay_range = max(v2v_range, neighbor_gate, clear_window)` carries
+everything the 26 numbers can depend on. The node builds the `cars` list in agent order as before,
+and fills the cars it did not hear with a **far-away placeholder** (`s = -1e6`, `d = 0`, `v = 0`,
+`lane = 0`). Every gate excludes a placeholder exactly as it excludes the real car that was out of
+range, so in lockstep with no loss the node's 26 numbers equal the simulator's to the bit. That is
+check 12, and it is a test in the pure cores (`test_ros_core.py`) before it is a check on the bus.
+The bridge refuses a configuration where `neighbor_gate > relay_range`.
+
+### Loss and delay (measured in M4.4, wired here)
+
+The relay takes `--loss p` (each `(sender, receiver, tick)` broadcast is dropped independently with
+probability p, from a seeded generator whose seed and every drop are written to the relay's record,
+so a run can be replayed) and `--delay-ticks d` (a digest at tick t carries the broadcasts of tick
+t - d; `Broadcast.tick` says how old each one is; the first d ticks carry nothing). Under loss or
+delay the node's observation legitimately differs from the simulator's, so check 4 runs with
+`p = 0, d = 0` only; the loss and delay columns are M4.4's measured results, not faithfulness checks.
+
+### The learned policy
+
+Each car node takes `--policy local-ideal` (M4.1's hand-written policy), `--policy numpy:<prefix>`
+(an exported actor, `caatc/policies/ippo-strict` by default; loaded with numpy alone; a weights file
+that does not match the sha256 in its `.json` is refused), or the two baselines `--policy naive` and
+`--policy speedup` for check 10. The exported actor is the deterministic torch policy: on 10,000 real
+observations it picks the same action every time (`test_policy_export.py`).
+
+### The checks M4.2 adds
+
+- **6, decision agreement:** every action a car node published equals `NumpyActor.act(obs_t[i - 1])`
+  on the bridge's boundary snapshot; a mismatch is allowed only on a near tie (two outputs within
+  1e-5), and the count is printed.
+- **7, subscription hygiene:** a `ros_gate` node runs for the whole episode, waits until every
+  `/car{i}/agent` is visible, samples the graph every 100 ms, and demands: the union of each car node's
+  subscriptions equals the four-topic allow-list; no `/car*` node subscribes to `/caatc/ground_truth`
+  or to any `/car{k}/odom` with k != i; the set of node names equals the declared set (bridge, relay,
+  K agents, gate). Car nodes stay alive until `Episode.ENDED` and the gate's last sample.
+- **10, headroom carry-over:** on STRICT through the full graph, `--policy naive` and `--policy
+  speedup` fail (0% success) while `numpy:ippo-strict` succeeds on every seed with 3 yields.
+- **11, constraint placement:** `--policy speedup` on STRICT: the plant caps the speed on every tick
+  the car is in the EV lane; the count of capped ticks is printed and must be > 0.
+- **12, peer sufficiency:** check 4 (exact observation agreement) now runs with the digest as the
+  node's only source of other cars.
+- **5b stays**, now with K ROS cars: the ROS run and the headless run of `SharedPolicySquad` on the
+  same seed give the same outcomes, and the EV's `s` at the same tick within one EV tick.
+
+### Records
+
+The relay writes one record per episode too: per tick, for every receiver, the set of cars heard and
+the drops. The bridge's record is unchanged, except that `ros_cars` now lists all K.
+
+### Node roles, restated
+
+| role | nodes | may hear | replaced by |
+|---|---|---|---|
+| DEPLOYED | `/car{i}/agent` ×K | own odom, own joint_states, own digest, Episode | nothing: this is the deliverable |
+| RADIO | `/v2v_relay` | every car's odom, Episode | a real radio |
+| SIMULATOR + REFEREE | `/clearance_bridge` | the K drive and decision topics | a 3D simulator or hardware (M5) |
+| GATE | `/ros_gate` | the graph, and the topics it audits | nothing |
