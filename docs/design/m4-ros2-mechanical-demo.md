@@ -18,9 +18,12 @@ results and ROS 2 for the mechanical proof, on a stack that is not end-of-life. 
 `caatc-ros` image is a numerical twin (check 1: **IDENTICAL**). **One car drives over ROS 2 in
 lockstep** (`./run.sh ros-smoke`): on strict, easy and hard the ROS run differs from the headless run
 on **zero ticks**, the replay is exact, the node's 26 numbers equal the bridge's exactly at every
-boundary, its decisions and drive commands are the reference's, and no command was ever stale. M4.2 is
-under way: the relay, the gate and the exported policy exist and are checked (see the M4.2 contract at
-the end); wiring them into the car node and the smoke is next.
+boundary, its decisions and drive commands are the reference's, and no command was ever stale. **M4.2 is done:
+all three cars drive over ROS 2 on the exported learned policy**, hearing each other only through the
+relay's digest, with the gate watching (`./run.sh ros-fleet`, `./run.sh ros-gate`): outcomes and
+returns identical to the headless run, observations from the digest exact, subscriptions equal to the
+four-topic allow-list, and the naive and speeding baselines fail on STRICT through the full graph.
+Next is M4.3: a rosbag, the RViz view, a dashboard run.
 
 M3 proved that each car can decide alone, using a Python wrapper (`LocalOnlyView`) and a pipe harness
 (`proc_fleet.py`). M4's job is to make the same property hold when the transport is **real**: DDS
@@ -269,9 +272,16 @@ required); RViz being slow on the integrated GPU.
    on every idle spin so the echo path is exercised on the bus too. **Stop point 2: passed.**
    **Stop point 2:** observation agreement and in-image replay agreement on one car, or the transport
    is wrong and nothing built on top could be trusted.
-3. **M4.2, the fleet, the radio, the constraint** (about 2 days). K car nodes, `v2v_relay` with the
-   `Broadcast` / `V2VDigest` messages, side-traffic broadcasts, the exported policy. Checks 5b, 6, 7,
-   10, 11, 12.
+3. **M4.2, the fleet, the radio, the constraint. DONE.** K car nodes (`--v2v --policy`), `v2v_relay`
+   with the `Broadcast` / `V2VDigest` messages (side traffic broadcasts too), the exported policy
+   (`caatc/policies/ippo-strict`), the gate node. **Result** (`./run.sh ros-gate`): on strict with the
+   learned policy the ROS fleet gives the same success, collisions, yields (3) and return as the
+   headless run on both seeds, the observations built from the digest alone equal the simulator's
+   exactly (checks 4 and 12), all three cars' subscriptions equal the allow-list and nobody listens to
+   the ground truth (check 7), every decision and drive command is the reference's (check 6); `naive`
+   and `speedup` fail on strict through the full graph (check 10) and the plant caps the speeding
+   fleet on 4,200 ticks (check 11); hard and easy fleets pass; the stress run exercises the
+   re-publish path with no stale command. **Stop points passed.**
 4. **M4.3, the evidence and the picture** (about 1.5 days). `rosbag2` and check 8; `scene_view`; the
    RViz layout; `write_run` to the dashboard; the mp4s.
 5. **M4.4, the two measured variants** (about 1 day). The float32 wire's effect; the async delay and
@@ -633,14 +643,12 @@ every drop it made, so a lossy run can be replayed. The bridge's record is uncha
 
 ### Where M4.2 stands
 
-Done: the relay's brain and the node-side digest rule (`caatc/ros_v2v.py`), with the in-process proof
-that the observation built from a digest equals the simulator's to the bit on all three presets; the
-exported numpy actor (`caatc/policy_export.py`, `caatc/policies/`), which picks the same action as the
-torch model on all 10,000 real observations tried; the relay node (`v2v_relay.py`: 1,824 digests over
-one episode, every one equal to `RelayCore` on the bridge's recorded positions) and the gate node
-(`ros_gate.py`, check 7), both checked on a live graph. Still to do: the car node reading its digest
-instead of the raw odometry and taking `--policy`; all K cars over ROS; the smoke's fleet mode with the
-relay, the gate and checks 6, 7, 10, 11 and 12.
+All of it is built and checked: the relay's brain and the node-side digest rule (`caatc/ros_v2v.py`,
+`caatc/ros_node_core.py`), the exported numpy actor (`caatc/policy_export.py`, `caatc/policies/`), the
+relay node (`v2v_relay.py`), the gate node (`ros_gate.py`), the car node's `--v2v` and `--policy`, and
+the smoke's fleet mode (`ros_smoke.py --fleet --v2v --policy ... --gate`, `--expect-fail` for checks 10
+and 11, `--loss` / `--delay-ticks` for M4.4). `./run.sh ros-gate` runs every check; see the plan above
+for the result.
 
 ### Node roles, restated
 

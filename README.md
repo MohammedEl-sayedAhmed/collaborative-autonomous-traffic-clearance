@@ -229,16 +229,21 @@ project's images moved to Python 3.12 too. One Python version everywhere means t
 in both places.
 
 **Where it stands:** the ROS 2 image is a numerical twin of the plain one (the same recorded runs
-replay in it bit for bit), and **one car already drives over ROS 2**: its own program receives its
-odometry, hears the other cars, decides, and publishes a steering and speed command every 10 ms. The
-bridge waits for that command before it moves the physics by one tick, so timing cannot blur the
-comparison. On all three presets, the ROS run and the plain run **agree on every tick**, and a saved
-run replays exactly. Try it:
+replay in it bit for bit), and **all three cars drive over ROS 2 on the learned policy**. Each car is
+its own program: it receives its own odometry, hears the other cars only through a relay that models
+the radio (range, and optionally loss and delay), decides with the trained network exported to plain
+numpy (no torch on the robot), and publishes a steering and speed command every 10 ms. The bridge
+waits for every car's command before it moves the physics by one tick, so timing cannot blur the
+comparison. A gate node watches the live graph and checks that no car listens to anything but its own
+four topics. On all three presets, the ROS run and the plain run **agree on every tick**; the cars that
+should fail (never moving, or only speeding up) do fail through the full graph. Try it:
 
 ```bash
 ./run.sh ros-build                          # once: ros:jazzy + our package + our messages
 ./run.sh ros-fingerprint --gate             # is the ROS image a numerical twin? (expect IDENTICAL)
 ./run.sh ros-smoke --preset strict --seeds 0,1   # one car over ROS 2, then the checks
+./run.sh ros-fleet --preset strict --seeds 0,1   # all three cars, the relay, the learned policy, the gate
+./run.sh ros-gate                           # every ROS check in one go (about 5 minutes)
 ```
 
 M4 is **not** trying to make the cars drive better. They already match the ideal. It has to prove three
