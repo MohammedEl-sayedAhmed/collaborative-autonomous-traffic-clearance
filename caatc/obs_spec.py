@@ -30,6 +30,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
+from .frenet import wrap_to_pi
 from .scenario import ScenarioConfig
 
 STEER_LIMIT = 0.4189  # the same constant controllers.py normalizes by
@@ -142,3 +143,104 @@ def decode(obs: np.ndarray, cfg: ScenarioConfig) -> LocalView:
         left_clear=g("left_clear") > 0.5,
         right_clear=g("right_clear") > 0.5,
     )
+
+
+# -- the builder itself ---------------------------------------------------------
+# Moved here from ClearanceEnv._per_coop_obs so that a ROS car node (which has no
+# simulator) and the env call ONE function. The golden-trace replay in
+# tests/test_seam.py proves the move changed nothing, and test_per_coop_obs_is_the
+# _env_observation checks the two paths agree to the bit.
+#
+# What the function reads from ``cars`` (a list in the env's agent order: index 0
+# is the EV, 1 + j is cooperator j, the rest HARD's side traffic):
+#   self  (cars[1 + j]): s, d, v, lane, theta, delta
+#   every other car    : s, d, v, lane
+# Nothing else is read. ``role`` and ``i`` are not needed. Side flags scan EVERY
+# other car including the EV (clear_window is a window, not a radio gate).
+
+def one_hot(idx: int, n: int) -> List[float]:
+    v = [0.0] * n
+    if 0 <= idx < n:
+        v[idx] = 1.0
+    return v
+
+
+def side_clear(cfg: ScenarioConfig, j: int, cars: List[dict], lane: int, side: int) -> float:
+    """1.0 if the lane ``side`` (+1 left / -1 right) of ``lane`` is free of every other
+    car within +/- ``cfg.clear_window`` metres of cooperator ``j``; else 0.0."""
+    tgt = lane + side
+    if not (0 <= tgt <= cfg.num_lanes - 1):
+        return 0.0
+    s = cars[1 + j]["s"]
+    for k, c in enumerate(cars):
+        if k == (1 + j):
+            continue
+        if c["lane"] == tgt and abs(c["s"] - s) < cfg.clear_window:
+            return 0.0
+    return 1.0
+
+
+def per_coop_obs(cfg: ScenarioConfig, frame, j: int, cars: List[dict]) -> List[float]:
+    """Cooperator ``j``'s raw observation (float64 list, not yet clipped or cast).
+
+    ``j`` is the cooperator index 0..K-1 (its car is ``cars[1 + j]``). The env wraps
+    this as ``np.clip(np.asarray(..., np.float32), -10, 10)``; a car node must do the
+    same so both sides hold identical numbers.
+    """
+    lat = cfg.num_lanes * cfg.lane_width
+    self_car = cars[1 + j]
+    ev = cars[0]
+    s, d, v, lane = self_car["s"], self_car["d"], self_car["v"], self_car["lane"]
+    psi = frame.tangent_angle(s)
+    heading_err = wrap_to_pi(psi - self_car["theta"])
+
+    out: List[float] = []
+    # SELF
+    out.append(d / lat)
+    out += one_hot(lane, cfg.num_lanes)
+    out.append(v / cfg.ev_max_speed)
+    out.append(heading_err / np.pi)
+    out.append(self_car["delta"] / 0.4189)
+
+    # EV broadcast (range-gated)
+    ds = ev["s"] - s                     # < 0 when EV is behind (the norm case)
+    active = 1.0 if abs(ds) <= cfg.v2v_range else 0.0
+    if active:
+        behind_dist = max(0.0, s - ev["s"])
+        tta = behind_dist / max(ev["v"], 1e-3)
+        out.append(1.0)
+        out.append(ds / cfg.v2v_range)
+        out.append((ev["d"] - d) / lat)
+        out.append(ev["v"] / cfg.ev_max_speed)
+        out.append(min(tta / cfg.max_time, 2.0))
+        out += one_hot(cfg.ev_lane, cfg.num_lanes)  # EV intended lane (center)
+        out.append(1.0 if (ev["lane"] == lane and ev["s"] < s) else 0.0)
+    else:
+        out += [0.0] * (6 + cfg.num_lanes)
+
+    # M nearest neighbours (other traffic; excludes self and the EV), gated to
+    # what this car could actually hear: without the gate the nearest-M sort
+    # fills its slots from anywhere on the road, which would make a
+    # "decentralized" policy quietly dependent on out-of-range cars (ADR 0009).
+    gate = cfg.neighbor_gate
+    neigh = [c for k, c in enumerate(cars)
+             if k != 0 and k != (1 + j) and abs(c["s"] - s) <= gate]
+    neigh.sort(key=lambda c: abs(c["s"] - s))   # stable: ties keep agent order
+    for m in range(cfg.num_neighbors):
+        if m < len(neigh):
+            c = neigh[m]
+            out += [1.0, (c["s"] - s) / cfg.v2v_range,
+                    (c["d"] - d) / lat, (c["v"] - v) / cfg.ev_max_speed]
+        else:
+            out += [0.0, 0.0, 0.0, 0.0]
+
+    # left / right clear (adjacent lanes free within +/- clear_window)
+    out.append(side_clear(cfg, j, cars, lane, +1))
+    out.append(side_clear(cfg, j, cars, lane, -1))
+    return out
+
+
+def observation(cfg: ScenarioConfig, frame, j: int, cars: List[dict]) -> np.ndarray:
+    """The finished (F,) float32 observation, exactly as ``ClearanceEnv.per_agent_obs``."""
+    vec = np.asarray(per_coop_obs(cfg, frame, j, cars), dtype=np.float32)
+    return np.clip(vec, -10.0, 10.0)

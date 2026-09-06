@@ -1,8 +1,8 @@
 # Live training dashboard
 
-A zero-dependency dashboard to watch RL training **live** and compare runs across your
-RL/environment improvements. Each training run is saved to its own folder, so you can browse,
-switch between, and overlay them later.
+A dashboard with no dependencies, to watch training **live** and compare runs as you improve the
+learning or the environment. Each run is saved in its own folder, so you can browse, switch between
+and overlay them later.
 
 ![flow](https://img.shields.io/badge/metrics-jsonl-0ba7a8) ![server](https://img.shields.io/badge/server-python3_stdlib-38ad64) ![deps](https://img.shields.io/badge/dependencies-none-blue)
 
@@ -22,10 +22,10 @@ caatc/clearance_eval.py (baselines, M1)                    │
          once         ▶  meta.json       (label, git SHA, scenario config, algo, status)
 ```
 
-Training streams metrics to disk (inside the repo, which is bind-mounted into the container, so the
-host sees them live). The dashboard is a tiny Python 3 **standard-library** web server that reads those files and
-serves a single-page app — **nothing is installed on your host**, and the logging is fail-safe (a
-logging error can never interrupt training).
+Training writes its numbers to disk (inside the repo folder, which is shared with the container, so
+your machine sees them live). The dashboard is a tiny Python 3 web server using only the **standard
+library**. It reads those files and serves a single web page. **Nothing is installed on your
+machine**, and the logging is safe: a logging error can never stop training.
 
 ## Try it right now (no training needed)
 
@@ -34,10 +34,10 @@ logging error can never interrupt training).
 ./run.sh dashboard          # opens http://127.0.0.1:8770
 ```
 
-You'll see two learning curves overlaid, the epsilon/steps/outcome charts, and a comparison table.
+You will see two learning curves on top of each other, the epsilon / steps / outcome charts, and a
+comparison table.
 
-> New to the terms (RL, Q-table, episode, epsilon)? See the plain-language
-> **[dashboard reading guide](DASHBOARD_GUIDE.md)**.
+> New to the words (RL, episode, epsilon)? See the **[dashboard reading guide](DASHBOARD_GUIDE.md)**.
 
 ## Real runs (v1.0.0)
 
@@ -56,59 +56,58 @@ The dashboard reads any run written to `saved_variables/runs/` (the format
 
 Each run appears with its outcome mix (goal / max-steps / collision) and metrics.
 
-**Training (M2)** writes runs the same way, live — every finished episode is appended while PPO is
-still learning, so the curve climbs the baseline band while you watch:
+**Training (M2)** writes runs the same way, live. Every finished episode is added while PPO is still
+learning, so you can watch the curve climb the baseline band:
 
 ```bash
 ./run.sh clearance-smoke                                     # the gate, first
 ./run.sh clearance-train --preset easy --timesteps 300000 --n-envs 8
 ```
 
-That produces two runs: `ppo-easy` (the training curve, marked **LIVE** while it runs) and
-`ppo-easy-eval` (the greedy policy scored over 20 episodes through the *same* evaluation code the
-baselines use). Overlay them on `ideal-easy` / `naive-easy` to see exactly how far the learned policy
-has climbed — on EASY and HARD it reaches the scripted oracle.
+That gives two runs: `ppo-easy` (the training curve, marked **LIVE** while it runs) and
+`ppo-easy-eval` (the trained policy scored over 20 episodes with the *same* code the baselines use).
+Put them on top of `ideal-easy` and `naive-easy` to see exactly how far the learned policy has climbed.
+On EASY and HARD it reaches the hand-written ideal.
 
 > Legacy ROS 1 Q-learning training (`./run.sh rl`, `env.launch`, …) is at tag `v0.3.0`; its
 > fix-by-fix campaign is documented in [docs/legacy/RL_EXPERIMENTS.md](legacy/RL_EXPERIMENTS.md).
 
 ## Colours
 
-The dashboard uses the **Nocturne** palette: a violet-tinted deep-ink ground with ten
-categorical series hues spaced 36° apart and *interleaved*, so two runs compared side by
-side land 144–180° apart on the colour wheel. It was derived in OKLCH (not by eye) inside
-the dark-mode lightness band and validated for colour-vision-deficiency separation,
-a normal-vision floor, and ≥3:1 contrast against the panel surface.
+The dashboard uses a colour set we call **Nocturne**: a dark, slightly violet background and ten
+colours for the runs. The ten are spread evenly around the colour wheel and ordered so that any two
+runs shown next to each other are far apart in hue. The colours were worked out with a colour model
+(OKLCH) rather than by eye, and checked for people with colour-vision deficiency and for enough
+contrast against the panels.
 
-Series colours are assigned in **fixed order** — a run keeps its colour when you filter
-others out — and the status colours (success / max-time / collision) are *reserved*: they
-are never reused as a series hue. All of it lives in two places: the CSS custom properties
-at the top of `tools/dashboard/app.css` and `PALETTE` / `INK` / `OUTCOME_COLOR` at the top
-of `tools/dashboard/app.js`.
+A run keeps its colour when you hide other runs. The status colours (success / out of time /
+collision) are reserved and never used for a run. Everything lives in two places: the CSS variables
+at the top of `tools/dashboard/app.css`, and `PALETTE` / `INK` / `OUTCOME_COLOR` at the top of
+`tools/dashboard/app.js`.
 
 ## Navigating runs
 
-- **Checkboxes** — include/exclude a run from the comparison (overlay multiple).
-- **Click a run** — focus it (single-run detail with per-run tiles); click again to unfocus.
-- **all / none / live** — quick selection buttons.
-- **smooth** — moving-average the learning curves.
-- Every run is a folder under `saved_variables/runs/` and persists across sessions, so you can
-  always come back and compare old runs against new ones.
+- **Checkboxes:** add or remove a run from the comparison (you can overlay several).
+- **Click a run:** focus on it (a single-run view with its own tiles). Click again to go back.
+- **all / none / live:** quick selection buttons.
+- **smooth:** average the learning curves over a window.
+- Every run is a folder under `saved_variables/runs/` and stays there, so you can always come back
+  and compare old runs with new ones.
 
 ## What each chart shows
 
 | Panel | Meaning |
 |-------|---------|
-| Cumulative reward per episode | the learning curve — higher/less-negative is better |
-| Epsilon per episode | exploration decay (ε-greedy) |
-| Steps per episode | episode length; typically drops as the policy improves |
+| Cumulative reward per episode | the learning curve; higher is better |
+| Epsilon per episode | how much the learner explores (ε-greedy); always 0 for PPO runs |
+| Steps per episode | how long each episode was; it usually drops as the policy improves |
 | Episode outcomes | why episodes ended (ambulance reached goal = success, in green) |
 | Comparison table | mean / final / best reward and success rate per run |
 
 ## Testing (optional)
 
-The run-selection UI has a Playwright regression test that clicks checkboxes in many sequences and
-asserts the checkbox state, row highlight, and comparison table always agree:
+The run-selection part of the page has a Playwright test. It clicks the checkboxes in many orders and
+checks that the checkbox state, the row highlight and the comparison table always agree:
 
 ```bash
 ./run.sh dashboard-demo && ./run.sh dashboard &     # serve with demo data
@@ -118,10 +117,10 @@ DASH_URL=http://127.0.0.1:8770 node tools/dashboard/test_dashboard.mjs
 
 ## Notes
 
-- Run outputs live under `saved_variables/` and are **git-ignored** (local experiment data). Each
-  `meta.json` records the git SHA the run used, so comparisons stay meaningful even though the data
-  isn't committed.
+- Run outputs live under `saved_variables/` and are **not committed** (local experiment data). Each
+  `meta.json` records the git commit the run used, so comparisons still make sense even though the data
+  itself is not in git.
 - Port: `DASH_PORT=9000 ./run.sh dashboard`. Custom runs dir:
   `python3 tools/dashboard/server.py --runs-dir /path/to/runs`.
-- The dashboard is intentionally **not** a Claude Artifact: a live view has to read files on your
-  disk as training writes them, which a sandboxed static page can't do.
+- The dashboard is a small local web server on purpose, not a static web page: a live view has to
+  read files on your disk while training writes them, and a static page cannot do that.

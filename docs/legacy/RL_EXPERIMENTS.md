@@ -1,12 +1,12 @@
 > **Legacy (ROS 1 / Python 2).** This describes the 2020 ROS Kinetic / Gazebo stack that was
-> removed from `master` in M1 and preserved at tags `v0.1.0`–`v0.3.0`. See [docs/legacy/README.md](README.md)
+> removed from `master` in M1 and kept at tags `v0.1.0` to `v0.3.0`. See [docs/legacy/README.md](README.md)
 > and `git checkout v0.3.0`.
 
-# RL experiments: measuring how each fix improves results
+# Learning experiments: measuring how each fix improves results
 
-The goal: run the RL, apply a fix from [KNOWN_ISSUES.md](KNOWN_ISSUES.md), run again, and **see the
-learning curve move** on the [dashboard](DASHBOARD.md). There are two ways to do this — a fast
-headless harness (runs anywhere) and the real Gazebo pipeline (needs a powerful machine).
+The goal: run the learning, apply a fix from [KNOWN_ISSUES.md](KNOWN_ISSUES.md), run again, and **see
+the learning curve move** on the [dashboard](../DASHBOARD.md). There are two ways to do this: a small,
+fast simulator with no screen (runs anywhere) and the real Gazebo pipeline (needs a powerful machine).
 
 ## Two ways to run
 
@@ -16,7 +16,7 @@ headless harness (runs anywhere) and the real Gazebo pipeline (needs a powerful 
 | Where | host Python 3, **no Gazebo** | inside the container, full simulation |
 | Speed | ~1,600 episodes in seconds | minutes–hours per run |
 | Needs | nothing (stdlib only) | lots of RAM (2-car Gazebo + nav); GPU optional |
-| Fidelity | the **real Q-learning** (same state/actions/reward/update) vs. a fast kinematic model | the authentic physics + sensors |
+| How true to life | the **real Q-learning** (same state, actions, reward, update) on a simple motion model | the real physics and sensors |
 
 Both write runs in the same format, so the **same dashboard compares them**.
 
@@ -43,17 +43,17 @@ it learned; randomized start generalizes. Run a single custom config with, e.g.:
 ./run.sh harness --label my-test --episodes 800 --fixes lane_changes,epsilon_decay
 ```
 
-The harness models the project's exact RL formulation (state = agent/ambulance velocity+lane+gap,
-5 discrete actions, reward shaped on the ambulance's acceleration, tabular Q-learning with lr=0.7
-γ=0.5 and the same ε-decay) against a lightweight kinematic road model. It is faithful to the
-**algorithm**, not to Gazebo's physics — see `tools/rl_harness/train.py`.
+The small simulator uses the project's exact learning setup (state = the car's and the ambulance's
+speed, lane and gap; 5 actions; a reward based on the ambulance's acceleration; tabular Q-learning
+with lr=0.7, γ=0.5 and the same ε decay) on a simple road model. It is true to the **algorithm**, not
+to Gazebo's physics. See `tools/rl_harness/train.py`.
 
 ## A2) Beyond the fixes: does a smarter agent help? (roadmap A1 / A4)
 
-Once the lane-change bug is fixed the default toy is *too easy* — the ambulance starts far back in
-an empty middle lane, so even a random policy clears it (random ≈ optimal). There's no headroom left
-for an RL-algorithm change to show a gain (`./run.sh harness --compare-agents` — tabular and linear
-tie on the default toy).
+Once the lane-change bug is fixed, the default toy is *too easy*: the ambulance starts far back in
+an empty middle lane, so even a random policy clears it (random is about as good as optimal). There
+is no room left for a better algorithm to show a gain (`./run.sh harness --compare-agents`: the table
+and the linear model tie on the default toy).
 
 The **enriched "blocker" scenario** adds real headroom: the agent starts in the ambulance's lane
 (so it must move aside) and a **stopped car occupies one side lane**, so the agent has to read
@@ -76,7 +76,7 @@ Greedy (learned-policy) success on the blocker scenario:
 | tabular Q-table | ~9% | ~91% | the sparse table can't generalize "avoid the occupied lane" across states |
 | **linear function approximation** | **100%** | **0%** | tile-coded features generalize → learns the rule and solves it |
 
-![Function approximation solves the blocker scenario](img/dashboard.png)
+![Function approximation solves the blocker scenario](../img/dashboard.png)
 
 This is roadmap **A1** ("function approximation — the single biggest quality jump") demonstrated: same
 faithful parameters (lr=0.7, γ=0.5), the only change is a table → a tiny generalizing linear model.
@@ -106,8 +106,8 @@ RL_LABEL=lane-changes  ENABLE_LANE_CHANGES=true  ./run.sh rl-train
   distinguishable on the dashboard (unlike the headless campaign, which toggles fixes from one
   commit and so shares a commit — the dashboard shows the "fixes applied" column to tell those apart).
 
-> Reality check: on a ~6 GB machine the 2-car scene swaps and can't complete a run. The headless
-> harness exists precisely so you can still iterate. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+> Reality check: on a machine with about 6 GB of RAM the 2-car scene runs out of memory and cannot
+> finish a run. The small simulator exists exactly so you can still iterate. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 ## Using a GPU
 

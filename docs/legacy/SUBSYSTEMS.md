@@ -1,10 +1,10 @@
 > **Legacy (ROS 1 / Python 2).** This describes the 2020 ROS Kinetic / Gazebo stack that was
-> removed from `master` in M1 and preserved at tags `v0.1.0`–`v0.3.0`. See [docs/legacy/README.md](README.md)
+> removed from `master` in M1 and kept at tags `v0.1.0` to `v0.3.0`. See [docs/legacy/README.md](README.md)
 > and `git checkout v0.3.0`.
 
 # Subsystems
 
-Mechanism-level notes on each layer, grounded in the source. Paths are relative to
+How each layer works, based on the source code. Paths are relative to
 `simulator/racecar-simulator/`.
 
 ---

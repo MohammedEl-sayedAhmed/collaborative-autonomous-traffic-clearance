@@ -1,0 +1,20 @@
+{
+ "activation": "Tanh",
+ "ego_dim": 26,
+ "hidden": [
+  64,
+  64
+ ],
+ "n_actions": 5,
+ "n_layers": 3,
+ "note": "deterministic actor: the action is the index of the largest output; a central-critic model reads only its first ego_dim numbers",
+ "numpy": "2.5.2",
+ "obs_dim": 104,
+ "policy_class": "SplitActorCriticPolicy",
+ "python": "3.12.14",
+ "source": "ctde-easy.zip",
+ "source_sha256": "d8bbc4e0aadb4ef18339b343fc3080cc1343c34ef6ff195b7cbb145feaf8eb80",
+ "stable_baselines3": "2.9.0",
+ "torch": "2.14.0+cpu",
+ "weights_sha256": "272ae41c80b700ce9ac826cd75832c1e6dd86ff9845db41ca19b694df23cc265"
+}

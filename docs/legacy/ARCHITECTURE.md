@@ -1,18 +1,18 @@
 > **Legacy (ROS 1 / Python 2).** This describes the 2020 ROS Kinetic / Gazebo stack that was
-> removed from `master` in M1 and preserved at tags `v0.1.0`–`v0.3.0`. See [docs/legacy/README.md](README.md)
+> removed from `master` in M1 and kept at tags `v0.1.0` to `v0.3.0`. See [docs/legacy/README.md](README.md)
 > and `git checkout v0.3.0`.
 
 # Architecture
 
-Collaborative Autonomous Traffic Clearance is a layered ROS 1 (Kinetic) stack built on top of
-the MIT / F1TENTH `racecar-simulator`. Several 1/10-scale Ackermann cars share a three-lane road
-and cooperatively open a corridor for an approaching **ambulance**; a reinforcement-learning agent
-learns *when and how* to move aside so the ambulance keeps accelerating toward its goal.
+Collaborative Autonomous Traffic Clearance is a ROS 1 (Kinetic) stack in layers, built on the
+MIT / F1TENTH `racecar-simulator`. Several 1/10-scale cars with car-like steering share a three-lane
+road and work together to open a corridor for an approaching **ambulance**. A reinforcement-learning
+agent learns *when and how* to move aside so the ambulance can keep speeding up toward its goal.
 
-The problem is deliberately **decentralized**: no car has line-of-sight to all others, so every
-vehicle continuously broadcasts its identity, pose, lane, motion limits, and body footprint over a
-single shared vehicle-to-vehicle (V2V) channel. A custom costmap layer turns those broadcasts into
-planning constraints, and an RL policy turns the shared world model into move-aside decisions.
+The problem is **decentralised** on purpose: no car can see all the others, so every car keeps
+broadcasting who it is, where it is, its lane, its speed limits and its outline over one shared
+vehicle-to-vehicle (V2V) channel. A custom costmap layer turns those broadcasts into obstacles for
+the planner, and the learned policy turns the shared picture into move-aside decisions.
 
 ## The six layers
 

@@ -1,8 +1,8 @@
 > **Legacy (ROS 1 / Python 2).** This describes the 2020 ROS Kinetic / Gazebo stack that was
-> removed from `master` in M1 and preserved at tags `v0.1.0`–`v0.3.0`. See [docs/legacy/README.md](README.md)
+> removed from `master` in M1 and kept at tags `v0.1.0` to `v0.3.0`. See [docs/legacy/README.md](README.md)
 > and `git checkout v0.3.0`.
 
-# Package & message reference
+# Package and message reference
 
 The workspace has **36 catkin packages**: 12 project packages, 16 vendored ROS navigation packages
 (modified to add the communication layer), 5 hardware/system packages from the MIT racecar, and 2

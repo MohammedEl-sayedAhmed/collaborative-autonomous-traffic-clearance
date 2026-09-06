@@ -285,3 +285,52 @@ def test_strict_preset_derives_the_cap_after_overrides():
     assert strict_preset(coop_speed=3.0, ev_lane_speed_cap=1.5).ev_lane_speed_cap == 1.5
     # and unrelated overrides still compose
     assert strict_preset(num_cooperators=4).num_cooperators == 4
+
+
+def test_ctde_model_survives_a_save_load_round_trip(tmp_path):
+    """A saved CTDE model must reload by import path, not by pickled class value.
+
+    The policy class used to be created inside a factory, so SB3 serialized it by
+    value; such a file loads only under the exact Python that wrote it -- a model
+    written on 3.11 SEGFAULTED when loaded on 3.12. This test fails if anyone moves
+    the class back inside a function.
+    """
+    from stable_baselines3 import PPO
+
+    from caatc.central_critic import SplitActorCriticPolicy
+    from caatc.train_dec import features_of, train
+
+    cfg = easy_preset()
+    path = str(tmp_path / "ctde.zip")
+    model = train(cfg, timesteps=512, n_envs=1, seed=0, label="pytest-ctde-io",
+                  runs_dir=None, log=False, model_path=path, n_steps=128,
+                  batch_size=64, verbose=0, central_critic=True)
+    assert isinstance(model.policy, SplitActorCriticPolicy)
+    # the class must be addressable by import path -- that is what makes it portable
+    assert type(model.policy).__module__ == "caatc.central_critic"
+
+    reloaded = PPO.load(path, device="cpu")
+    assert isinstance(reloaded.policy, SplitActorCriticPolicy)
+    assert reloaded.policy.ego_dim == features_of(cfg), "ego_dim must survive the round trip"
+
+    obs = np.zeros((3, reloaded.observation_space.shape[0]), dtype=np.float32)
+    a_before, _ = model.predict(obs, deterministic=True)
+    a_after, _ = reloaded.predict(obs, deterministic=True)
+    assert np.array_equal(a_before, a_after), "the reloaded policy must act identically"
+
+
+def test_net_arch_as_a_list_is_honoured():
+    """SB3 accepts a bare list for net_arch; it must not be silently replaced.
+
+    The first version of the split extractor fell back to [64, 64] whenever
+    net_arch was not a dict, so a caller asking for [32] got 64s without warning.
+    """
+    from caatc.central_critic import SplitExtractor
+
+    import torch.nn as nn
+
+    ex = SplitExtractor(feature_dim=104, ego_dim=26, net_arch=[32], activation_fn=nn.Tanh)
+    assert ex.latent_dim_pi == 32 and ex.latent_dim_vf == 32
+    ex2 = SplitExtractor(feature_dim=104, ego_dim=26,
+                         net_arch={"pi": [16], "vf": [48]}, activation_fn=nn.Tanh)
+    assert ex2.latent_dim_pi == 16 and ex2.latent_dim_vf == 48
