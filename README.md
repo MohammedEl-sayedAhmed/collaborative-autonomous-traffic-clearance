@@ -242,9 +242,16 @@ should fail (never moving, or only speeding up) do fail through the full graph. 
 ./run.sh ros-build                          # once: ros:jazzy + our package + our messages
 ./run.sh ros-fingerprint --gate             # is the ROS image a numerical twin? (expect IDENTICAL)
 ./run.sh ros-smoke --preset strict --seeds 0,1   # one car over ROS 2, then the checks
-./run.sh ros-fleet --preset strict --seeds 0,1   # all three cars, the relay, the learned policy, the gate
+./run.sh ros-fleet --preset strict --seeds 0,1   # all three cars, relay, learned policy, gate, rosbag, dashboard
 ./run.sh ros-gate                           # every ROS check in one go (about 5 minutes)
+./run.sh ros-video saved_variables/ros/fleet/strict-seed0-ep0.npz   # a ROS run as a top-down mp4
+./run.sh ros-view-build && ./run.sh ros-demo      # watch it: the fleet at real time ...
+./run.sh ros-view 42                              # ... and RViz beside it (second terminal)
 ```
+
+A recorded run can also be **replayed from a rosbag** into a fresh car node with nothing but the
+car's own four topics, and it decides and drives exactly as it did live. A car program with any hidden
+input could not pass that.
 
 M4 is **not** trying to make the cars drive better. They already match the ideal. It has to prove three
 things instead, each with a check that fails loudly if it is not true:

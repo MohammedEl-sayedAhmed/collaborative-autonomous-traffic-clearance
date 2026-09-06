@@ -23,7 +23,11 @@ all three cars drive over ROS 2 on the exported learned policy**, hearing each o
 relay's digest, with the gate watching (`./run.sh ros-fleet`, `./run.sh ros-gate`): outcomes and
 returns identical to the headless run, observations from the digest exact, subscriptions equal to the
 four-topic allow-list, and the naive and speeding baselines fail on STRICT through the full graph.
-Next is M4.3: a rosbag, the RViz view, a dashboard run.
+**M4.3 is done too:** a
+rosbag of only the allow-listed topics replays into fresh car nodes with identical decisions and
+commands (check 8), the scene is published for RViz (`./run.sh ros-demo` + `./run.sh ros-view 42`),
+a record draws as a video (`./run.sh ros-video`), and the run lands on the dashboard. Next is M4.4:
+the async mode and the loss and delay columns.
 
 M3 proved that each car can decide alone, using a Python wrapper (`LocalOnlyView`) and a pipe harness
 (`proc_fleet.py`). M4's job is to make the same property hold when the transport is **real**: DDS
@@ -282,8 +286,14 @@ required); RViz being slow on the integrated GPU.
    and `speedup` fail on strict through the full graph (check 10) and the plant caps the speeding
    fleet on 4,200 ticks (check 11); hard and easy fleets pass; the stress run exercises the
    re-publish path with no stale command. **Stop points passed.**
-4. **M4.3, the evidence and the picture** (about 1.5 days). `rosbag2` and check 8; `scene_view`; the
-   RViz layout; `write_run` to the dashboard; the mp4s.
+4. **M4.3, the evidence and the picture. DONE.** `--bag` records the allow-listed topics with
+   `rosbag2` and `bag_replay.py` replays each car's four topics into a fresh car node: on the strict
+   fleet every drive command and decision equals the live one (609 ticks and 61 decisions per car,
+   none missing, none different), check 8. `scene_view.py` publishes the cars, the road and the goal as
+   markers and a frame per car on `/tf`; `docker/ros-view.Dockerfile` adds RViz 2 for the viewing side;
+   the bridge's `--pace` runs at real time; `./run.sh ros-demo` and `./run.sh ros-view 42` show it.
+   `caatc/ros_video.py` draws a record as an mp4 without ROS; `--dashboard` writes the run for the
+   dashboard. `./run.sh ros-gate` includes the bag check and passes.
 5. **M4.4, the two measured variants** (about 1 day). The float32 wire's effect; the async delay and
    loss sweeps; check 13. M4's only new result tables.
 6. **M4.5, the record** (about 1 day). This doc, ADR 0011, README / CLAUDE / ROADMAP / `run.sh`.

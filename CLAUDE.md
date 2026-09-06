@@ -55,7 +55,9 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
     rclpy shells live in `ros2/src/caatc_ros/`. **M4.2 done too:** all K cars over the V2V relay on
     the exported numpy policy (`caatc/policies/ippo-strict`), a gate node for the allow-list, and
     `./run.sh ros-gate` running every check (fleet on strict/hard/easy, naive and speedup must fail on
-    strict, the stress run). The M4.1 and M4.2 contracts are at the end of the design doc.
+    strict, the stress run). **M4.3 done:** rosbag replay (check 8), the RViz scene (`ros-demo` +
+    `ros-view 42`), `ros-video`, and a dashboard run. The M4.1 and M4.2 contracts are at the end of the
+    design doc.
 - Big decisions and their reasons are in **`docs/adr/`**. Ideas for later are in **`ROADMAP.md`**.
 
 ## Repository map
@@ -68,8 +70,9 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
   `ros_fingerprint.py` (check 1), `ros_node_core.py`, `ros_bridge_core.py`, `ros_v2v.py` (the relay's
   brain), `policy_export.py` + `policies/` (the exported actors).
 - `ros2/src/`: `caatc_msgs` (Episode, Decision, Broadcast, V2VDigest) and `caatc_ros` (the bridge, the
-  car node, the relay, the gate, `msgs_io`, the `ros_smoke` orchestrator). `docker/ros.Dockerfile`
-  builds `caatc-ros`.
+  car node, the relay, the gate, `bag_replay`, `scene_view`, `msgs_io`, the `ros_smoke` orchestrator,
+  `rviz/clearance.rviz`). `docker/ros.Dockerfile` builds `caatc-ros`; `docker/ros-view.Dockerfile`
+  adds RViz for viewing. `caatc/ros_video.py` draws a record as an mp4.
 - `docker/`: `gym.Dockerfile` (Python dev image), `gym-test.Dockerfile` (pytest),
   `gym-train.Dockerfile` (stable-baselines3 + CPU torch), `gym-view.Dockerfile` (X11 for a window).
 - `run.sh`: runs everything in Docker (v1.0.0 only: `gym-*`, `clearance-*`, `dashboard`, `thesis`).
@@ -96,9 +99,11 @@ now being rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `
   (`--central-critic` for the central critic). Presets are `easy|hard|strict` everywhere.
 - **M4 (ROS 2):** `./run.sh ros-build` · `./run.sh ros-fingerprint --gate` (check 1) ·
   `./run.sh ros-smoke --preset easy|hard|strict --seeds 0,1 [--stress]` (one car) ·
-  `./run.sh ros-fleet` (all K cars, relay, learned policy, gate) · `./run.sh ros-gate` (every check) ·
-  `./run.sh export-policy <zip> --out caatc/policies/<name>` · `./run.sh ros-shell`. Nodes always start
-  as `python3 -m caatc_ros.<node>` inside the image, never via `ros2 run`.
+  `./run.sh ros-fleet` (all K cars, relay, learned policy, gate, bag, dashboard) · `./run.sh ros-gate`
+  (every check) · `./run.sh ros-video <record.npz>` · `./run.sh ros-view-build` + `./run.sh ros-demo`
+  and `./run.sh ros-view 42` (RViz) · `./run.sh export-policy <zip> --out caatc/policies/<name>` ·
+  `./run.sh ros-shell`. Nodes always start as `python3 -m caatc_ros.<node>` inside the image, never
+  via `ros2 run`.
 - **Dashboard:** `./run.sh dashboard` (reads `saved_variables/runs/`) · `./run.sh dashboard-demo`
 - **Thesis:** `./run.sh thesis`
 - `./run.sh` with no arguments lists every command.
@@ -132,8 +137,9 @@ Work in order: (1) ~~Python 3.12 and re-check every published table~~ done; (2) 
 `ClearanceEnv` with tests proving nothing changed~~ done; (3) ~~the `caatc-ros` image on `ros:jazzy`,
 with the headroom check run inside it~~ done (IDENTICAL); (4) ~~one car node in lockstep~~ done
 (0 differing ticks); (5) ~~the full fleet, the V2V relay, the exported numpy policy and the remaining
-checks~~ done (`./run.sh ros-gate` all green); (6) the RViz view, a rosbag and a dashboard run; (7) the
-async mode with measured delay and loss (the relay already takes `--loss` and `--delay-ticks`).
+checks~~ done (`./run.sh ros-gate` all green); (6) ~~the RViz view, a rosbag and a dashboard run~~ done;
+(7) the async mode with measured delay and loss (the relay already takes `--loss` and `--delay-ticks`);
+(8) the final docs pass, then the PR to master.
 
 Also open: a richer V2V model (train against drops and delay, not just measure them) and the bigger
 scenarios in the roadmap. `docs/upstream-candidates.md` holds four `f1tenth_gym` findings; **nothing has
