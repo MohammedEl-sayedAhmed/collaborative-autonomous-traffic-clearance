@@ -52,8 +52,8 @@ class RelayCore:
         if self.range < required_range(cfg):
             raise ValueError(f"relay_range {self.range} m is below the observation's largest gate "
                              f"{required_range(cfg)} m; the digest would not carry everything the 26 numbers need")
-        if not 0.0 <= loss < 1.0:
-            raise ValueError("loss must be a probability in [0, 1)")
+        if not 0.0 <= loss <= 1.0:
+            raise ValueError("loss must be a probability in [0, 1]; 1 is a blind radio (nothing is ever heard)")
         if delay_ticks < 0:
             raise ValueError("delay_ticks must be >= 0")
         self.loss = float(loss)

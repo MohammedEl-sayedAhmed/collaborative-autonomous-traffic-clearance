@@ -59,10 +59,24 @@ def test_the_relay_range_must_cover_every_gate():
     with pytest.raises(ValueError, match="below"):
         RelayCore(cfg, relay_range=required_range(cfg) - 1.0)
     RelayCore(cfg, relay_range=required_range(cfg) + 5.0)   # wider is fine
+    RelayCore(cfg, loss=1.0)   # a blind radio is a legitimate setting: nothing is ever heard
     with pytest.raises(ValueError):
-        RelayCore(cfg, loss=1.0)
+        RelayCore(cfg, loss=1.5)
+    with pytest.raises(ValueError):
+        RelayCore(cfg, loss=-0.1)
     with pytest.raises(ValueError):
         RelayCore(cfg, delay_ticks=-1)
+
+
+def test_a_blind_radio_hears_nobody_and_records_every_drop():
+    cfg = easy_preset()
+    relay = RelayCore(cfg, loss=1.0, seed=3)
+    n = cfg.num_agents
+    samples = {k: CarSample(x=float(3 * k), y=0.0, theta=0.0, v=1.0) for k in range(n)}
+    heard = relay.on_tick(0, 0, samples)
+    assert set(heard) == set(range(1, cfg.num_cooperators + 1))
+    assert all(len(v) == 0 for v in heard.values())
+    assert len(relay.drops) == cfg.num_cooperators * (n - 1)
 
 
 def test_loss_is_deterministic_per_episode_and_every_drop_is_recorded():
