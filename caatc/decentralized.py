@@ -159,7 +159,7 @@ _ALLOWED = frozenset({"cfg", "per_agent_obs", "per_agent_obs_all", "obs_features
 class LocalOnlyView:
     """A view of the env exposing ONLY what decentralized execution may use.
 
-    Any other attribute -- ``_cars``, ``_last_obs``, ``target_lane``, ``frame`` --
+    Any other attribute -- ``_cars``, ``_last_state``, ``target_lane``, ``frame`` --
     raises ``AttributeError``. Running a policy against this proves it cannot be
     reading joint state, which is the property M3 exists to deliver.
     """

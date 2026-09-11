@@ -82,6 +82,8 @@ now rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tent
 - `run.sh`: runs everything in Docker (v1.0.0 only: `gym-*`, `clearance-*`, `dashboard`, `thesis`).
 - `docs/adr/`: Architecture Decision Records (each migration decision and why).
 - `docs/design/`: design docs (M1, M3, M4, and the M5 plan).
+- `gazebo/`: M5's Gazebo assets: `models/racecar` (SDF), `worlds/`, `spike.py`. `docker/gazebo.Dockerfile` builds
+  `caatc-gazebo` (caatc-ros + Gazebo Harmonic, headless). `caatc/plant.py` is the plant interface (`GymPlant`).
 - `docs/legacy/`: docs for the tagged 2020 ROS 1 / Gazebo stack.
 - `docs/DASHBOARD*.md`: the training dashboard guides.
 - `docs/upstream-candidates.md`: four `f1tenth_gym` findings. **Nothing has been sent upstream.**
@@ -131,10 +133,12 @@ now rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tent
 `docs/design/m5-3d-plant.md`; decided 2026-09-11, not started). `master` is tagged `v1.0.0` (M0 to M4).
 The four choices are made: an F1TENTH-style 1/10 car (one of them), lidar plus a map for positioning
 (AMCL), **Gazebo Harmonic** (the official Jazzy pairing, supported to May 2029 like Jazzy; Lyrical plus
-Jetty, to 2031, is the recorded upgrade path), and **nothing retrained** in M5. Work in order: (0) the
-M5.0 spike: the `caatc-gazebo` image, one ported car with Ackermann drive and a GPU lidar headless,
-real-time factor and repeatability measured on this machine, plus the `Referee` / `Plant` split proven
-bit-identical on the golden traces; (1) M5.1: `GazeboPlant` with ground-truth poses, the generated
+Jetty, to 2031, is the recorded upgrade path), and **nothing retrained** in M5. Work in order: (0) ~~the
+M5.0 spike~~ done: `caatc-gazebo` image (`./run.sh gazebo-build`), `gazebo/` (car model, worlds,
+`spike.py`; `./run.sh gazebo-spike --world spike4`): above real time with four lidars, bit-identical
+repeats; the `Plant` split (`caatc/plant.py`, `GymPlant`) bit-identical on the golden traces. Gotchas:
+keep Gazebo subscriptions and blocking requests in separate Python processes, sync on the world clock
+topic, no `<topic>` on per-model plugins, a readiness probe must say `pause: true`; (1) M5.1: `GazeboPlant` with ground-truth poses, the generated
 world, the M4 checks and tables re-run; (2) M5.2: simulated lidar, IMU and wheel odometry, AMCL per
 car, the localization error published; (3) M5.3, **only if a real car is obtained** (there is none as of 2026-09-11): measure the car, map the
 track, a `lab` preset, one real cooperator in the episode; (4) the record. **No end-of-life dependency anywhere**, and nothing

@@ -3,12 +3,13 @@
 **Decision:** [ADR 0013](../adr/0013-m5-3d-plant-gazebo-harmonic.md). **Builds on:** the M4 seam and the
 M4 checks ([`m4-ros2-mechanical-demo.md`](m4-ros2-mechanical-demo.md), ADR 0011).
 
-**Where it stands (2026-09-11):** decided, not started. The four choices are made (an F1TENTH-style
+**Where it stands (2026-09-11):** decided; **M5.0 done**. The four choices are made (an F1TENTH-style
 1/10 car, one at most; lidar plus a map for positioning; Gazebo Harmonic; nothing retrained). **There is
 no real car yet** and there may not be one: M5.0 to M5.2 are the deliverable on their own, and M5.3 runs
-only if a car arrives. The first stop point is the M5.0 spike below, which has to answer two questions
-before anything else is built: how fast Gazebo runs headless with lidar on this machine, and how
-repeatable it is.
+only if a car arrives. The M5.0 spike answered its two questions (the results section at the end): Gazebo
+Harmonic, headless, with four cars and four 1081-point lidars, steps **above real time** on this machine,
+and two identical runs are **bit-identical**. The referee / plant split is in (`caatc/plant.py`), proven
+bit-identical on the golden traces. Next is M5.1, the Gazebo plant behind that interface.
 
 ## What M5 is for
 
@@ -151,12 +152,13 @@ the real car needing a slower `lab` preset.
 
 ## Implementation plan, in order, with stop points
 
-0. **M5.0, the spike** (3 to 4 days). The `caatc-gazebo` image; one ported car in an empty world with
-   Ackermann drive and a GPU lidar, headless; step it from Python through the world-control service;
-   measure the real-time factor with one and with four lidars on the integrated GPU; run the same seed
-   twice and print the spread. **Stop point:** if lidar rendering is far below real time, decide
-   between fewer beams, a lower lidar rate, or ray-based scans without rendering, and record it. In
-   parallel, the `Plant` split with check 1 green.
+0. ~~**M5.0, the spike**~~ done (one day). The `caatc-gazebo` image (`./run.sh gazebo-build`); a car
+   model from the f1tenth_gym numbers on the 2020 layout with Gazebo's Ackermann system and a GPU lidar
+   (`gazebo/models/racecar`); two worlds (`gazebo/worlds/spike1.sdf`, `spike4.sdf`); `gazebo/spike.py`
+   steps the paused world 10 ms at a time through the world-control service and measures
+   (`./run.sh gazebo-spike --world spike4`). **Stop point passed:** above real time with four lidars,
+   bit-identical repeats, no lidar fallback needed. The `Plant` split is in with check 1 green
+   (`caatc/plant.py`, `caatc/tests/test_plant.py`; the golden traces and the ROS fingerprint unchanged).
 1. **M5.1, L0** (3 to 4 days). `GazeboPlant`, the generated world, the bridge's `--plant gazebo`. Checks
    2, 4, 5, 6, 7, 8, 10. First tables.
 2. **M5.2, L1** (6 to 8 days). The lidar, IMU and wheel-odometry topics per car; the map generated from
@@ -203,3 +205,33 @@ can break.
 No perception beyond lidar localization; no learned local planner; the emergency vehicle and the side
 traffic stay simulated; one real car, not a fleet; no retraining. A camera, a second real car, or
 training on the 3D plant would each be a new decision with its own record.
+
+## M5.0 results: the spike
+
+Measured on 2026-09-11 on the development machine (integrated GPU, no discrete graphics card), inside
+`caatc-gazebo` (Gazebo Harmonic 8.15, ROS 2 Jazzy), the server headless with EGL rendering, physics at
+1 ms steps, the world stepped ten steps at a time from Python, every car driving straight at 2 m/s with a
+1081-point lidar at 40 Hz. Three simulated seconds per run, two identical runs per world.
+
+| world | real-time factor | wall time per 10 ms tick | of which the step request | lidar scans in 3 s | two runs |
+|---|---:|---:|---:|---:|---|
+| one car, one lidar | 1.32 to 1.51 | 6.6 to 7.6 ms | 0.2 ms | 121 | bit-identical |
+| four cars, four lidars | 1.02 to 1.55 | 6.5 to 9.8 ms | 0.2 ms | 120 to 121 | bit-identical |
+
+The car reaches the commanded 2.00 m/s and covers 5.54 m in 3 s (the first part is acceleration), so
+Gazebo's Ackermann system with the f1tenth_gym numbers drives as expected; the step responses proper are
+M5.1's check 6. The stop point is passed: no need for fewer beams or ray-based scans.
+
+Three lessons that go into the Gazebo plant:
+
+- **A blocking request and a subscription callback must not share a Python process.** With the Gazebo
+  Python bindings, the request holds Python's lock while the transport thread needs it to deliver a
+  callback: 199 of 200 step requests timed out with one subscription active, 0 of 200 without. The
+  listener (clock, poses, sensors) is its own process writing into shared memory; the stepper only
+  publishes and requests.
+- **The per-step sync signal is the world clock topic**, published every physics step. The world
+  statistics topic is 10 Hz and made a tick look like 100 ms.
+- **Do not set `<topic>` on per-model plugins.** A literal topic is not scoped to the model, so four
+  included cars would share one command topic. The defaults (`/model/<name>/cmd_vel`, `/model/<name>/odometry`)
+  are per car. And an empty world-control request means "pause: false": a readiness probe must say
+  `pause: true` or the world starts running on its own.

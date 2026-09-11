@@ -94,7 +94,7 @@ class IdealCooperator:
 
     def __call__(self, env) -> np.ndarray:
         cfg = env.cfg
-        cars = env._cars(env._last_obs)
+        cars = env._cars(env._last_state)
         ev_s = cars[0]["s"]
         actions = np.zeros(cfg.num_cooperators, dtype=int)
 

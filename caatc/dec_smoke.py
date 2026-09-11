@@ -46,8 +46,8 @@ def check_obs_equivalence(cfg: ScenarioConfig, steps: int = 40) -> bool:
         env.reset(seed=0)
         F, K = env.obs_features, cfg.num_cooperators
         for _ in range(steps):
-            cars = env._cars(env._last_obs)
-            joint = env._build_obs(env._last_obs, cars)
+            cars = env._cars(env._last_state)
+            joint = env._build_obs(env._last_state, cars)
             rows = env.per_agent_obs_all(cars)
             if rows.shape != (K, F) or not np.array_equal(rows.reshape(-1), joint):
                 return False

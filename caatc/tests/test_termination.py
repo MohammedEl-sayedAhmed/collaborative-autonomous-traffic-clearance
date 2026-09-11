@@ -35,7 +35,7 @@ def test_reset_no_overlap_across_seeds(easy_env):
     min_sep = float(np.hypot(cfg.car_length, cfg.car_width))
     for seed in range(0, 40):
         easy_env.reset(seed=seed)  # must not raise
-        cars = easy_env._cars(easy_env._last_obs)
+        cars = easy_env._cars(easy_env._last_state)
         for a in range(len(cars)):
             for b in range(a + 1, len(cars)):
                 dist = float(np.hypot(cars[a]["x"] - cars[b]["x"], cars[a]["y"] - cars[b]["y"]))
@@ -115,7 +115,7 @@ def test_hard_reset_occupant_lanes_sensed_correctly():
         assert env.cfg.num_occupants > 0
         for seed in range(4):
             env.reset(seed=seed)
-            cars = env._cars(env._last_obs)
+            cars = env._cars(env._last_state)
             for h in range(env.cfg.num_occupants):
                 c = cars[1 + K + h]
                 assert c["lane"] == env._occ_lane[h], (seed, h, c["d"], c["lane"], env._occ_lane[h])

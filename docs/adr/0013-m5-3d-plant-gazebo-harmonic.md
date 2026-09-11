@@ -1,6 +1,6 @@
 # 0013. M5: a 3D plant behind the same seam, in Gazebo Harmonic, then one real car in the loop
 
-- **Status:** accepted (the four choices below were made on 2026-09-11; the M5.0 spike is the first stop point)
+- **Status:** accepted (the four choices below were made on 2026-09-11; the M5.0 spike passed its stop point the same day: above real time with four lidars, bit-identical repeats)
 - **Date:** 2026-09-11
 - **Deciders:** Mohammed El-sayed Ahmed
 - **Related:** [0004](0004-adopt-f1tenth-gym-for-rl.md) (why the learning runs on `f1tenth_gym`),
