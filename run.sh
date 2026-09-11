@@ -123,6 +123,12 @@ case "${1:-help}" in
   ros-demo)                            # M4.3: watch it: fleet at real time on domain 42 with the scene; open RViz with ros-view 42
     shift || true; ros_dev caatc-ros python3 -m caatc_ros.ros_smoke --fleet --v2v --view --pace 1.0 --domain 42 \
       --policy numpy:caatc/policies/ippo-strict --preset strict --seeds 0,1,2 --out-dir /src/saved_variables/ros/demo "$@" ;;
+  gazebo-build)                        # M5: the 3D plant image (caatc-ros + Gazebo Harmonic, headless)
+    shift || true; docker build -t caatc-gazebo -f docker/gazebo.Dockerfile "$@" . ;;
+  gazebo-shell)                        # M5: a shell in the Gazebo image with the repo at /src
+    shift || true; ros_dev -it caatc-gazebo bash "$@" ;;
+  gazebo-spike)                        # M5.0: step one car headless, measure the real-time factor and repeatability
+    shift || true; ros_dev caatc-gazebo python3 gazebo/spike.py "$@" ;;
   ros-view-build)                      # M4.3: the viewing image (caatc-ros + rviz2 + X11)
     docker build -t caatc-ros-view -f docker/ros-view.Dockerfile . ;;
   ros-view)                            # M4.3: RViz on a running fleet's domain: ./run.sh ros-view <ROS_DOMAIN_ID>
