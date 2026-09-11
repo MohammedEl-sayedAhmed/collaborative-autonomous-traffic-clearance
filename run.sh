@@ -127,6 +127,8 @@ case "${1:-help}" in
     shift || true; docker build -t caatc-gazebo -f docker/gazebo.Dockerfile "$@" . ;;
   gazebo-shell)                        # M5: a shell in the Gazebo image with the repo at /src
     shift || true; ros_dev -it caatc-gazebo bash "$@" ;;
+  gazebo-smoke)                        # M5.1: the referee on the Gazebo plant, headless: repeatability, headroom, tables
+    shift || true; ros_dev caatc-gazebo python3 -m caatc.gazebo_smoke "$@" ;;
   gazebo-spike)                        # M5.0: step one car headless, measure the real-time factor and repeatability
     shift || true; ros_dev caatc-gazebo python3 gazebo/spike.py "$@" ;;
   ros-view-build)                      # M4.3: the viewing image (caatc-ros + rviz2 + X11)

@@ -7,6 +7,11 @@
       <collision name="c"><pose>0 0 0.03 0 0 0</pose><geometry><box><size>0.58 0.31 0.1</size></box></geometry></collision>
       <visual name="v"><pose>0 0 0.03 0 0 0</pose><geometry><box><size>0.58 0.31 0.1</size></box></geometry>
         <material><ambient>0.2 0.4 0.8 1</ambient><diffuse>0.2 0.4 0.8 1</diffuse></material></visual>
+      <!-- the chassis box is the car's footprint; this sensor says when it touches anything -->
+      <sensor name="bumper" type="contact">
+        <contact><collision>c</collision></contact>
+        <update_rate>100</update_rate><always_on>1</always_on>
+      </sensor>
       <sensor name="lidar" type="gpu_lidar">
         <!-- Hokuyo UST-10LX as the 2020 model had it: 1081 points over 270 degrees, 0.1 to 10 m, 40 Hz -->
         <pose>0.09355 0 0.115 0 0 0</pose>
@@ -76,11 +81,11 @@
     </joint>
     <joint name="front_left_steer_joint" type="revolute">
       <parent>chassis</parent><child>front_left_hinge</child>
-      <axis><xyz>0 0 1</xyz><limit><lower>-0.4189</lower><upper>0.4189</upper><effort>10</effort></limit></axis>
+      <axis><xyz>0 0 1</xyz><limit><lower>-0.4189</lower><upper>0.4189</upper><effort>10</effort><velocity>3.2</velocity></limit></axis>
     </joint>
     <joint name="front_right_steer_joint" type="revolute">
       <parent>chassis</parent><child>front_right_hinge</child>
-      <axis><xyz>0 0 1</xyz><limit><lower>-0.4189</lower><upper>0.4189</upper><effort>10</effort></limit></axis>
+      <axis><xyz>0 0 1</xyz><limit><lower>-0.4189</lower><upper>0.4189</upper><effort>10</effort><velocity>3.2</velocity></limit></axis>
     </joint>
     <joint name="front_left_wheel_joint" type="revolute">
       <parent>front_left_hinge</parent><child>front_left_wheel</child>
@@ -107,7 +112,14 @@
       <wheel_radius>0.05</wheel_radius>
       <min_velocity>-2</min_velocity><max_velocity>20</max_velocity>
       <min_acceleration>-9.51</min_acceleration><max_acceleration>9.51</max_acceleration>
+      <!-- steering joint velocity = steer_p_gain x (target - current), capped by the hinge's 3.2 rad/s
+           limit above: the 2D model's steering rate. The default gain of 1 made the steering creep. -->
+      <steer_p_gain>30</steer_p_gain>
       <odom_publish_frequency>100</odom_publish_frequency>
+    </plugin>
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <joint_name>front_left_steer_joint</joint_name>
+      <joint_name>front_right_steer_joint</joint_name>
     </plugin>
     <plugin filename="gz-sim-pose-publisher-system" name="gz::sim::systems::PosePublisher">
       <publish_link_pose>false</publish_link_pose>
