@@ -32,8 +32,8 @@ def env():
 def test_per_agent_obs_matches_joint_slice(env):
     env.reset(seed=0)
     for _ in range(4):
-        cars = env._cars(env._last_obs)
-        joint = env._build_obs(env._last_obs, cars)
+        cars = env._cars(env._last_state)
+        joint = env._build_obs(env._last_state, cars)
         rows = env.per_agent_obs_all(cars)
         F = env.obs_features
         assert rows.shape == (env.cfg.num_cooperators, F)
@@ -98,7 +98,7 @@ def test_neighbor_gate_is_inert_on_the_default_configs(preset):
         for seed in (0, 1):
             ea.reset(seed=seed); eb.reset(seed=seed)
             for _ in range(12):
-                assert np.array_equal(ea._build_obs(ea._last_obs), eb._build_obs(eb._last_obs))
+                assert np.array_equal(ea._build_obs(ea._last_state), eb._build_obs(eb._last_state))
                 act = IdealCooperator()(ea)
                 ea.step(act); eb.step(act)
     finally:
@@ -130,7 +130,7 @@ def test_local_only_view_hides_global_state(env):
     view = LocalOnlyView(env)
     assert view.cfg is env.cfg and view.obs_features == env.obs_features
     assert view.per_agent_obs_all().shape == (env.cfg.num_cooperators, env.obs_features)
-    for hidden in ("_cars", "_last_obs", "frame", "target_lane", "step", "inner"):
+    for hidden in ("_cars", "_last_state", "frame", "target_lane", "step", "inner"):
         with pytest.raises(AttributeError):
             getattr(view, hidden)
 
@@ -250,7 +250,7 @@ def test_the_cap_only_applies_inside_the_ev_lane():
             env.step(np.full(cfg.num_cooperators, MERGE_LEFT, dtype=int))
         for _ in range(20):
             env.step(np.full(cfg.num_cooperators, 3, dtype=int))   # SPEED_UP
-        cars = env._cars(env._last_obs)[1:1 + cfg.num_cooperators]
+        cars = env._cars(env._last_state)[1:1 + cfg.num_cooperators]
         assert all(int(c["lane"]) != cfg.ev_lane for c in cars), "they should have moved"
         assert max(c["v"] for c in cars) > cfg.coop_speed + 0.5, \
             "outside the EV lane the cap must not apply"

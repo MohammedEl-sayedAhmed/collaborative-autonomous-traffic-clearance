@@ -36,59 +36,15 @@ from .obs_spec import per_coop_obs, side_clear
 # discrete action ids (mirror the 2020 project's 5-action set)
 from .actions import STAY, MERGE_LEFT, MERGE_RIGHT, SPEED_UP, SLOW_DOWN, apply_decision  # noqa: E402,F401  (re-exported)
 
-# The base env ray-casts a 1080-beam lidar per car per 100 Hz physics step. We
-# never use scans (our road has no walls; car-car collisions come from GJK, not
-# lidar), so that cost is pure waste -- reduce the beam count for a large speedup.
-# Correctness is unaffected here: only wall/TTC collisions use scans, and there
-# are no walls.
-#
-# CAVEAT: this rewrites RaceCar's *process-wide* default num_beams, and f1tenth_gym
-# fixes its scan simulator (and scan-angle tables) as a class-level singleton on
-# the FIRST RaceCar built. So the reduced beam count is effectively global for the
-# process. That is fine for this project -- every env we build is a ClearanceEnv
-# that never scans -- but do NOT construct a stock lidar-based f1tenth env in the
-# same process as a ClearanceEnv: it would silently inherit the 16-beam lidar.
-# (The M0 smoke runs in a separate process, so it is unaffected.)
-_CLEARANCE_SCAN_BEAMS = 16
-_scan_beams_patched = False
-
-
-def _reduce_scan_beams(n: int = _CLEARANCE_SCAN_BEAMS) -> None:
-    global _scan_beams_patched
-    if _scan_beams_patched:
-        return
-    _scan_beams_patched = True  # attempt once; a failure just means slower, not wrong
-    try:
-        import inspect
-        import f1tenth_gym.envs.base_classes as bc
-
-        init = bc.RaceCar.__init__
-        # locate num_beams by *name* (not by value-searching for 1080), so we can
-        # never overwrite the wrong parameter if the signature changes.
-        defaulted = [
-            p for p in inspect.signature(init).parameters.values()
-            if p.default is not inspect.Parameter.empty
-        ]
-        names = [p.name for p in defaulted]
-        if "num_beams" not in names or init.__defaults__ is None:
-            return  # unexpected signature -> leave the default (correct, just slower)
-        idx = names.index("num_beams")
-        defaults = list(init.__defaults__)  # aligns 1:1 with the defaulted params
-        if isinstance(defaults[idx], int) and defaults[idx] > n:
-            defaults[idx] = int(n)
-            init.__defaults__ = tuple(defaults)
-    except Exception:
-        pass  # non-fatal: fall back to the default beam count (slower, still correct)
-
-
-
+from .plant import GymPlant, Plant, PlantState, _reduce_scan_beams  # noqa: F401  (the physics lives in plant.py)
 
 class ClearanceEnv(gym.Env):
     """Cooperative EV-clearing env; centralized ``MultiDiscrete`` control of K cars."""
 
     metadata = {"render_modes": ["human", "human_fast", "rgb_array"], "render_fps": 100}
 
-    def __init__(self, cfg: Optional[ScenarioConfig] = None, render_mode=None):
+    def __init__(self, cfg: Optional[ScenarioConfig] = None, render_mode=None,
+                 plant: Optional[Plant] = None):
         super().__init__()
         self.cfg = cfg if cfg is not None else EASY_PRESET
         # Rendering is opt-in and OFF during training (it costs a pygame draw per
@@ -108,10 +64,7 @@ class ClearanceEnv(gym.Env):
         # training, where it must cost nothing.
         self.scene_hook = None
 
-        # -- inner f1tenth env (built directly -> no gym.make wrappers) --------
-        _reduce_scan_beams()
-        from f1tenth_gym.envs.f110_env import F110Env
-
+        # -- the plant: one physics engine behind the referee (M5, ADR 0013) ----
         self.track = build_track(self.cfg)
         # Build the frenet frame from the OPEN road polyline, NOT the track's
         # centerline. Track.from_refline fits a cubic spline that *closes* the
@@ -122,17 +75,11 @@ class ClearanceEnv(gym.Env):
         # constrains cars to a centerline (the track is only an empty occupancy
         # map for the -- unused -- lidar), so this stays consistent with the physics.
         self.frame = CenterlineFrame(*centerline_xy(self.cfg))
-        self.inner = F110Env(
-            config={
-                "map": self.track,
-                "num_agents": self.cfg.num_agents,
-                "observation_config": {"type": "kinematic_state"},
-                "ego_idx": 0,
-                "seed": self.cfg.seed,
-            },
-            render_mode=None,   # we attach our own renderer below (see _attach_renderer)
-        )
-        self._agent_ids = list(self.inner.agent_ids)
+        self.plant: Plant = plant if plant is not None else GymPlant(self.cfg, self.track)
+        # f1tenth_gym's own renderer needs its env object; any other plant draws nothing here
+        self.inner = getattr(self.plant, "inner", None)
+        self._agent_ids = list(getattr(self.plant, "agent_ids",
+                                       [f"agent_{i}" for i in range(self.cfg.num_agents)]))
         if render_mode is not None:
             self._attach_renderer(render_mode)
 
@@ -154,8 +101,8 @@ class ClearanceEnv(gym.Env):
         )
 
         # -- episode state -----------------------------------------------------
-        self._last_obs: Dict = {}
-        self._cars_now: List[dict] = []   # == self._cars(self._last_obs), cached
+        self._last_state: Optional[PlantState] = None
+        self._cars_now: List[dict] = []   # == self._cars(self._last_state), cached
         self._step_count = 0
         self._prev_ev_s = self.cfg.ev_start_s
         self._lane_changes = 0
@@ -163,12 +110,11 @@ class ClearanceEnv(gym.Env):
         self._begin_step()
 
     # -- state reading --------------------------------------------------------
-    def _cars(self, obs) -> List[dict]:
+    def _cars(self, state: PlantState) -> List[dict]:
         cars = []
-        for i, aid in enumerate(self._agent_ids):
-            o = obs[aid]
-            x, y = float(o["pose_x"]), float(o["pose_y"])
-            theta, v, delta = float(o["pose_theta"]), float(o["linear_vel_x"]), float(o["delta"])
+        for i in range(self.cfg.num_agents):
+            x, y = float(state.x[i]), float(state.y[i])
+            theta, v, delta = float(state.theta[i]), float(state.v[i]), float(state.delta[i])
             s, d = self.frame.project(x, y)
             cars.append(
                 dict(i=i, role=self._roles[i], x=x, y=y, theta=theta, v=v,
@@ -208,18 +154,18 @@ class ClearanceEnv(gym.Env):
                         f"start poses overlap: agents {a},{b} at {dist:.3f} m (min {min_sep:.3f} m)"
                     )
 
-        obs, _info = self.inner.reset(options={"poses": poses})
-        self._last_obs = obs
+        state = self.plant.reset(poses)
+        self._last_state = state
         self._draw()  # initial frame (no-op unless rendering)
         if self.scene_hook is not None:
-            self.scene_hook(self._cars(obs), {"sim_time": 0.0, "ev_blocked": False,
+            self.scene_hook(self._cars(state), {"sim_time": 0.0, "ev_blocked": False,
                                               "ev_v": 0.0, "ev_progress": 0.0,
                                               "lane_changes": 0})
 
         K = cfg.num_cooperators
         self.target_lane = np.full(K, cfg.ev_lane, dtype=int)
         self.target_speed = np.full(K, cfg.coop_speed, dtype=float)
-        cars = self._cars(obs)
+        cars = self._cars(state)
         self._cars_now = cars
         self._step_count = 0
         self._prev_ev_s = cars[0]["s"]
@@ -228,8 +174,8 @@ class ClearanceEnv(gym.Env):
         self._begin_step()
 
         return (
-            self._build_obs(obs, cars),
-            self._info(obs, cars, collided=False, success=False, blocked_frac=0.0),
+            self._build_obs(state, cars),
+            self._info(state, cars, collided=False, success=False, blocked_frac=0.0),
         )
 
     # -- the seam: decisions, rows, one tick at a time, commit -----------------
@@ -389,13 +335,13 @@ class ClearanceEnv(gym.Env):
         self._rows_fresh = False
         self._rows_applied = rows
 
-        obs, _r, inner_term, _trunc, _info = self.inner.step(rows)
-        self._last_obs = obs
+        state, inner_term = self.plant.substep(rows)
+        self._last_state = state
         self._substeps_done += 1
         if self._blocked_now:
             self._blocked_steps += 1
         self._draw()  # no-op unless a render_mode was requested
-        cars = self._cars(obs)
+        cars = self._cars(state)
         self._cars_now = cars
         if self.scene_hook is not None:
             self.scene_hook(cars, {
@@ -406,7 +352,7 @@ class ClearanceEnv(gym.Env):
                 "lane_changes": self._lane_changes,
             })
 
-        if np.any(np.asarray(self.inner.collisions) > 0):
+        if np.any(self.plant.collisions() > 0):
             self._collided = True
             self._done_this_step = True
         elif cars[0]["s"] >= cfg.s_goal:
@@ -428,7 +374,7 @@ class ClearanceEnv(gym.Env):
         cfg = self.cfg
         if self._substeps_done == 0:
             raise RuntimeError("commit_step() needs at least one substep()")
-        obs, cars = self._last_obs, self._cars_now
+        state, cars = self._last_state, self._cars_now
         collided, success = self._collided, self._success
         changes = self._changes_this_step
         self._step_count += 1
@@ -455,11 +401,11 @@ class ClearanceEnv(gym.Env):
         truncated = bool((not terminated) and self._step_count >= cfg.max_steps)
 
         result = (
-            self._build_obs(obs, cars),
+            self._build_obs(state, cars),
             float(reward),
             terminated,
             truncated,
-            self._info(obs, cars, collided=collided, success=success, blocked_frac=blocked_frac),
+            self._info(state, cars, collided=collided, success=success, blocked_frac=blocked_frac),
         )
         self._begin_step()
         return result
@@ -499,18 +445,18 @@ class ClearanceEnv(gym.Env):
         plus the V2V broadcasts in range. Nothing here is joint state.
         """
         if cars is None:
-            cars = self._cars(self._last_obs)
+            cars = self._cars(self._last_state)
         vec = np.asarray(self._per_coop_obs(j, cars), dtype=np.float32)
         return np.clip(vec, -10.0, 10.0)
 
     def per_agent_obs_all(self, cars: Optional[List[dict]] = None) -> np.ndarray:
         """All cooperators' own observations stacked: ``(K, F)`` float32."""
         if cars is None:
-            cars = self._cars(self._last_obs)
+            cars = self._cars(self._last_state)
         return np.stack([self.per_agent_obs(j, cars)
                          for j in range(self.cfg.num_cooperators)])
 
-    def _build_obs(self, obs, cars: Optional[List[dict]] = None) -> np.ndarray:
+    def _build_obs(self, state: PlantState, cars: Optional[List[dict]] = None) -> np.ndarray:
         """The centralized (M2) observation: the per-agent views concatenated.
 
         Kept bit-identical to the pre-M3 implementation -- clipping is elementwise,
@@ -518,14 +464,14 @@ class ClearanceEnv(gym.Env):
         then clipping (asserted by test_per_agent_obs_matches_joint_slice).
         """
         if cars is None:
-            cars = self._cars(obs)
+            cars = self._cars(state)
         return self.per_agent_obs_all(cars).reshape(-1)
 
     # -- info -----------------------------------------------------------------
-    def _info(self, obs, cars: Optional[List[dict]] = None, *,
+    def _info(self, state: PlantState, cars: Optional[List[dict]] = None, *,
               collided: bool, success: bool, blocked_frac: float) -> dict:
         if cars is None:
-            cars = self._cars(obs)
+            cars = self._cars(state)
         ev = cars[0]
         return {
             "ev_s": ev["s"],
@@ -554,6 +500,8 @@ class ClearanceEnv(gym.Env):
         there are no walls to draw -- so a render callback paints the lane lines and
         the goal line; without it the scene would be cars on a blank page.
         """
+        if self.inner is None:
+            raise RuntimeError("rendering needs the f1tenth_gym plant (GymPlant); this plant has no renderer")
         from f1tenth_gym.envs.rendering import RenderSpec
         from f1tenth_gym.envs.rendering.rendering_pygame import PygameEnvRenderer
 
@@ -622,7 +570,7 @@ class ClearanceEnv(gym.Env):
 
     def close(self):
         try:
-            self.inner.close()
+            self.plant.close()
         except Exception:
             pass
 

@@ -228,7 +228,7 @@ class SB3Policy:
         pass
 
     def __call__(self, env):
-        obs = env._build_obs(env._last_obs)
+        obs = env._build_obs(env._last_state)
         action, _state = self.model.predict(obs, deterministic=self.deterministic)
         return action
 

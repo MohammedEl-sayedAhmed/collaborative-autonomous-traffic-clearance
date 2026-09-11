@@ -84,7 +84,7 @@ def test_hard_preset_with_occupants_renders():
     try:
         r = SceneRenderer(cfg, frame=e.frame)
         e.reset(seed=0)
-        cars = e._cars(e._last_obs)
+        cars = e._cars(e._last_state)
         assert any(c["role"] == "occupant" for c in cars)
         img = r.frame(cars, {"sim_time": 0.0, "ev_v": 0.0, "ev_blocked": True,
                              "ev_progress": 0.0, "lane_changes": 0})

@@ -211,13 +211,13 @@ def test_a_finished_step_refuses_more_ticks():
 
 
 def test_cars_cache_tracks_the_physics():
-    """``env.cars`` is always what ``_cars(_last_obs)`` would compute."""
+    """``env.cars`` is always what ``_cars(_last_state)`` would compute."""
     env = ClearanceEnv(hard_preset())
     try:
         env.reset(seed=1)
-        assert env.cars == env._cars(env._last_obs)
+        assert env.cars == env._cars(env._last_state)
         env.substep(env.joint_action_rows())
-        assert env.cars == env._cars(env._last_obs)
+        assert env.cars == env._cars(env._last_state)
         assert env.substeps_done == 1
         assert env.rows_applied.shape == (env.cfg.num_agents, 2)
     finally:
