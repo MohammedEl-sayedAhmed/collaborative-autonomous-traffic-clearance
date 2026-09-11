@@ -26,7 +26,7 @@ ROS 2.
 
 | Line | State |
 |------|-------|
-| **v1.0.0**, ROS 2 Jazzy / Python 3.12 (this `master`) | **Done.** **M0** (the simulator runs), **M1** (the `ClearanceEnv` scenario, baselines and a headroom check), **M2** (one central learned controller matches the hand-written ideal), **M3** (each car decides on its own and still matches), **M4** (the same cars as separate programs on ROS 2 Jazzy, checked against the plain run). |
+| **v1.0.0**, ROS 2 Jazzy / Python 3.12 (this `master`) | **Done.** **M0** (the simulator runs), **M1** (the `ClearanceEnv` scenario, baselines and a headroom check), **M2** (one central learned controller matches the hand-written ideal), **M3** (each car decides on its own and still matches), **M4** (the same cars as separate programs on ROS 2 Jazzy, checked against the plain run). Next: **M5**, a 3D plant in Gazebo Harmonic behind the same seam, then one real car in the loop ([ADR 0013](docs/adr/0013-m5-3d-plant-gazebo-harmonic.md)). |
 | **v0.x**, ROS 1 Kinetic / Python 2 (legacy) | Frozen at tags `v0.1.0` to `v0.3.0`. Run `git checkout v0.3.0` for the full Gazebo project. Removed from `master` in M1 ([ADR 0003](docs/adr/0003-refactor-in-place-preserve-legacy-with-tags.md)). Its docs are in [`docs/legacy/`](docs/legacy/). |
 
 Every big decision, and why we made it, is written down as a short **Architecture Decision Record**
@@ -361,6 +361,7 @@ collaborative-autonomous-traffic-clearance/
 | [adr/0010](docs/adr/0010-strict-preset-removes-the-convoying-substitution.md) | Why the STRICT preset exists: speeding up must not count as cooperation |
 | [design/m4-ros2-mechanical-demo.md](docs/design/m4-ros2-mechanical-demo.md) | The M4 ROS 2 demo: plan, contracts, checks and the measured results |
 | [adr/0011](docs/adr/0011-m4-ros2-mechanical-demo.md), [adr/0012](docs/adr/0012-target-ros2-jazzy-not-humble.md) | Why M4 is built as one simulator plus K car nodes, and why on Jazzy |
+| [design/m5-3d-plant.md](docs/design/m5-3d-plant.md), [adr/0013](docs/adr/0013-m5-3d-plant-gazebo-harmonic.md) | M5, decided and not started: a 3D plant in Gazebo Harmonic behind the same seam, then one real car |
 | [DASHBOARD.md](docs/DASHBOARD.md) | The live training dashboard: stream metrics, compare runs across code changes |
 | [DASHBOARD_GUIDE.md](docs/DASHBOARD_GUIDE.md) | A plain guide to reading the dashboard (RL, episode, epsilon…) |
 | [legacy/](docs/legacy/) | The 2020 ROS 1 / Gazebo stack (architecture, subsystems, packages, running, RL experiments) |

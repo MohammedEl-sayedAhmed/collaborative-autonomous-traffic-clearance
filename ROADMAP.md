@@ -43,6 +43,7 @@ Legend: ⚡ quick win · 🚀 bigger bet · 🐞 known bug (see [docs/legacy/KNO
     robustness, plus a **benchmark set** (light / heavy / curve / several EVs) with a scorecard.
 11. ⚡ **Gazebo faster than real time** (`real_time_update_rate`), Gazebo without a screen, and
     several simulations in parallel, so real training becomes practical on a good machine.
+    M5 replaces this: Gazebo Harmonic, headless, stepped in lockstep by the bridge (ADR 0013).
 
 ### D. Navigation and control
 12. 🐞 **Wrong TEB `local_plan` topic:** the "which lane will I be in next" detection listens on the
@@ -60,6 +61,7 @@ Legend: ⚡ quick win · 🚀 bigger bet · 🐞 known bug (see [docs/legacy/KNO
 17. ⚡ **Unit tests** for the state binning, the Q-update, and how V2V messages are combined.
 18. **Be honest about sim-to-real:** training uses perfect position data. Add AMCL or noise to close
     the gap.
+    Planned as M5.2: simulated lidar plus AMCL per car, the localization error published (ADR 0013).
 
 ### F. Realistic V2V
 19. ⚡ Fix the **range check that is not applied everywhere** (car footprints are written regardless
@@ -103,6 +105,7 @@ Each item here supports one project change above.
 > "is the side lane free" features. M2 trained it with PPO. M3 made each car decide alone (item 6) and
 > added the range check (item 19) and message-loss evaluation (part of 20). M4 moved it onto ROS 2
 > (item 15) and measured message loss and delay through a relay on the real bus (the measuring half
-> of 20). Still open: intention sharing (7), generated scenarios and a benchmark set (10),
+> of 20). `master` is tagged `v1.0.0`. Next is M5 (ADR 0013): a 3D plant in Gazebo Harmonic behind the
+> same seam (items 11 and 18), then one real car in the loop. Still open: intention sharing (7), generated scenarios and a benchmark set (10),
 > CI (16), a realistic radio (20), and most of the dashboard items. The old headless simulator that
 > tried this on the ROS 1 line is at tag `v0.3.0`, `tools/rl_harness/train.py`.
