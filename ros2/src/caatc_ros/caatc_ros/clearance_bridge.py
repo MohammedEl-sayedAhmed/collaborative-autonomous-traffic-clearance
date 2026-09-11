@@ -88,6 +88,7 @@ class BridgeSettings:
     republish_period: float = BridgeCore.REPUBLISH_PERIOD_S
     pace: float = 0.0            # 0 = as fast as the nodes answer; 1.0 = real time (for watching)
     async_mode: bool = False     # the wall clock decides when the plant moves; the latest command counts
+    plant: str = "gym"           # the physics behind the referee: f1tenth_gym or gazebo (M5)
 
 
 def int_list(value) -> List[int]:
@@ -115,6 +116,8 @@ def parse_settings(argv: Sequence[str]) -> BridgeSettings:
                     help="re-publish the tick's state this often (wall clock) while waiting")
     ap.add_argument("--pace", type=float, default=d.pace,
                     help="real-time factor for watching: 1.0 = one simulated second per wall second; 0 = as fast as possible")
+    ap.add_argument("--plant", choices=["gym", "gazebo"], default=d.plant,
+                    help="the physics behind the referee: f1tenth_gym (default) or Gazebo Harmonic (M5, needs caatc-gazebo)")
     ap.add_argument("--async", dest="async_mode", action="store_true",
                     help="M4.4: do not wait for the cars; advance on the wall clock (--pace, default 1.0) with the "
                          "latest command each car sent, and measure command age, drops and the real-time factor")
@@ -124,7 +127,7 @@ def parse_settings(argv: Sequence[str]) -> BridgeSettings:
         ap.error("--seeds needs at least one int32 seed")
     pace = a.pace if not a.async_mode or a.pace > 0 else 1.0
     return BridgeSettings(a.preset, seeds, int_list(a.ros_cars), a.out_dir,
-                          a.per_tick_timeout, a.first_tick_timeout, a.republish_period, pace, a.async_mode)
+                          a.per_tick_timeout, a.first_tick_timeout, a.republish_period, pace, a.async_mode, a.plant)
 
 
 class ClearanceBridge(Node):
@@ -136,7 +139,7 @@ class ClearanceBridge(Node):
         s = self.settings
         self.cfg = preset_config(s.preset)
         self.versions = dict(versions(), ros_domain_id=os.environ.get("ROS_DOMAIN_ID", "0"))
-        self.core = BridgeCore(self.cfg, s.ros_cars, versions=self.versions)
+        self.core = BridgeCore(self.cfg, s.ros_cars, versions=self.versions, plant=s.plant)
         self.seed = 0                        # the running episode's reset seed (Episode.seed)
         self.failed: Optional[str] = None    # set by a callback that saw a protocol breach
         self.received = 0                    # every Drive or Decision that reached a callback
@@ -180,13 +183,14 @@ class ClearanceBridge(Node):
         self.declare_parameter("republish_period", float(cli.republish_period), loose)
         self.declare_parameter("pace", float(cli.pace), loose)
         self.declare_parameter("async_mode", bool(cli.async_mode))
+        self.declare_parameter("plant", cli.plant)
         p = lambda name: self.get_parameter(name).value  # noqa: E731
         preset = str(p("preset")).lower()
         if preset not in PRESETS:
             raise ValueError(f"unknown preset '{preset}' (easy|hard|strict)")
         return BridgeSettings(preset, int_list(p("seeds")), int_list(p("ros_cars")), str(p("out_dir")),
                               float(p("per_tick_timeout")), float(p("first_tick_timeout")),
-                              float(p("republish_period")), float(p("pace")), bool(p("async_mode")))
+                              float(p("republish_period")), float(p("pace")), bool(p("async_mode")), str(p("plant")))
 
     # -- outgoing: the tick's state ----------------------------------------------------
     def publish_state(self, st: BridgeState, ended: bool = False) -> None:

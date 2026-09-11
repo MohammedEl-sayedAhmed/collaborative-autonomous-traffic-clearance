@@ -127,6 +127,11 @@ case "${1:-help}" in
     shift || true; docker build -t caatc-gazebo -f docker/gazebo.Dockerfile "$@" . ;;
   gazebo-shell)                        # M5: a shell in the Gazebo image with the repo at /src
     shift || true; ros_dev -it caatc-gazebo bash "$@" ;;
+  gazebo-fleet)                        # M5.1: the M4 fleet checks (obs exact, gate, rosbag replay, exact replay) on the Gazebo plant
+    shift || true; ros_dev caatc-gazebo python3 -m caatc_ros.ros_smoke --fleet --v2v --plant gazebo --gate --bag \
+      --policy numpy:caatc/policies/ippo-strict --preset strict --seeds 0,1 --out-dir /src/saved_variables/gazebo/fleet "$@" ;;
+  gazebo-step-response)                # M5.1 check 6: a steering step and a speed step on both plants, side by side
+    shift || true; ros_dev caatc-gazebo python3 -m caatc.plant_step_response "$@" ;;
   gazebo-smoke)                        # M5.1: the referee on the Gazebo plant, headless: repeatability, headroom, tables
     shift || true; ros_dev caatc-gazebo python3 -m caatc.gazebo_smoke "$@" ;;
   gazebo-spike)                        # M5.0: step one car headless, measure the real-time factor and repeatability

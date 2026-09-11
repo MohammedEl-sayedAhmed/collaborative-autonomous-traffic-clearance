@@ -164,16 +164,19 @@ class BridgeCore:
 
     def __init__(self, cfg: ScenarioConfig, ros_cars: Sequence[int],
                  fallback: Optional[Fallback] = None, versions: Optional[dict] = None,
-                 wire_dtype=np.float32):
+                 wire_dtype=np.float32, plant: str = "gym"):
         """``wire_dtype`` is float32, what AckermannDrive carries. Tests pass float64 to
-        show the protocol itself is exact when the wire is not the limit."""
+        show the protocol itself is exact when the wire is not the limit. ``plant`` names the
+        physics behind the referee (``caatc.plants``): f1tenth_gym or Gazebo."""
         K = cfg.num_cooperators
         self.ros_cars = sorted(set(int(i) for i in ros_cars))
         for i in self.ros_cars:
             if not 1 <= i <= K:
                 raise ValueError(f"car {i} is not a cooperator (1..{K})")
         self.cfg = cfg
-        self.env = ClearanceEnv(cfg)
+        from .plants import make_plant
+        self.plant_name = plant
+        self.env = ClearanceEnv(cfg, plant=make_plant(plant, cfg))
         self.fallback: Fallback = fallback if fallback is not None else LocalIdealCooperator()
         self.versions = dict(versions or {})
         self.episode = -1
@@ -214,7 +217,7 @@ class BridgeCore:
         # compilation, and a signal in that window must still leave a record behind
         self.record = Record(meta=dict(
             preset=cfg.preset, cfg=asdict(cfg), seed=int(seed), episode=self.episode,
-            start_tick=self.start_tick, ros_cars=list(self.ros_cars), versions=self.versions,
+            start_tick=self.start_tick, ros_cars=list(self.ros_cars), versions=self.versions, plant=self.plant_name,
             aborted=False, abort_reason="", feature_count=feature_count(cfg), num_agents=cfg.num_agents,
         ))
         self.env.reset(seed=seed)
@@ -567,9 +570,11 @@ class ReplayReport:
 
 
 def replay(rec: Record) -> ReplayReport:
-    """Replay a record into a fresh ``ClearanceEnv`` and demand bit-for-bit equality."""
+    """Replay a record into a fresh ``ClearanceEnv`` on the same kind of plant it was recorded
+    on (``meta["plant"]``, f1tenth_gym when absent) and demand bit-for-bit equality."""
+    from .plants import make_plant
     cfg = ScenarioConfig(**rec.meta["cfg"])
-    env = ClearanceEnv(cfg)
+    env = ClearanceEnv(cfg, plant=make_plant(rec.meta.get("plant", "gym"), cfg))
     T = len(rec.rows_applied)
     boundaries = {t: b for b, t in enumerate(rec.boundary_ticks)}
     commits = {t: c for c, t in enumerate(rec.commit_ticks)}
