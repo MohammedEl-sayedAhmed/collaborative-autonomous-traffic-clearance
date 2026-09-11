@@ -44,6 +44,16 @@ now rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tent
     the EV's lane, which closes that loophole, and there the same learner yields 3.0 out of 3.0 and
     matches the ideal. EASY and HARD are unchanged so the published numbers stay valid; `--policy
     speedup` plus two checks keep the loophole visible.
+  - **M5, in progress** (ADR 0013, `docs/design/m5-3d-plant.md`): a 3D plant in Gazebo Harmonic behind
+    the same seam. **M5.0 done:** the referee/plant split (`caatc/plant.py`) bit-identical on the golden
+    traces; the `caatc-gazebo` image; the spike (above real time with four lidars, bit-identical).
+    **M5.1 done:** `GazeboPlant` (`caatc/gazebo_plant.py`), the world generated from `scenario.py`
+    (`caatc/gazebo_world.py`), `--plant gazebo` on the bridge and the ROS smoke. The whole M4 fleet runs
+    on Gazebo unchanged with every check passing and bit-identical replays (`./run.sh gazebo-fleet`).
+    First 3D result (`./run.sh gazebo-smoke`): on STRICT and EASY the learned policy carries over
+    (100%, three yields, `t_clear` 6.50 s vs 6.10 s); **on HARD it collides with the side-lane occupant
+    on every seed while `ideal` succeeds**; nothing is retrained in M5 by decision. Step responses of the
+    two plants: `./run.sh gazebo-step-response`. Next: M5.2 (lidar + map + AMCL per car).
   - **M4, done:** the ROS 2 Jazzy demo (ADR 0011, ADR 0012). Python 3.12
     everywhere with all 17 published rows re-checked (one model retrained and re-measured); the
     **seam** in `ClearanceEnv` (`set_decision` / `joint_action_rows` / `substep` / `commit_step`) with
@@ -111,6 +121,11 @@ now rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tent
   `./run.sh ros-sweep [--preset hard --seeds 0,1,2,3,4 --losses 0,0.5,1 --delays 0,10,50]` (loss and
   delay tables) · `./run.sh export-policy <zip> --out caatc/policies/<name>` · `./run.sh ros-shell`. Nodes always start as `python3 -m caatc_ros.<node>` inside the image, never
   via `ros2 run`.
+- **M5 (Gazebo):** `./run.sh gazebo-build` · `./run.sh gazebo-spike --world spike4` (M5.0) ·
+  `./run.sh gazebo-smoke --preset strict|easy|hard --seeds 0,1 --policies ideal,naive,numpy:caatc/policies/ippo-strict`
+  (the referee on the Gazebo plant, headless: repeatability, headroom, tables) · `./run.sh gazebo-fleet`
+  (the M4 fleet checks on the Gazebo plant) · `./run.sh gazebo-step-response` (check 6) ·
+  `./run.sh gazebo-shell`. Never run two Gazebo jobs at once: they share one transport.
 - **Dashboard:** `./run.sh dashboard` (reads `saved_variables/runs/`) · `./run.sh dashboard-demo`
 - **Thesis:** `./run.sh thesis`
 - `./run.sh` with no arguments lists every command.
@@ -133,15 +148,16 @@ now rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tent
 `docs/design/m5-3d-plant.md`; decided 2026-09-11, not started). `master` is tagged `v1.0.0` (M0 to M4).
 The four choices are made: an F1TENTH-style 1/10 car (one of them), lidar plus a map for positioning
 (AMCL), **Gazebo Harmonic** (the official Jazzy pairing, supported to May 2029 like Jazzy; Lyrical plus
-Jetty, to 2031, is the recorded upgrade path), and **nothing retrained** in M5. Work in order: (0) ~~the
-M5.0 spike~~ done: `caatc-gazebo` image (`./run.sh gazebo-build`), `gazebo/` (car model, worlds,
-`spike.py`; `./run.sh gazebo-spike --world spike4`): above real time with four lidars, bit-identical
-repeats; the `Plant` split (`caatc/plant.py`, `GymPlant`) bit-identical on the golden traces. Gotchas:
-keep Gazebo subscriptions and blocking requests in separate Python processes, sync on the world clock
-topic, no `<topic>` on per-model plugins, a readiness probe must say `pause: true`; (1) M5.1: `GazeboPlant` with ground-truth poses, the generated
-world, the M4 checks and tables re-run; (2) M5.2: simulated lidar, IMU and wheel odometry, AMCL per
-car, the localization error published; (3) M5.3, **only if a real car is obtained** (there is none as of 2026-09-11): measure the car, map the
-track, a `lab` preset, one real cooperator in the episode; (4) the record. **No end-of-life dependency anywhere**, and nothing
+Jetty, to 2031, is the recorded upgrade path), and **nothing retrained** in M5. Work in order: (0) ~~the M5.0 spike~~ done: `caatc-gazebo` image (`./run.sh gazebo-build`), `gazebo/` (car
+model, worlds, `spike.py`; `./run.sh gazebo-spike --world spike4`): above real time with four lidars, bit-identical
+repeats; the `Plant` split (`caatc/plant.py`, `GymPlant`) bit-identical on the golden traces. Gotchas: keep
+Gazebo subscriptions and blocking requests in separate Python processes, sync on the world clock topic, read
+the state from stamped messages, no `<topic>` on per-model plugins, a readiness probe must say `pause: true`;
+(1) ~~M5.1~~ done: `GazeboPlant` with ground-truth poses, the generated world, the M4 checks and tables re-run
+(results in the design doc; on HARD the learned policy collides while `ideal` succeeds); (2) M5.2: simulated
+lidar, IMU and wheel odometry, AMCL per car, the localization error published; (3) M5.3, **only if a real car
+is obtained** (there is none as of 2026-09-11): measure the car, map the track, a `lab` preset, one real
+cooperator in the episode; (4) the record. **No end-of-life dependency anywhere**, and nothing
 that only works on Gazebo Harmonic.
 
 Still open after M5: a realistic radio (roadmap 20; M4.4 showed on HARD that "not heard" must not mean

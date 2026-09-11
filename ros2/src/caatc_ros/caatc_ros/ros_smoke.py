@@ -133,6 +133,7 @@ class FleetOptions:
     view: bool = False
     pace: float = 0.0
     async_mode: bool = False
+    plant: str = "gym"            # M5: the physics behind the referee, f1tenth_gym or gazebo
 
 
 def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOptions,
@@ -159,6 +160,8 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOp
         bridge_cmd += ["--pace", str(fleet.pace)]
     if fleet.async_mode:
         bridge_cmd += ["--async"]
+    if fleet.plant != "gym":
+        bridge_cmd += ["--plant", fleet.plant]
     view_cmd = [sys.executable, "-m", "caatc_ros.scene_view", "--preset", preset]
     relay_cmd = [sys.executable, "-m", "caatc_ros.v2v_relay", "--preset", preset, "--out-dir", out_dir,
                  "--loss", str(fleet.loss), "--delay-ticks", str(fleet.delay_ticks), "--seed", str(fleet.relay_seed)]
@@ -628,7 +631,7 @@ def check_against_headless(g: Gate, records: List[Tuple[str, Record]], policy_na
                       f"headless success={ref['success']} collision={ref['collision']} yields={ref['lane_changes']}; "
                       f"return ros={got['cum_reward']:.4f} headless={ref['cum_reward']:.4f}")
             if not radio_perfect:
-                print(f"    {label_of(rec)} (radio with loss/delay, outcome only): {detail}")
+                print(f"    {label_of(rec)} (another plant or an imperfect radio: outcomes compared, not required): {detail}")
             else:
                 g.check(f"{label_of(rec)}: same success, collision and lane changes", same, detail)
                 g.check(f"{label_of(rec)}: t_clear within one decision step ({cfg.dt:.2f} s)", tc_ok,
@@ -853,6 +856,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="record the allow-listed topics into a rosbag2 and replay them into fresh nodes (check 8)")
     ap.add_argument("--view", action="store_true", help="start the scene_view node (markers on /caatc/scene, frames on /tf)")
     ap.add_argument("--pace", type=float, default=0.0, help="bridge real-time factor for watching (1.0 = real time)")
+    ap.add_argument("--plant", choices=["gym", "gazebo"], default="gym",
+                    help="M5: the physics behind the referee; gazebo needs the caatc-gazebo image")
     ap.add_argument("--async", dest="async_mode", action="store_true",
                     help="M4.4: the bridge advances on the wall clock with the latest commands; check 13 measures the timing")
     ap.add_argument("--dashboard", action="store_true",
@@ -870,13 +875,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     cfg0 = preset_config(a.preset)
     cars = list(range(1, cfg0.num_cooperators + 1)) if a.fleet else [a.car]
     fleet = FleetOptions(cars=cars, v2v=a.v2v, policy=a.policy, gate=a.gate, loss=a.loss, delay_ticks=a.delay_ticks,
-                         bag=a.bag, view=a.view, pace=a.pace, async_mode=a.async_mode)
+                         bag=a.bag, view=a.view, pace=a.pace, async_mode=a.async_mode, plant=a.plant)
     radio_perfect = a.loss == 0.0 and a.delay_ticks == 0 and not a.async_mode   # async: timing, not faithfulness
+    same_plant = a.plant == "gym"   # M5: on another plant the headless 2D run is a comparison, not a check
     if a.v2v and not a.fleet and a.gate:
         pass    # a single car over the digest with the gate is fine too
     print(f"=== ROS 2 lockstep smoke: preset={a.preset} seeds={seeds if seeds is not None else 'from the records'} "
           f"cars={cars} policy={a.policy} radio={'digest' if a.v2v else 'raw odometry'}"
-          f"{f' loss={a.loss} delay={a.delay_ticks}' if not radio_perfect else ''}{' expect-fail' if a.expect_fail else ''} ===")
+          f"{f' loss={a.loss} delay={a.delay_ticks}' if not radio_perfect else ''}{' expect-fail' if a.expect_fail else ''}{'' if same_plant else f' plant={a.plant}'} ===")
     print(f"interpreter {sys.executable}, numpy {np.__version__}, out-dir {a.out_dir}")
 
     run: Optional[RunResult] = None
@@ -926,7 +932,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             print("\nradio with loss/delay: checks 4, 6 and the equality half of 5b do not apply; outcomes are printed")
         check_exact_replay(g, records)
-        check_against_headless(g, records, a.policy, a.expect_fail, radio_perfect)
+        check_against_headless(g, records, a.policy, a.expect_fail, radio_perfect and same_plant)
         check_speed_rule(g, records)
         if a.async_mode:
             check_timing(g, records, a.pace)
