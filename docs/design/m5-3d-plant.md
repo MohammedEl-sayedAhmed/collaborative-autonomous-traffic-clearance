@@ -4,9 +4,11 @@
 M4 checks ([`m4-ros2-mechanical-demo.md`](m4-ros2-mechanical-demo.md), ADR 0011).
 
 **Where it stands (2026-09-11):** decided, not started. The four choices are made (an F1TENTH-style
-1/10 car, one of them; lidar plus a map for positioning; Gazebo Harmonic; nothing retrained). The first
-stop point is the M5.0 spike below, which has to answer two questions before anything else is built:
-how fast Gazebo runs headless with lidar on this machine, and how repeatable it is.
+1/10 car, one at most; lidar plus a map for positioning; Gazebo Harmonic; nothing retrained). **There is
+no real car yet** and there may not be one: M5.0 to M5.2 are the deliverable on their own, and M5.3 runs
+only if a car arrives. The first stop point is the M5.0 spike below, which has to answer two questions
+before anything else is built: how fast Gazebo runs headless with lidar on this machine, and how
+repeatable it is.
 
 ## What M5 is for
 
@@ -19,7 +21,7 @@ same checks, with the same car nodes:
 |---|---|---|---|
 | physics | a single-track model with a handful of parameters | a 3D car with mass, tyres, a motor and a steering servo, in Gazebo | M5.1 |
 | sensing | every car knows its exact pose | each car finds its pose from a simulated lidar and a map, with AMCL | M5.2 |
-| the hardware | none | one real car takes the place of one simulated cooperator | M5.3 |
+| the hardware | none | one real car takes the place of one simulated cooperator | M5.3, only if a car is obtained |
 
 M5 does **not** try to make the cars drive better, and it does **not** retrain. If the policy trained on
 the 2D model breaks on the 3D plant, that is a result to publish and the start of a later decision.
@@ -160,15 +162,16 @@ the real car needing a slower `lab` preset.
 2. **M5.2, L1** (6 to 8 days). The lidar, IMU and wheel-odometry topics per car; the map generated from
    the same script; `/car{i}/localization` with AMCL; the gate's new allow-list; checks 5 and 9; the
    tables re-measured with sensed poses. Roadmap item 18 lands here.
-3. **M5.3, L2** (8 to 10 days, plus hardware time). Measure the car; map the real track; a `lab` preset
+3. **M5.3, L2, only if a car is obtained** (8 to 10 days, plus hardware time). Measure the car; map the real track; a `lab` preset
    (a shorter road, lower speeds, added as new rows); the real car's bring-up on Jazzy; safety (a speed
    cap in the referee's rule, an e-stop, a person with the remote); one real cooperator in the episode;
    check 11.
 4. **M5.4, the record** (1 to 2 days). This doc's results, ADR 0013's outcome section, README, CLAUDE.
 
-**Honest estimate: 20 to 26 focused working days**, no training compute, and hardware time on top that
-no estimate survives. M4 was planned at 8 to 10 days and went faster; M5 has two things M4 did not, a
-physics engine we do not control and a car that can break.
+**Honest estimate: 12 to 16 focused working days** for M5.0 to M5.2, no training compute; 8 to 10 more
+for M5.3 if a car arrives, plus hardware time that no estimate survives. M4 was planned at 8 to 10 days
+and went faster; M5 has two things M4 did not, a physics engine we do not control and, maybe, a car that
+can break.
 
 ## Risks
 

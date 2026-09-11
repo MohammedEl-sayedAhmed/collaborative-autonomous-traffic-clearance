@@ -15,9 +15,10 @@ each car decides alone, and the same cars run as separate ROS 2 programs with th
 The simulator is `f1tenth_gym`: a single-track ("bicycle") car model in numpy, no 3D, no sensors we use,
 and a pose that is always exact.
 
-We now have a real 1/10-scale car (an F1TENTH-style build: VESC motor controller, a 2D lidar, an onboard
-computer), and the goal was always to put the learned behaviour on it. Between the 2D model and a real car
-there are three gaps that the current stack cannot measure:
+The goal was always to put the learned behaviour on a real 1/10-scale car (an F1TENTH-style build: VESC
+motor controller, a 2D lidar, an onboard computer). As of this decision there is **no car in hand**; getting
+one is being tried and may not work out. Between the 2D model and a real car there are three gaps that
+the current stack cannot measure, and the first two can be measured without any hardware:
 
 1. **Physics.** A real car has mass, tyres, a motor with limits and a steering servo with a delay. The
    2D model has none of that beyond a few parameters.
@@ -61,8 +62,10 @@ seam unchanged, and ends with **one real F1TENTH-style car** replacing one simul
 four choices, made on 2026-09-11:
 
 1. **The hardware to reproduce:** an F1TENTH-style 1/10 car (VESC, a 2D lidar, an onboard computer),
-   one car for now. Its exact parameters (wheelbase, mass, steering limits, motor limits, the lidar
-   model) are **measured on the car before M5.3**, not copied from a datasheet.
+   one car at most. **There is none yet**, so the model uses the F1TENTH defaults, every 3D number
+   carries that label, and M5.3 (the real car) runs **only if a car is obtained**. M5.0 to M5.2 stand
+   on their own and are the deliverable either way. If a car arrives, its parameters are **measured**
+   before M5.3, not copied from a datasheet.
 2. **Positioning:** lidar plus a map, with AMCL on the car, as the 2020 stack did. So the simulator must
    produce lidar scans, and the localization error becomes part of the test.
 3. **The simulator:** Gazebo Harmonic (the modern `gz-sim`), headless, stepped in lockstep by the bridge
@@ -91,8 +94,8 @@ ROS 2 LTS; nothing in M5 may make that move harder.
   may run below real time (measured in the M5.0 spike; lockstep does not care, the demo does). Gazebo is
   not bit-for-bit repeatable, so the M5 tables carry seeds and repeats and a declared spread instead of
   exact replay. The URDF port, the world generation and the localization stack are new code with their
-  own tests. Roughly **20 to 26 focused working days** across M5.0 to M5.3, plus hardware time that no
-  estimate survives.
+  own tests. Roughly **12 to 16 focused working days** for M5.0 to M5.2, and 8 to 10 more for M5.3 if
+  a car arrives, plus hardware time that no estimate survives.
 - **Neutral:** ADR 0004 still holds: the *learning* stays on `f1tenth_gym`, because it is fast. Gazebo is
   the *plant for measuring and deploying*, not for training. A fixed `lab` preset (a shorter road, lower
   speeds) will be needed for the real track, added as new rows, never by changing the existing presets.

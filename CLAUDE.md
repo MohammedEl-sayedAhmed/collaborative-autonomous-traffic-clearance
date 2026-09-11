@@ -136,8 +136,8 @@ M5.0 spike: the `caatc-gazebo` image, one ported car with Ackermann drive and a 
 real-time factor and repeatability measured on this machine, plus the `Referee` / `Plant` split proven
 bit-identical on the golden traces; (1) M5.1: `GazeboPlant` with ground-truth poses, the generated
 world, the M4 checks and tables re-run; (2) M5.2: simulated lidar, IMU and wheel odometry, AMCL per
-car, the localization error published; (3) M5.3: measure the real car, map the track, a `lab` preset,
-one real cooperator in the episode; (4) the record. **No end-of-life dependency anywhere**, and nothing
+car, the localization error published; (3) M5.3, **only if a real car is obtained** (there is none as of 2026-09-11): measure the car, map the
+track, a `lab` preset, one real cooperator in the episode; (4) the record. **No end-of-life dependency anywhere**, and nothing
 that only works on Gazebo Harmonic.
 
 Still open after M5: a realistic radio (roadmap 20; M4.4 showed on HARD that "not heard" must not mean
