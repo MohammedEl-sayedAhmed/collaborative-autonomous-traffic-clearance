@@ -81,7 +81,7 @@ now rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tent
   `gym-train.Dockerfile` (stable-baselines3 + CPU torch), `gym-view.Dockerfile` (X11 for a window).
 - `run.sh`: runs everything in Docker (v1.0.0 only: `gym-*`, `clearance-*`, `dashboard`, `thesis`).
 - `docs/adr/`: Architecture Decision Records (each migration decision and why).
-- `docs/design/`: design docs (M1, M3, M4).
+- `docs/design/`: design docs (M1, M3, M4, and the M5 plan).
 - `docs/legacy/`: docs for the tagged 2020 ROS 1 / Gazebo stack.
 - `docs/DASHBOARD*.md`: the training dashboard guides.
 - `docs/upstream-candidates.md`: four `f1tenth_gym` findings. **Nothing has been sent upstream.**
@@ -127,16 +127,26 @@ now rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tent
 - The network here is flaky. Retry git pushes and pulls and Docker image builds.
 
 ## Next step
-**M4 is done; PR #18 merges it into `master`.** Then pick the next milestone. The strongest candidate is roadmap item 20,
-a realistic radio: M4.4 showed on HARD that "not heard" must not mean "not there". The likely shape:
-keep the last heard position of a car for a short while, treat a lane with no recent broadcast as not
-clear, and retrain with loss and delay in the loop. That changes the observation, so the published
-tables get a **new** row, never a changed one. Also open: the bigger scenarios (roadmap 10), CI (16),
-and whether `master` now gets the `v1.0.0` tag (ADR 0003), which is the owner's call.
+**M5: a 3D plant behind the same seam, then one real car** (ADR 0013, plan in
+`docs/design/m5-3d-plant.md`; decided 2026-09-11, not started). `master` is tagged `v1.0.0` (M0 to M4).
+The four choices are made: an F1TENTH-style 1/10 car (one of them), lidar plus a map for positioning
+(AMCL), **Gazebo Harmonic** (the official Jazzy pairing, supported to May 2029 like Jazzy; Lyrical plus
+Jetty, to 2031, is the recorded upgrade path), and **nothing retrained** in M5. Work in order: (0) the
+M5.0 spike: the `caatc-gazebo` image, one ported car with Ackermann drive and a GPU lidar headless,
+real-time factor and repeatability measured on this machine, plus the `Referee` / `Plant` split proven
+bit-identical on the golden traces; (1) M5.1: `GazeboPlant` with ground-truth poses, the generated
+world, the M4 checks and tables re-run; (2) M5.2: simulated lidar, IMU and wheel odometry, AMCL per
+car, the localization error published; (3) M5.3: measure the real car, map the track, a `lab` preset,
+one real cooperator in the episode; (4) the record. **No end-of-life dependency anywhere**, and nothing
+that only works on Gazebo Harmonic.
+
+Still open after M5: a realistic radio (roadmap 20; M4.4 showed on HARD that "not heard" must not mean
+"not there"), the bigger scenarios (10), CI (16).
 
 M4's idea in one line, for context: keep **one** `ClearanceEnv` as the only physics, and let **K ROS 2
 nodes, one per car**, replace exactly rows `1..K` of the per-tick action array. Nothing about the EV,
-the ACC law, the reward or the metrics changes, so the published numbers stay comparable.
+the ACC law, the reward or the metrics changes, so the published numbers stay comparable. M5 keeps that
+and only puts a second physics behind the seam.
 
 The three choices: **ROS 2 Jazzy** (supported to May 2029; Humble stops in May 2027, ADR 0012), which
 means **Python 3.12 everywhere**; **standard ROS messages only** (`nav_msgs/Odometry`,

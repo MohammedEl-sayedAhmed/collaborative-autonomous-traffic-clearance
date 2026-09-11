@@ -30,3 +30,4 @@ ROS 2 / Python 3 one.
 | [0010](0010-strict-preset-removes-the-convoying-substitution.md) | The STRICT preset: speeding up must not count as cooperation | Accepted |
 | [0011](0011-m4-ros2-mechanical-demo.md) | M4: the ROS 2 Jazzy demo, one simulator plus K car nodes | Accepted, built |
 | [0012](0012-target-ros2-jazzy-not-humble.md) | Target ROS 2 Jazzy, not Humble (supported to 2029) | Accepted |
+| [0013](0013-m5-3d-plant-gazebo-harmonic.md) | M5: a 3D plant in Gazebo Harmonic behind the same seam, then one real car in the loop | Accepted, not started |
