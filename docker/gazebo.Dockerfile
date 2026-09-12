@@ -12,6 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-${ROS_DISTRO}-ros-gz \
       libegl1 libgl1-mesa-dri libglx-mesa0 libegl-mesa0 \
  && rm -rf /var/lib/apt/lists/*
+# M5.2: the car's own localization, from Nav2 for this release (lidar + a map -> a pose):
+# the map server, AMCL, and the lifecycle manager that brings them up. Same support horizon.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ros-${ROS_DISTRO}-nav2-map-server \
+      ros-${ROS_DISTRO}-nav2-amcl \
+      ros-${ROS_DISTRO}-nav2-lifecycle-manager \
+      ros-${ROS_DISTRO}-tf2-tools \
+ && rm -rf /var/lib/apt/lists/*
 # Gazebo looks for models and worlds here; run.sh mounts the repository at /src.
 ENV GZ_SIM_RESOURCE_PATH=/src/gazebo/models:/src/gazebo/worlds
 CMD ["gz", "sim", "--version"]

@@ -25,22 +25,38 @@ WALL_HEIGHT = 0.3
 WALL_THICKNESS = 0.1
 WALL_MARGIN = 0.6            # m outside the outer lane edge
 SEGMENT_M = 0.5              # strips and walls are boxes this long along the road
+WALL_GAP_EVERY = 8           # every 8th wall segment is left out: a 0.5 m notch every 4 m, so a lidar can tell WHERE along the road it is
 
 
 def car_name(i: int) -> str:
     return f"car{i}"
 
 
-def _polyline(frame: CenterlineFrame, d: float, seg: float = SEGMENT_M) -> List[Tuple[float, float, float, float]]:
-    """Boxes along the road at lateral offset d: (x, y, yaw, length) per segment."""
+def _polyline(frame: CenterlineFrame, d: float, seg: float = SEGMENT_M,
+              gap_every: int = 0) -> List[Tuple[float, float, float, float]]:
+    """Boxes along the road at lateral offset d: (x, y, yaw, length) per segment.
+
+    ``gap_every`` > 0 leaves every that-many-th segment out (a notch)."""
     n = max(2, int(np.ceil(frame.length / seg)) + 1)
     ss = np.linspace(0.0, frame.length, n)
     pts = np.array([frame.frenet_to_xytheta(s, d)[:2] for s in ss])
     out = []
-    for a, b in zip(pts[:-1], pts[1:]):
+    for k, (a, b) in enumerate(zip(pts[:-1], pts[1:])):
+        if gap_every and (k + 1) % gap_every == 0:
+            continue
         mid = (a + b) / 2.0
         dx, dy = b - a
         out.append((float(mid[0]), float(mid[1]), float(np.arctan2(dy, dx)), float(np.hypot(dx, dy)) + 0.02))
+    return out
+
+
+def wall_boxes(cfg: ScenarioConfig) -> List[Tuple[float, float, float, float, float]]:
+    """The walls as (x, y, yaw, length, thickness) boxes: the world and the map both come from this."""
+    frame = CenterlineFrame(*centerline_xy(cfg))
+    half = cfg.num_lanes * cfg.lane_width / 2.0
+    out = []
+    for d in (half + WALL_MARGIN, -(half + WALL_MARGIN)):
+        out += [(x, y, yaw, length, WALL_THICKNESS) for x, y, yaw, length in _polyline(frame, d, gap_every=WALL_GAP_EVERY)]
     return out
 
 
@@ -76,8 +92,8 @@ def world_sdf(cfg: ScenarioConfig, poses: np.ndarray, name: str = WORLD_NAME,
                                       "0.95 0.95 0.95 1" if edge else "0.75 0.75 0.75 1", collide=False))
     if walls:
         for side, d in (("left", half + WALL_MARGIN), ("right", -(half + WALL_MARGIN))):
-            parts.append(_strip_model(f"wall_{side}", _polyline(frame, d), WALL_HEIGHT / 2.0, WALL_THICKNESS, WALL_HEIGHT,
-                                      "0.6 0.6 0.62 1", collide=True))
+            parts.append(_strip_model(f"wall_{side}", _polyline(frame, d, gap_every=WALL_GAP_EVERY), WALL_HEIGHT / 2.0,
+                                      WALL_THICKNESS, WALL_HEIGHT, "0.6 0.6 0.62 1", collide=True))
     cars = "\n".join(
         f'''    <include>
       <uri>model://racecar</uri>
@@ -95,6 +111,7 @@ def world_sdf(cfg: ScenarioConfig, poses: np.ndarray, name: str = WORLD_NAME,
     <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
     <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
     <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
     <light type="directional" name="sun"><pose>0 0 10 0 0 0</pose><direction>-0.5 0.1 -0.9</direction><diffuse>0.8 0.8 0.8 1</diffuse></light>
     <model name="ground"><static>true</static><pose>{gx:.3f} 0 0 0 0 0</pose><link name="l">
       <collision name="c"><geometry><plane><normal>0 0 1</normal><size>{gsize:.1f} 40</size></plane></geometry>

@@ -12,6 +12,9 @@
         <contact><collision>c</collision></contact>
         <update_rate>100</update_rate><always_on>1</always_on>
       </sensor>
+      <sensor name="imu" type="imu">
+        <always_on>1</always_on><update_rate>100</update_rate>
+      </sensor>
       <sensor name="lidar" type="gpu_lidar">
         <!-- Hokuyo UST-10LX as the 2020 model had it: 1081 points over 270 degrees, 0.1 to 10 m, 40 Hz -->
         <pose>0.09355 0 0.115 0 0 0</pose>
