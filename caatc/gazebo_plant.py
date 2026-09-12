@@ -6,8 +6,8 @@ scenario (``caatc.gazebo_world``), starts a headless Gazebo server paused, and a
 ticks the 2D plant. Every car, the emergency vehicle included, is a ``racecar`` model driven by
 Gazebo's Ackermann steering system; the referee's (steer, speed) row becomes the Twist that
 system wants. The state the referee reads (x, y, heading, speed, steering angle) is the
-simulator's ground truth: the model pose, the Ackermann system's odometry and the steering
-hinges' joint angles. Collisions come from a contact sensor on each car's chassis box.
+simulator's ground truth from one stamped message per physics step: the model pose, the rear
+wheels' rates times the wheel radius, and the steering hinges' angles. Collisions come from a contact sensor on each car's chassis box.
 
 Two rules learned in the M5.0 spike are built in: every subscription lives in a separate
 listener process that writes into shared memory (a blocking request and a Python callback in
@@ -39,6 +39,8 @@ WHEELBASE = 0.3302             # m, f1tenth_gym's lf + lr; gazebo/models/racecar
 TICK_NS = 10_000_000           # one referee tick = 10 ms of simulated time
 STEPS_PER_TICK = 10            # at the world's 1 ms physics step
 STEER_JOINTS = ("front_left_steer_joint", "front_right_steer_joint")
+REAR_WHEEL_JOINTS = ("rear_left_wheel_joint", "rear_right_wheel_joint")
+WHEEL_RADIUS = 0.05            # m, gazebo/models/racecar
 CMD_MARGIN_S = float(os.environ.get("CAATC_GZ_CMD_MARGIN_S", "0.001"))   # wall seconds between publishing a tick's commands and stepping
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_MODELS_DIR = os.path.normpath(os.path.join(_HERE, "..", "gazebo", "models"))
@@ -52,17 +54,16 @@ def _yaw(q) -> float:
 def _listener(world: str, n: int, state, stamp_ns, sim_ns, contact_ns, cmd_seen, ready, stop, contact_log: str) -> None:
     """Child process: every subscription, writing into shared memory.
 
-    ``state`` is n x 5 (x, y, theta, v, delta). The pose, heading and steering angle come from the
-    joint-state message (every physics step, stamped, carries the model pose); the speed from the
-    Ackermann system's odometry (once per tick, stamped). ``stamp_ns[2i]`` and ``stamp_ns[2i+1]``
-    are the sim stamps of the newest joint-state and odometry message heard for car i: the plant
-    waits on those stamps, not on arrival, which is what makes a read exact and repeatable.
-    ``contact_ns[i]`` is the sim time of car i's last non-empty contact."""
+    ``state`` is n x 5 (x, y, theta, v, delta), all from the joint-state message of every physics
+    step: it is stamped and carries the model pose, the steering hinges' angles and the rear wheels'
+    rates (speed = rate x wheel radius, what a wheel encoder gives). ``stamp_ns[i]`` is the sim
+    stamp of the newest such message heard for car i: the plant waits on that stamp, not on
+    arrival, which is what makes a read exact and repeatable. ``contact_ns[i]`` is the sim time
+    of car i's last non-empty contact."""
     from gz.transport13 import Node
     from gz.msgs10.clock_pb2 import Clock
     from gz.msgs10.contacts_pb2 import Contacts
     from gz.msgs10.model_pb2 import Model
-    from gz.msgs10.odometry_pb2 import Odometry
     from gz.msgs10.twist_pb2 import Twist
 
     node = Node()
@@ -71,18 +72,17 @@ def _listener(world: str, n: int, state, stamp_ns, sim_ns, contact_ns, cmd_seen,
     def on_clock(msg):
         sim_ns.value = msg.sim.sec * 1_000_000_000 + msg.sim.nsec
 
-    def on_odom(msg, i):
-        state[5 * i + 3] = msg.twist.linear.x                  # body-frame forward speed
-        stamp_ns[2 * i + 1] = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nsec
-
     def on_joints(msg, i):
         state[5 * i] = msg.pose.position.x
         state[5 * i + 1] = msg.pose.position.y
         state[5 * i + 2] = _yaw(msg.pose.orientation)
-        vals = [j.axis1.position for j in msg.joint if j.name in STEER_JOINTS]
-        if vals:
-            state[5 * i + 4] = float(sum(vals) / len(vals))
-        stamp_ns[2 * i] = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nsec   # written last, on purpose
+        steer = [j.axis1.position for j in msg.joint if j.name in STEER_JOINTS]
+        rates = [j.axis1.velocity for j in msg.joint if j.name in REAR_WHEEL_JOINTS]
+        if rates:
+            state[5 * i + 3] = float(sum(rates) / len(rates)) * WHEEL_RADIUS
+        if steer:
+            state[5 * i + 4] = float(sum(steer) / len(steer))
+        stamp_ns[i] = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nsec   # written last, on purpose
 
     def on_cmd(msg, i):
         # the command echo: the same publish reaches the plugin and us; when we have it, so has it
@@ -99,7 +99,6 @@ def _listener(world: str, n: int, state, stamp_ns, sim_ns, contact_ns, cmd_seen,
 
     node.subscribe(Clock, f"/world/{world}/clock", on_clock)
     for i, c in enumerate(names):
-        node.subscribe(Odometry, f"/model/{c}/odometry", lambda m, i=i: on_odom(m, i))
         node.subscribe(Model, f"/world/{world}/model/{c}/joint_state", lambda m, i=i: on_joints(m, i))
         node.subscribe(Contacts, f"/world/{world}/model/{c}/link/chassis/sensor/bumper/contact", lambda m, i=i: on_contact(m, i))
         node.subscribe(Twist, f"/model/{c}/cmd_vel", lambda m, i=i: on_cmd(m, i))
@@ -131,6 +130,9 @@ class GazeboPlant:
         self._collided = np.zeros(self.n)
         self.stats = dict(boots=0, boot_s=[], ticks=0, wall_s=0.0, retries=0, late_reads=0, late_commands=0)
         self.last_rows: Optional[np.ndarray] = None
+        # Gazebo's clock starts here at reset (seconds). The ROS bridge sets it to the episode's
+        # first stamp so that sensor stamps ARE the tick stamps and never go backwards between episodes.
+        self.sim_time_origin_s: float = 0.0
         self.agent_ids: List[str] = [car_name(i) for i in range(self.n)]
 
     # -- lifecycle ---------------------------------------------------------------------
@@ -147,8 +149,10 @@ class GazeboPlant:
         env = dict(os.environ)
         env["GZ_SIM_RESOURCE_PATH"] = self.models_dir + (":" + env["GZ_SIM_RESOURCE_PATH"] if env.get("GZ_SIM_RESOURCE_PATH") else "")
         self._log = open(os.path.join(self._dir, "gz-server.log"), "w")
-        self._srv = subprocess.Popen(["gz", "sim", "-s", "--headless-rendering", "-v", str(self.verbose), world_file],
-                                     stdout=self._log, stderr=subprocess.STDOUT, env=env)
+        cmd = ["gz", "sim", "-s", "--headless-rendering", "-v", str(self.verbose)]
+        if self.sim_time_origin_s > 0:
+            cmd += ["--initial-sim-time", repr(float(self.sim_time_origin_s))]
+        self._srv = subprocess.Popen(cmd + [world_file], stdout=self._log, stderr=subprocess.STDOUT, env=env)
         if self._node is None:
             self._node = Node()                     # this process never subscribes: requests stay answerable
         probe = WorldControl(); probe.pause = True  # an empty request would mean "pause: false"
@@ -166,7 +170,7 @@ class GazeboPlant:
 
         n = self.n
         self._state = self._ctx.Array("d", [float("nan")] * (5 * n))
-        self._stamp_ns = self._ctx.Array("q", [0] * (2 * n))
+        self._stamp_ns = self._ctx.Array("q", [0] * n)
         self._sim_ns = self._ctx.Value("q", 0)
         self._contact_ns = self._ctx.Array("q", [-1] * n)
         self._cmd_seen = self._ctx.Array("d", [float("nan")] * (2 * n))
@@ -241,9 +245,9 @@ class GazeboPlant:
             if time.monotonic() - t0 > 10.0:
                 raise RuntimeError(f"Gazebo did not reach sim time {target * 1e-9:.3f} s within 10 s (at {self._sim_ns.value * 1e-9:.3f})")
             time.sleep(0.0001)
-        # read the state stamped with THIS tick's time: the joint state and the odometry of every car
+        # read the state stamped with THIS tick's time: the joint-state message of every car
         t1 = time.monotonic()
-        while min(self._stamp_ns[k] for k in range(2 * self.n)) < target:
+        while min(self._stamp_ns[k] for k in range(self.n)) < target:
             if time.monotonic() - t1 > 0.5:
                 self.stats["late_reads"] += 1
                 break

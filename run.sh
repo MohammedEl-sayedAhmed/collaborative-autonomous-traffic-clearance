@@ -130,6 +130,9 @@ case "${1:-help}" in
   gazebo-fleet)                        # M5.1: the M4 fleet checks (obs exact, gate, rosbag replay, exact replay) on the Gazebo plant
     shift || true; ros_dev caatc-gazebo python3 -m caatc_ros.ros_smoke --fleet --v2v --plant gazebo --gate --bag \
       --policy numpy:caatc/policies/ippo-strict --preset strict --seeds 0,1 --out-dir /src/saved_variables/gazebo/fleet "$@" ;;
+  gazebo-onboard)                      # M5.2: each car senses for itself (wheels, hinges, later lidar + AMCL) on the Gazebo plant
+    shift || true; ros_dev caatc-gazebo python3 -m caatc_ros.ros_smoke --fleet --v2v --plant gazebo --sensing onboard --gate \
+      --policy numpy:caatc/policies/ippo-strict --preset strict --seeds 0,1 --out-dir /src/saved_variables/gazebo/onboard "$@" ;;
   gazebo-step-response)                # M5.1 check 6: a steering step and a speed step on both plants, side by side
     shift || true; ros_dev caatc-gazebo python3 -m caatc.plant_step_response "$@" ;;
   gazebo-smoke)                        # M5.1: the referee on the Gazebo plant, headless: repeatability, headroom, tables

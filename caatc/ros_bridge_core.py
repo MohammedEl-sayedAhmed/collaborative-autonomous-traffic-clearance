@@ -205,6 +205,9 @@ class BridgeCore:
         self.episode += 1
         self.start_tick = episode_start_tick(self.episode, self._end_tick)
         self.tick = 0
+        if hasattr(self.env.plant, "sim_time_origin_s"):
+            # Gazebo: the sim clock starts at this episode's first stamp, so sensor stamps are tick stamps
+            self.env.plant.sim_time_origin_s = self.start_tick / float(self.cfg.sim_hz)
         self._pending_drive.clear(); self._pending_decision.clear()
         self._republishes_this_tick = 0
         # _republished_keys is kept: a late echo of the previous episode's re-published

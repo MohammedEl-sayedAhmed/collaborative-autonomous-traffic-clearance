@@ -40,10 +40,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence
 
+import math
+
 import numpy as np
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
 from caatc_msgs.msg import Decision, Episode
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.exceptions import InvalidParameterTypeException
@@ -89,6 +92,7 @@ class BridgeSettings:
     pace: float = 0.0            # 0 = as fast as the nodes answer; 1.0 = real time (for watching)
     async_mode: bool = False     # the wall clock decides when the plant moves; the latest command counts
     plant: str = "gym"           # the physics behind the referee: f1tenth_gym or gazebo (M5)
+    sensing: str = "gt"          # gt: the bridge publishes every car's true odom; onboard: a ROS car's odom comes from its own sensors (M5.2)
 
 
 def int_list(value) -> List[int]:
@@ -118,6 +122,8 @@ def parse_settings(argv: Sequence[str]) -> BridgeSettings:
                     help="real-time factor for watching: 1.0 = one simulated second per wall second; 0 = as fast as possible")
     ap.add_argument("--plant", choices=["gym", "gazebo"], default=d.plant,
                     help="the physics behind the referee: f1tenth_gym (default) or Gazebo Harmonic (M5, needs caatc-gazebo)")
+    ap.add_argument("--sensing", choices=["gt", "onboard"], default=d.sensing,
+                    help="onboard (M5.2, Gazebo only): a ROS car's odom and joint_states come from its vehicle interface, not from the plant")
     ap.add_argument("--async", dest="async_mode", action="store_true",
                     help="M4.4: do not wait for the cars; advance on the wall clock (--pace, default 1.0) with the "
                          "latest command each car sent, and measure command age, drops and the real-time factor")
@@ -127,7 +133,7 @@ def parse_settings(argv: Sequence[str]) -> BridgeSettings:
         ap.error("--seeds needs at least one int32 seed")
     pace = a.pace if not a.async_mode or a.pace > 0 else 1.0
     return BridgeSettings(a.preset, seeds, int_list(a.ros_cars), a.out_dir,
-                          a.per_tick_timeout, a.first_tick_timeout, a.republish_period, pace, a.async_mode, a.plant)
+                          a.per_tick_timeout, a.first_tick_timeout, a.republish_period, pace, a.async_mode, a.plant, a.sensing)
 
 
 class ClearanceBridge(Node):
@@ -153,6 +159,10 @@ class ClearanceBridge(Node):
         self.pub_joint = [self.create_publisher(JointState, f"/car{i}/joint_states", 10) for i in range(n)]
         self.pub_clock = self.create_publisher(Clock, "/clock", 10)
         self.pub_truth = self.create_publisher(Float64MultiArray, "/caatc/ground_truth", 10)
+        # onboard sensing: the operator tells each car where it starts, once per episode
+        self.pub_start = {i: self.create_publisher(PoseStamped, f"/car{i}/start_pose", 10) for i in s.ros_cars} if s.sensing == "onboard" else {}
+        self._onboard = s.sensing == "onboard"
+        self._ros_car_set = set(s.ros_cars)
         # subscriptions only for the cars a node drives; the topic fixes the car index
         self._subs = []
         for i in self.core.ros_cars:
@@ -184,13 +194,14 @@ class ClearanceBridge(Node):
         self.declare_parameter("pace", float(cli.pace), loose)
         self.declare_parameter("async_mode", bool(cli.async_mode))
         self.declare_parameter("plant", cli.plant)
+        self.declare_parameter("sensing", cli.sensing)
         p = lambda name: self.get_parameter(name).value  # noqa: E731
         preset = str(p("preset")).lower()
         if preset not in PRESETS:
             raise ValueError(f"unknown preset '{preset}' (easy|hard|strict)")
         return BridgeSettings(preset, int_list(p("seeds")), int_list(p("ros_cars")), str(p("out_dir")),
                               float(p("per_tick_timeout")), float(p("first_tick_timeout")),
-                              float(p("republish_period")), float(p("pace")), bool(p("async_mode")), str(p("plant")))
+                              float(p("republish_period")), float(p("pace")), bool(p("async_mode")), str(p("plant")), str(p("sensing")))
 
     # -- outgoing: the tick's state ----------------------------------------------------
     def publish_state(self, st: BridgeState, ended: bool = False) -> None:
@@ -209,10 +220,18 @@ class ClearanceBridge(Node):
         ep.num_cooperators = int(cfg.num_cooperators)
         self.pub_episode.publish(ep)
         for i, car in enumerate(st.cars):
+            if self._onboard and i in self._ros_car_set:
+                if st.tick == 0:                       # where the car starts: the one thing an operator tells it
+                    ps = PoseStamped(); ps.header.stamp = stamp; ps.header.frame_id = "map"
+                    ps.pose.position.x = float(car["x"]); ps.pose.position.y = float(car["y"])
+                    ps.pose.orientation.z = math.sin(car["theta"] / 2.0); ps.pose.orientation.w = math.cos(car["theta"] / 2.0)
+                    self.pub_start[i].publish(ps)
+                continue                               # its odom and joint_states come from its own sensors
             self.pub_odom[i].publish(odometry_msg(i, car, stamp))
             self.pub_joint[i].publish(joint_state_msg(i, car["delta"], stamp))
         self.pub_truth.publish(ground_truth_msg(st.stamp_tick, st.cars))
-        self.pub_clock.publish(clock_msg(stamp))
+        if not self._onboard:                          # onboard: Gazebo's clock is bridged; two clocks would fight
+            self.pub_clock.publish(clock_msg(stamp))
 
     # -- incoming: convert and hand over, nothing else -----------------------------------
     def _on_drive(self, car: int, msg: AckermannDriveStamped) -> None:

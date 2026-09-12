@@ -134,6 +134,7 @@ class FleetOptions:
     pace: float = 0.0
     async_mode: bool = False
     plant: str = "gym"            # M5: the physics behind the referee, f1tenth_gym or gazebo
+    sensing: str = "gt"           # M5.2: onboard = each ROS car senses for itself (Gazebo only)
 
 
 def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOptions,
@@ -162,9 +163,18 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOp
         bridge_cmd += ["--async"]
     if fleet.plant != "gym":
         bridge_cmd += ["--plant", fleet.plant]
+    if fleet.sensing == "onboard":
+        bridge_cmd += ["--sensing", "onboard"]
     view_cmd = [sys.executable, "-m", "caatc_ros.scene_view", "--preset", preset]
     relay_cmd = [sys.executable, "-m", "caatc_ros.v2v_relay", "--preset", preset, "--out-dir", out_dir,
                  "--loss", str(fleet.loss), "--delay-ticks", str(fleet.delay_ticks), "--seed", str(fleet.relay_seed)]
+    onboard_cmds: Dict[str, List[str]] = {}
+    if fleet.sensing == "onboard":
+        from caatc_ros import onboard as ob
+        cfg_path = ob.write_bridge_config(os.path.join(out_dir, "gz_bridge.yaml"), fleet.cars)
+        onboard_cmds["gz_bridge"] = ob.bridge_cmd(cfg_path)
+        for c in fleet.cars:
+            onboard_cmds[f"interface{c}"] = ob.interface_cmd(sys.executable, preset, c)
     gate_cmd = [sys.executable, "-m", "caatc_ros.ros_gate", "--preset", preset, "--cars", cars_arg,
                 "--allowlist", "m4.2" if fleet.v2v else "m4.1", "--episodes", str(len(seeds)),
                 "--out", os.path.join(out_dir, "gate.json")] + (["--relay"] if fleet.v2v else []) \
@@ -176,6 +186,8 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOp
         print(f"  car {c}:   " + " ".join(cmd))
     if fleet.v2v:
         print("  relay:    " + " ".join(relay_cmd))
+    for name, cmd in onboard_cmds.items():
+        print(f"  {name}: " + " ".join(cmd))
     if fleet.gate:
         print("  gate:     " + " ".join(gate_cmd))
     print("  bridge:   " + " ".join(bridge_cmd))
@@ -187,6 +199,8 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOp
     timed_out = False
     logs: Dict[str, str] = {"bridge": bridge_log}
     handles = []
+    if fleet.sensing == "onboard":
+        gate_cmd += ["--onboard"]
 
     def popen(name: str, cmd: List[str]) -> subprocess.Popen:
         path = os.path.join(out_dir, f"{name}.log")
@@ -203,6 +217,8 @@ def run_lockstep(preset: str, seeds: Sequence[int], out_dir: str, fleet: FleetOp
             time.sleep(node_delay_s)
         if fleet.v2v:
             helpers["relay"] = popen("relay", relay_cmd)
+        for name, cmd in onboard_cmds.items():          # M5.2: the gz bridge and one vehicle interface per car
+            helpers[name] = popen(name, cmd)
         if fleet.gate:
             helpers["gate"] = popen("gate", gate_cmd)
         if fleet.view:
@@ -858,6 +874,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--pace", type=float, default=0.0, help="bridge real-time factor for watching (1.0 = real time)")
     ap.add_argument("--plant", choices=["gym", "gazebo"], default="gym",
                     help="M5: the physics behind the referee; gazebo needs the caatc-gazebo image")
+    ap.add_argument("--sensing", choices=["gt", "onboard"], default="gt",
+                    help="M5.2: onboard = a ROS car's odom and joint_states come from its own sensors through a vehicle interface (Gazebo only)")
     ap.add_argument("--async", dest="async_mode", action="store_true",
                     help="M4.4: the bridge advances on the wall clock with the latest commands; check 13 measures the timing")
     ap.add_argument("--dashboard", action="store_true",
@@ -875,7 +893,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     cfg0 = preset_config(a.preset)
     cars = list(range(1, cfg0.num_cooperators + 1)) if a.fleet else [a.car]
     fleet = FleetOptions(cars=cars, v2v=a.v2v, policy=a.policy, gate=a.gate, loss=a.loss, delay_ticks=a.delay_ticks,
-                         bag=a.bag, view=a.view, pace=a.pace, async_mode=a.async_mode, plant=a.plant)
+                         bag=a.bag, view=a.view, pace=a.pace, async_mode=a.async_mode, plant=a.plant, sensing=a.sensing)
+    if a.sensing == "onboard" and a.plant != "gazebo":
+        ap.error("--sensing onboard needs --plant gazebo")
     radio_perfect = a.loss == 0.0 and a.delay_ticks == 0 and not a.async_mode   # async: timing, not faithfulness
     same_plant = a.plant == "gym"   # M5: on another plant the headless 2D run is a comparison, not a check
     if a.v2v and not a.fleet and a.gate:

@@ -57,8 +57,11 @@ def allowlist(cfg, car: int, version: str) -> Set[Tuple[str, str]]:
 
 
 class RosGate(Node):
-    def __init__(self, preset: str, cars: List[int], version: str, episodes: int, expect_nodes: Set[Tuple[str, str]]):
+    def __init__(self, preset: str, cars: List[int], version: str, episodes: int, expect_nodes: Set[Tuple[str, str]],
+                 onboard: bool = False):
         super().__init__("ros_gate")
+        self.onboard = onboard
+        self.seen_iface: Dict[int, Set[Tuple[str, str]]] = {c: set() for c in cars}
         self.cfg = preset_config(preset)
         self.cars = cars
         self.version = version
@@ -97,6 +100,20 @@ class RosGate(Node):
                     self.seen_subs[car].add((topic, t))
                     if topic.startswith("/car") and topic.endswith("/odom") and topic != f"/car{car}/odom":
                         self.foreign_odom.add((car, topic))
+        if self.onboard:
+            for car in self.cars:
+                ns = f"/car{car}"
+                if ("vehicle_interface", ns) not in nodes:
+                    continue
+                try:
+                    subs = self.get_subscriber_names_and_types_by_node("vehicle_interface", ns)
+                except Exception:
+                    continue
+                for topic, types in subs:
+                    for t in types:
+                        self.seen_iface[car].add((topic, t))
+                        if topic.startswith("/car") and not topic.startswith(f"/car{car}/"):
+                            self.foreign_odom.add((car, topic))
         for info in self.get_subscriptions_info_by_topic("/caatc/ground_truth"):
             name, ns = info.node_name, info.node_namespace
             if name == UNKNOWN:
@@ -117,11 +134,18 @@ class RosGate(Node):
             ok = got == want and car in self.cars_seen
             ok_all &= ok
             per_car[car] = dict(ok=ok, seen=car in self.cars_seen, extra=sorted(got - want), missing=sorted(want - got))
+        per_iface = {}
+        if self.onboard:
+            from caatc_ros.onboard import interface_allowlist
+            for car in self.cars:
+                want = interface_allowlist(car); seen = self.seen_iface[car]
+                per_iface[car] = dict(ok=seen == want, extra=sorted(seen - want), missing=sorted(want - seen), seen=sorted(seen))
         node_ok = bool(self.node_sets) and all(ns == self.expect_nodes for ns in self.node_sets[-3:])
         gt_ok = not self.ground_truth_listeners
         foreign_ok = not self.foreign_odom if self.version == "m4.2" else True
-        return dict(passed=bool(ok_all and node_ok and gt_ok and foreign_ok), samples=self.samples,
-                    per_car=per_car, node_set_ok=node_ok,
+        iface_ok = all(v["ok"] for v in per_iface.values()) if per_iface else True
+        return dict(passed=bool(ok_all and node_ok and gt_ok and foreign_ok and iface_ok), samples=self.samples,
+                    per_car=per_car, per_interface=per_iface, node_set_ok=node_ok,
                     node_set_last=sorted(list(self.node_sets[-1])) if self.node_sets else [],
                     node_set_expected=sorted(list(self.expect_nodes)),
                     ground_truth_listeners=sorted(self.ground_truth_listeners),
@@ -139,6 +163,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--relay", action="store_true", help="a /v2v_relay node is expected on the graph")
     ap.add_argument("--expect-node", action="append", default=[],
                     help="another node expected on the graph, as name or name:namespace (repeatable), e.g. rosbag2_recorder")
+    ap.add_argument("--onboard", action="store_true", help="M5.2: a vehicle_interface node per car is expected and audited")
     ap.add_argument("--max-seconds", type=float, default=900.0)
     ap.add_argument("--out", default="/src/saved_variables/ros/gate.json")
     a = ap.parse_args(remove_ros_args(argv)[1:])
@@ -151,7 +176,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         expect.add((name, ns or "/"))
 
     rclpy.init(args=argv)
-    gate = RosGate(a.preset, cars, a.allowlist, a.episodes, expect)
+    if a.onboard:
+        expect |= {("vehicle_interface", f"/car{c}") for c in cars} | {("ros_gz_bridge", "/")}
+    gate = RosGate(a.preset, cars, a.allowlist, a.episodes, expect, onboard=a.onboard)
     t0 = time.monotonic()
     try:
         while rclpy.ok() and not gate.done() and time.monotonic() - t0 < a.max_seconds:
@@ -168,6 +195,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"  [{'PASS' if r['ok'] else 'FAIL'}] car {car}: subscriptions equal the {a.allowlist} allow-list"
               + ("" if r["ok"] else f"  (extra {r['extra']}, missing {r['missing']}, seen {r['seen']})"))
     print(f"  [{'PASS' if not rep['ground_truth_listeners'] else 'FAIL'}] no car node listens to /caatc/ground_truth  {rep['ground_truth_listeners']}")
+    for car, r in rep.get("per_interface", {}).items():
+        print(f"  [{'PASS' if r['ok'] else 'FAIL'}] car {car}: the vehicle interface subscribes to its own sensors only"
+              + ("" if r["ok"] else f"  extra {r['extra']} missing {r['missing']}"))
     print(f"  [{'PASS' if rep['node_set_ok'] else 'FAIL'}] the node set equals the declared set  (last {rep['node_set_last']})")
     if a.allowlist == "m4.2":
         print(f"  [{'PASS' if not rep['foreign_odom'] else 'FAIL'}] no car node hears another car's odometry  {rep['foreign_odom']}")
