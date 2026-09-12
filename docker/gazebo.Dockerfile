@@ -20,6 +20,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-${ROS_DISTRO}-nav2-lifecycle-manager \
       ros-${ROS_DISTRO}-tf2-tools \
  && rm -rf /var/lib/apt/lists/*
+# M5: the lockstep plant plugin (gazebo/plugins/lockstep): each tick's commands in and the state
+# out through synchronous services, so a referee tick is exact and repeatable (no topic race).
+# Built here against the Gazebo Harmonic that ROS ships. cmake and a compiler come with ros-base.
+COPY gazebo/plugins/lockstep /tmp/lockstep
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+ && apt-get update && apt-get install -y --no-install-recommends cmake \
+ && cmake -S /tmp/lockstep -B /tmp/lockstep/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/caatc \
+ && cmake --build /tmp/lockstep/build -j4 && cmake --install /tmp/lockstep/build \
+ && rm -rf /tmp/lockstep /var/lib/apt/lists/*
+ENV GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/caatc/lib
 # Gazebo looks for models and worlds here; run.sh mounts the repository at /src.
 ENV GZ_SIM_RESOURCE_PATH=/src/gazebo/models:/src/gazebo/worlds
 CMD ["gz", "sim", "--version"]

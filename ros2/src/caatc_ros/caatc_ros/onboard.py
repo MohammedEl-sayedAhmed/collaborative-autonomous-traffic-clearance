@@ -1,7 +1,7 @@
 """Onboard sensing (M5.2): what runs beside the car nodes when a car must sense for itself.
 
-* the ``ros_gz_bridge`` configuration: each ROS car's lidar scan, IMU, joint states and its
-  wheel-odometry TF from Gazebo into ROS, plus Gazebo's clock;
+* the ``ros_gz_bridge`` configuration: each ROS car's lidar scan, IMU and joint states from
+  Gazebo into ROS, plus Gazebo's clock;
 * the AMCL and map-server parameter files (M5.2, second step);
 * the command lines for those processes, so ``ros_smoke`` only has to start them.
 
@@ -28,8 +28,6 @@ def bridge_config(cars: Sequence[int], world: str = WORLD_NAME) -> List[Dict[str
                  gz_type_name="gz.msgs.IMU", ros_type_name="sensor_msgs/msg/Imu", direction="GZ_TO_ROS"),
             dict(gz_topic_name=f"/world/{world}/model/car{i}/joint_state", ros_topic_name=f"/car{i}/gz_joint_states",
                  gz_type_name="gz.msgs.Model", ros_type_name="sensor_msgs/msg/JointState", direction="GZ_TO_ROS"),
-            dict(gz_topic_name=f"/model/car{i}/tf", ros_topic_name=f"/car{i}/tf",
-                 gz_type_name="gz.msgs.Pose_V", ros_type_name="tf2_msgs/msg/TFMessage", direction="GZ_TO_ROS"),
         ]
     rows.append(dict(gz_topic_name=f"/world/{world}/clock", ros_topic_name="/clock",
                      gz_type_name="gz.msgs.Clock", ros_type_name="rosgraph_msgs/msg/Clock", direction="GZ_TO_ROS"))

@@ -7,6 +7,14 @@
     <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors"><render_engine>ogre2</render_engine></plugin>
     <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
     <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <plugin filename="CaatcLockstepPlant" name="caatc::LockstepPlant">
+      <model>car1</model>
+      <wheel_radius>0.05</wheel_radius><wheel_base>0.3302</wheel_base><track_width>0.2</track_width>
+      <steer_max>0.4189</steer_max><steer_rate_max>3.2</steer_rate_max><steer_gain>30</steer_gain>
+      <accel_max>9.51</accel_max><speed_max>20</speed_max>
+    </plugin>
     <light type="directional" name="sun"><pose>0 0 10 0 0 0</pose><direction>-0.5 0.1 -0.9</direction><diffuse>0.8 0.8 0.8 1</diffuse></light>
     <model name="ground"><static>true</static><link name="l">
       <collision name="c"><geometry><plane><normal>0 0 1</normal><size>200 200</size></plane></geometry>

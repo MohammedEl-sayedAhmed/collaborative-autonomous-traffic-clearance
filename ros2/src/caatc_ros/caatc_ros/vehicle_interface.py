@@ -7,8 +7,10 @@ measure in Gazebo, bridged into ROS by ``ros_gz_bridge``:
 
 * ``/car{i}/gz_joint_states`` (every physics step, stamped): the steering hinges' angles and
   the rear wheels' rates, so the steering angle and the wheel speed;
-* ``/car{i}/tf``: the wheel-odometry transform ``car{i}/odom -> car{i}/chassis`` from Gazebo's
-  Ackermann system (dead reckoning from the start), and, when AMCL runs, ``map -> car{i}/odom``;
+* its own wheel odometry: a bicycle model integrated from the wheel speed and the steering
+  angle at every joint-state message, what a real car's odometry node does; published as the
+  transform ``car{i}/odom -> car{i}/chassis`` on ``/car{i}/tf`` for AMCL;
+* ``/car{i}/tf``: when AMCL runs, its correction ``map -> car{i}/odom``;
 * ``/car{i}/start_pose``: where the car starts, told once per episode by the operator (the
   bridge); it is also handed to AMCL as its initial pose.
 
@@ -48,6 +50,7 @@ WHEEL_RADIUS = 0.05
 STEER_JOINTS = ("front_left_steer_joint", "front_right_steer_joint")
 REAR_WHEEL_JOINTS = ("rear_left_wheel_joint", "rear_right_wheel_joint")
 LIDAR_XYZ = (0.09355, 0.0, 0.115)          # gazebo/models/racecar: the lidar link on the chassis
+WHEELBASE = 0.3302
 
 Pose2 = Tuple[float, float, float]         # x, y, yaw
 
@@ -95,6 +98,8 @@ class VehicleInterface(Node):
         self.pub_init = self.create_publisher(PoseWithCovarianceStamped, f"/car{car}/initialpose", 10)
         static_qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.pub_tf_static = self.create_publisher(TFMessage, "/tf_static", static_qos)  # remapped to /car{i}/tf_static
+        self.pub_tf = self.create_publisher(TFMessage, "/tf", 100)                          # remapped to /car{i}/tf
+        self.last_js_ns: Optional[int] = None
         self._publish_static_tf()
         self.get_logger().info(f"vehicle interface for car {car} on preset '{preset}': odom and joint_states from the "
                                f"car's own wheels, hinges and (when present) AMCL; the car node is unchanged")
@@ -111,7 +116,8 @@ class VehicleInterface(Node):
     def _on_start(self, msg: PoseStamped) -> None:
         self.start = (msg.pose.position.x, msg.pose.position.y, _yaw(msg.pose.orientation))
         self.map_odom = None
-        self.odom_base = (0.0, 0.0, 0.0)
+        self.odom_base = (0.0, 0.0, 0.0)             # the odom frame's origin is where the car started
+        self.last_js_ns = None
         self.first_tick_done = False
         init = PoseWithCovarianceStamped()
         init.header = msg.header
@@ -149,11 +155,27 @@ class VehicleInterface(Node):
 
     def _on_tf(self, msg: TFMessage) -> None:
         for t in msg.transforms:
-            p = (t.transform.translation.x, t.transform.translation.y, _yaw(t.transform.rotation))
-            if t.header.frame_id == self.frame_odom and t.child_frame_id == self.frame_base:
-                self.odom_base = p
-            elif t.header.frame_id == "map" and t.child_frame_id == self.frame_odom:
-                self.map_odom = p
+            if t.header.frame_id == "map" and t.child_frame_id == self.frame_odom:
+                self.map_odom = (t.transform.translation.x, t.transform.translation.y, _yaw(t.transform.rotation))
+
+    def _integrate(self, stamp_ns: int) -> None:
+        """Wheel odometry: the bicycle model on the measured wheel speed and steering angle."""
+        if self.last_js_ns is None or stamp_ns <= self.last_js_ns:
+            self.last_js_ns = stamp_ns
+            return
+        dt = (stamp_ns - self.last_js_ns) * 1e-9
+        self.last_js_ns = stamp_ns
+        x, y, th = self.odom_base
+        x += self.speed * math.cos(th) * dt
+        y += self.speed * math.sin(th) * dt
+        th += self.speed * math.tan(self.steer) / WHEELBASE * dt
+        self.odom_base = (x, y, math.atan2(math.sin(th), math.cos(th)))
+        t = TransformStamped()
+        t.header.stamp.sec, t.header.stamp.nanosec = divmod(stamp_ns, 1_000_000_000)
+        t.header.frame_id, t.child_frame_id = self.frame_odom, self.frame_base
+        t.transform.translation.x, t.transform.translation.y = x, y
+        t.transform.rotation.z, t.transform.rotation.w = math.sin(self.odom_base[2] / 2.0), math.cos(self.odom_base[2] / 2.0)
+        self.pub_tf.publish(TFMessage(transforms=[t]))
 
     def _on_joints(self, msg: JointState) -> None:
         names = list(msg.name)
@@ -164,7 +186,10 @@ class VehicleInterface(Node):
         if rates:
             self.speed = float(sum(rates) / len(rates)) * WHEEL_RADIUS
         stamp_ns = _ns(msg.header.stamp)
-        if stamp_ns % TICK_NS != 0 or self.start is None:
+        if self.start is None:
+            return
+        self._integrate(stamp_ns)
+        if stamp_ns % TICK_NS != 0:
             return                                   # only the message on the tick grid closes a tick
         if self.last_tick_ns is not None and stamp_ns <= self.last_tick_ns:
             return

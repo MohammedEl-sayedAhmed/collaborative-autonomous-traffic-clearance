@@ -112,6 +112,13 @@ def world_sdf(cfg: ScenarioConfig, poses: np.ndarray, name: str = WORLD_NAME,
     <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
     <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
     <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <!-- the lockstep plant: commands in and state out through services (gazebo/plugins/lockstep) -->
+    <plugin filename="CaatcLockstepPlant" name="caatc::LockstepPlant">
+{chr(10).join(f"      <model>{car_name(i)}</model>" for i in range(cfg.num_agents))}
+      <wheel_radius>0.05</wheel_radius><wheel_base>0.3302</wheel_base><track_width>0.2</track_width>
+      <steer_max>0.4189</steer_max><steer_rate_max>3.2</steer_rate_max><steer_gain>30</steer_gain>
+      <accel_max>9.51</accel_max><speed_max>20</speed_max>
+    </plugin>
     <light type="directional" name="sun"><pose>0 0 10 0 0 0</pose><direction>-0.5 0.1 -0.9</direction><diffuse>0.8 0.8 0.8 1</diffuse></light>
     <model name="ground"><static>true</static><pose>{gx:.3f} 0 0 0 0 0</pose><link name="l">
       <collision name="c"><geometry><plane><normal>0 0 1</normal><size>{gsize:.1f} 40</size></plane></geometry>
