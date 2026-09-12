@@ -50,10 +50,14 @@ now rebuilt on a supported **ROS 2 Jazzy / Python 3.12** stack on top of `f1tent
     **M5.1 done:** `GazeboPlant` (`caatc/gazebo_plant.py`), the world generated from `scenario.py`
     (`caatc/gazebo_world.py`), `--plant gazebo` on the bridge and the ROS smoke. The whole M4 fleet runs
     on Gazebo unchanged with every check passing and bit-identical replays (`./run.sh gazebo-fleet`).
-    First 3D result (`./run.sh gazebo-smoke`): on STRICT and EASY the learned policy carries over
-    (100%, three yields, `t_clear` 6.50 s vs 6.10 s); **on HARD it collides with the side-lane occupant
-    on every seed while `ideal` succeeds**; nothing is retrained in M5 by decision. Step responses of the
-    two plants: `./run.sh gazebo-step-response`. Next: M5.2 (lidar + map + AMCL per car).
+    The plant is driven by our lockstep plugin (`gazebo/plugins/lockstep`: commands in and state out
+    through services, so nothing races; bit-identical replays). First 3D result (`./run.sh
+    gazebo-smoke`): **the learned policy carries over on all three presets** (100%, three yields,
+    `t_clear` 6.50 s vs 6.10 s). An earlier version driven by Gazebo's Ackermann system had it collide
+    on HARD: the actuator steered twice as slowly, a lesson kept in the design doc. Step responses of the
+    two plants: `./run.sh gazebo-step-response`. **M5.2 in progress:** onboard sensing (`./run.sh
+    gazebo-onboard`): a vehicle interface per car makes `/car{i}/odom` and `/car{i}/joint_states` from
+    the car's own wheels and hinges (and AMCL when it runs); the car node is unchanged.
   - **M4, done:** the ROS 2 Jazzy demo (ADR 0011, ADR 0012). Python 3.12
     everywhere with all 17 published rows re-checked (one model retrained and re-measured); the
     **seam** in `ClearanceEnv` (`set_decision` / `joint_action_rows` / `substep` / `commit_step`) with

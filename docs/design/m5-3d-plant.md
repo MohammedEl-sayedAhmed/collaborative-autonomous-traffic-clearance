@@ -7,12 +7,14 @@ M4 checks ([`m4-ros2-mechanical-demo.md`](m4-ros2-mechanical-demo.md), ADR 0011)
 F1TENTH-style 1/10 car, one at most; lidar plus a map for positioning; Gazebo Harmonic; nothing
 retrained). **There is no real car yet** and there may not be one: M5.0 to M5.2 are the deliverable on
 their own, and M5.3 runs only if a car arrives. M5.0 measured the plant (above real time, bit-identical).
-**M5.1 put Gazebo behind the seam** (`caatc/gazebo_plant.py`, `./run.sh gazebo-smoke`, `./run.sh
-gazebo-fleet`): the whole M4 fleet runs on it unchanged with every check passing, the runs are
-bit-identical, and the tables gave the first 3D result: on STRICT and EASY the learned policy carries over
-(100% success, three yields, `t_clear` 6.50 s against 6.10 s), on HARD it **collides with the side-lane
-occupant on every seed** while the hand-written ideal still succeeds. The numbers are in the M5.1 results
-section at the end. Next is M5.2: simulated lidar, a map and AMCL on each car.
+**M5.1 put Gazebo behind the seam** (`caatc/gazebo_plant.py`, the lockstep plugin in
+`gazebo/plugins/lockstep`, `./run.sh gazebo-smoke`, `./run.sh gazebo-fleet`): the whole M4 fleet runs on
+it unchanged with every check passing, the runs are bit-identical, and the tables gave the first 3D
+result: **the learned policy carries over on all three presets** (100% success, three yields, `t_clear`
+6.50 s against 6.10 s). A first version driven by Gazebo's Ackermann system had it collide on HARD; that
+was the actuator's slow steering, and it is recorded in the results section. **M5.2 is under way:** the
+car senses for itself (wheels, hinges, lidar, a map, AMCL) through a vehicle interface, with the car node
+unchanged.
 
 ## What M5 is for
 
@@ -216,12 +218,13 @@ training on the 3D plant would each be a new decision with its own record.
 Measured on 2026-09-11 on the development machine (integrated GPU, no discrete graphics card), inside
 `caatc-gazebo` (Gazebo Harmonic 8.15, ROS 2 Jazzy), the server headless with EGL rendering, physics at
 1 ms steps, the world stepped ten steps at a time from Python, every car driving straight at 2 m/s with a
-1081-point lidar at 40 Hz. Three simulated seconds per run, two identical runs per world.
+1081-point lidar at 40 Hz. Three simulated seconds per run, two identical runs per world. Re-measured
+on 2026-09-12 on the lockstep plugin path (M5.1); the first measurement, over topics, in brackets.
 
 | world | real-time factor | wall time per 10 ms tick | of which the step request | lidar scans in 3 s | two runs |
 |---|---:|---:|---:|---:|---|
-| one car, one lidar | 1.32 to 1.51 | 6.6 to 7.6 ms | 0.2 ms | 121 | bit-identical |
-| four cars, four lidars | 1.02 to 1.55 | 6.5 to 9.8 ms | 0.2 ms | 120 to 121 | bit-identical |
+| one car, one lidar | 2.8 to 3.7 (topic path: 1.3 to 1.5) | 2.7 to 3.6 ms | 0.15 ms | 121 | bit-identical |
+| four cars, four lidars | 1.25 to 1.39 (topic path: 1.0 to 1.55) | 7.2 to 8.0 ms | 0.17 ms | 120 to 121 | bit-identical |
 
 The car reaches the commanded 2.00 m/s and covers 5.54 m in 3 s (the first part is acceleration), so
 Gazebo's Ackermann system with the f1tenth_gym numbers drives as expected; the step responses proper are
@@ -245,17 +248,25 @@ Three lessons that go into the Gazebo plant:
 
 Measured on 2026-09-12, `caatc-gazebo` image, lockstep, ground-truth poses (sensing level L0), the
 `ippo-strict` policy exported to numpy, the referee unchanged. Every car in Gazebo is the same
-`racecar` model (f1tenth_gym's numbers on the 2020 layout, Gazebo's Ackermann steering with a gain of 30
-and the 2D model's 3.2 rad/s steering rate limit); the road, the lane lines and the walls are generated
-from `scenario.py`. Raw outputs: `saved_variables/gazebo/`.
+`racecar` model, driven by the world's **lockstep plant plugin** (`gazebo/plugins/lockstep`, below);
+the road, the lane lines and the walls are generated from `scenario.py`. Raw outputs:
+`saved_variables/gazebo/`.
+
+**How the plant is driven, and why it changed once.** The first version drove the cars through
+Gazebo's Ackermann steering system over a topic. Two things were wrong with that. A command published
+on a topic and a step request travel on different sockets, so under load the command sometimes landed
+one physics step late, and two identical runs ended a few micrometres apart. And that system's steering
+was slow (0.21 s to 90% of a step, against 0.10 s for the 2D model), which made the learned policy
+collide with the side-lane occupant on HARD, a result that was first written down as a finding. Both
+went away with a small Gazebo system of our own: each tick's commands go in through a **service call**
+that returns only once the plugin holds them, the state (pose, wheel speed, steering angle, contact)
+comes back through a second service as the state of the last completed step, and the plugin drives the
+wheels and the two hinges itself with the 2D model's limits (steering rate 3.2 rad/s, acceleration
+9.51 m/s²). No topics, no stamps to match, no listener process.
 
 **Repeatability (check 3): bit-identical.** The same seed run twice, on each preset, gives the same
 state at every decision step to the last bit, and a recorded command sequence replayed into a fresh
-server matches every tick (642 of 642). It was not so at first: reading a car's speed from the odometry
-topic *on arrival* gave a speed one tick stale in some runs, a spread of up to 0.16 m over an episode.
-The plant now waits for the messages *stamped* with the tick's time (the joint-state message of every
-step for pose, heading and steering angle; the odometry of every tick for speed). Gazebo's physics was
-deterministic all along.
+server matches every field over 450 ticks.
 
 **Headroom (check 7) and the tables (check 8).** Two seeds each; the 2D plant's numbers for the same
 policy on the same seeds are in M4's tables (`t_clear` 6.10 s, three yields).
@@ -264,63 +275,63 @@ STRICT:
 
 | policy | success | collisions | mean `t_clear` | EV speed | yields | return | plant real-time factor |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| ideal | 100% | 0% | 6.50 s | 7.48 m/s | 3.0 | 103.0 | 0.88 |
-| naive | 0% | 0% | — | 2.47 m/s | 0.0 | 31.9 | 0.88 |
-| speedup | 0% | 0% | — | 2.47 m/s | 0.0 | 31.9 | 0.88 |
-| ippo-strict (numpy) | 100% | 0% | 6.50 s | 7.48 m/s | 3.0 | 103.0 | 0.88 |
+| ideal | 100% | 0% | 6.50 s | 7.48 m/s | 3.0 | 103.0 | 1.31 |
+| naive | 0% | 0% | — | 2.47 m/s | 0.0 | 31.9 | 1.34 |
+| speedup | 0% | 0% | — | 2.47 m/s | 0.0 | 31.9 | 1.32 |
+| ippo-strict (numpy) | 100% | 0% | 6.50 s | 7.48 m/s | 3.0 | 103.0 | 1.30 |
 
 EASY:
 
 | policy | success | collisions | mean `t_clear` | EV speed | yields | return | plant real-time factor |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| ideal | 100% | 0% | 6.50 s | 7.48 m/s | 3.0 | 103.0 | 0.88 |
-| naive | 0% | 0% | — | 2.47 m/s | 0.0 | 31.9 | 0.91 |
-| ippo-strict (numpy) | 100% | 0% | 6.50 s | 7.51 m/s | 3.0 | 103.0 | 0.90 |
+| ideal | 100% | 0% | 6.50 s | 7.48 m/s | 3.0 | 103.0 | 1.27 |
+| naive | 0% | 0% | — | 2.47 m/s | 0.0 | 31.9 | 1.27 |
+| ippo-strict (numpy) | 100% | 0% | 6.50 s | 7.51 m/s | 3.0 | 103.0 | 1.27 |
 
 HARD:
 
 | policy | success | collisions | mean `t_clear` | EV speed | yields | return | plant real-time factor |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| ideal | 100% | 0% | 6.50 s | 7.48 m/s | 3.0 | 103.0 | 0.60 |
-| naive | 0% | 0% | — | 2.47 m/s | 0.0 | 31.9 | 0.62 |
-| ippo-strict (numpy) | **0%** | **100%** | — | 7.42 m/s | 3.0 | -56.3 | 0.62 |
+| ideal | 100% | 0% | 6.50 s | 7.48 m/s | 3.0 | 103.0 | 0.75 |
+| naive | 0% | 0% | — | 2.47 m/s | 0.0 | 31.9 | 0.76 |
+| ippo-strict (numpy) | 100% | 0% | 6.50 s | 7.51 m/s | 3.0 | 103.0 | 0.75 |
 
 What the tables say:
 
 - **The scenario survives the plant.** `naive` and `speedup` still fail, `ideal` still succeeds on every
-  preset, and the emergency vehicle clears in 6.50 s instead of 6.10 s: the 3D car is a little slower
-  to steer (below), so the yields take longer. The referee never noticed which plant it was scoring.
-- **The learned policy carries over on STRICT and EASY** with the same three yields and the same outcome.
-- **On HARD it does not.** On both seeds cooperator 1 merges into occupant 5 (the contact log names the
-  pair) at 5.2 s and 5.7 s, while `ideal` merges to the free side and succeeds. The policy learned its
-  HARD merge on the 2D dynamics with no margin for a car that steers slower and accelerates faster; the
-  hand-written rule has that margin. This is M5's first real result, and by ADR 0013 nothing is retrained
-  here: fixing it (training on the 3D plant, or with randomised dynamics) is a separate decision.
-- The real-time factor in lockstep is 0.88 to 0.91 with four cars and 0.60 with six (HARD has two
-  occupants, each with a lidar), including the referee's Python and a 1 ms margin per tick between
-  publishing the commands and stepping. Lockstep does not care; the demo would.
+  preset, and the emergency vehicle clears in 6.50 s instead of 6.10 s: the 3D car reaches its speed
+  faster but the yields still take a little longer. The referee never noticed which plant it was scoring.
+- **The learned policy carries over on all three presets** with the same three yields and the same
+  outcome. On HARD it collided with the side-lane occupant on every seed while the plant was driven by
+  Gazebo's Ackermann system; with the 2D model's steering rate it merges to the free side as it learned
+  to. So the earlier HARD result was about that actuator, not about 3D physics: **the learned HARD merge
+  has no margin for a steering that is twice as slow as the one it trained on**, which is worth knowing
+  before a real car, whose steering servo is the one to measure first.
+- The real-time factor in lockstep is 1.27 to 1.34 with four cars and 0.75 with six (HARD has two
+  occupants, each with a lidar), including the referee's Python.
 
 **Step responses (check 6), one car alone** (`./run.sh gazebo-step-response`):
 
 | plant | speed rise to 90% of 4 m/s | speed overshoot | speed steady error | steer rise to 90% of 0.3 rad | steer overshoot | steer steady error | yaw rate at 2 m/s, 0.3 rad |
 |---|---:|---:|---:|---:|---:|---:|---|
 | f1tenth_gym | 0.55 s | 0.0% | 0.000 m/s | 0.10 s | 6.7% | +0.004 rad | 1.78 rad/s (kinematic 1.87) |
-| Gazebo | 0.38 s | 0.0% | 0.000 m/s | 0.21 s | 0.8% | +0.002 rad | 1.88 rad/s (kinematic 1.87) |
+| Gazebo (lockstep plugin) | 0.38 s | 0.0% | 0.000 m/s | 0.10 s | 0.8% | +0.002 rad | 1.77 rad/s (kinematic 1.87) |
 
-The Gazebo car reaches speed faster and steers slower; both hold the commanded values exactly. These are
-F1TENTH defaults on both sides; the real car's numbers replace them in M5.3 if a car arrives.
+The two plants now steer alike; the Gazebo car still reaches speed faster (the plugin applies the
+acceleration limit as a plain rate limit, the 2D model through a proportional law). Both hold the
+commanded values exactly. These are F1TENTH defaults on both sides; the real car's numbers replace them
+in M5.3 if a car arrives.
 
 **The deployed fleet on the 3D plant** (`./run.sh gazebo-fleet`: the M4 smoke with `--plant gazebo`,
 STRICT, seeds 0 and 1, the three car nodes unchanged, the relay, the gate, a rosbag): every check passes.
 The nodes' frames and 26 numbers equal the bridge's to the bit (checks 3, 4); every decision is the
-reference policy's (0 of 195 differ, check 6); the record replays exactly through a fresh Gazebo server
-(642 ticks per episode, check 5a); every car node is subscribed to exactly its four topics and nobody to
-the ground truth (check 7); the rosbag of those topics replays into fresh nodes with identical commands
-and decisions (1,284 ticks and 130 decisions per car, check 8). Against the headless 2D run of the same
-seeds the outcomes are the same and the return differs by 0.8 (102.98 vs 102.14), printed, not required.
-A car node cannot tell which plant is behind the bridge, which was the point.
+reference policy's (check 6); the record replays exactly through a fresh Gazebo server (642 ticks per
+episode, check 5a); every car node is subscribed to exactly its four topics and nobody to the ground
+truth (check 7); the rosbag of those topics replays into fresh nodes with identical commands and
+decisions (check 8). Against the headless 2D run of the same seeds the outcomes are the same, printed,
+not required. A car node cannot tell which plant is behind the bridge, which was the point.
 
-**Lessons for the next plant, kept here:** read the plant's state from stamped messages and wait on the
-stamps; never trust arrival order across topics; a strong steering gain and the 2D model's rate limit
-make Gazebo's Ackermann system behave like the 2D car; log every contact pair, because "collision" alone
-explains nothing.
+**Lessons for the next plant, kept here:** never drive a lockstep plant over a topic, use a service so a
+command and its step cannot race; read the state through a service too, then no stamps need matching;
+the actuator model matters as much as the physics (a slower steering broke a learned merge); log every
+contact pair, because "collision" alone explains nothing.

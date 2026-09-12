@@ -730,6 +730,30 @@ def check_timing(g: Gate, records: List[Tuple[str, Record]], pace: float) -> Non
         print(f"    command age histogram (ticks 0,1,2,3+): {h[0]}, {h[1]}, {h[2]}, {h[3]}")
 
 
+def check_localization_error(g: Gate, records: List[Tuple[str, Record]]) -> None:
+    """Check 9 (M5.2): with onboard sensing a car's own (s, d, lane) differ from the truth. Print
+    the error per car; the one requirement is that the car never believed it was in another lane
+    for more than 5% of its decisions (a lane mistake is what breaks the scenario)."""
+    print("\nCheck 9: localization error (the car's own s, d, lane against the bridge's truth, at every decision)")
+    for _p, rec in records:
+        if not rec.boundary_ticks:
+            continue
+        truth = np.stack([rec.cars_state[t] for t in rec.boundary_ticks])          # B x N x 8
+        node = np.stack(rec.node_frame)                                               # B x K x 4: s, d, lane, tangent
+        for i in rec.meta["ros_cars"]:
+            ts, td, tl = truth[:, i, 5], truth[:, i, 6], truth[:, i, 7]
+            ns_, nd, nl = node[:, i - 1, 0], node[:, i - 1, 1], node[:, i - 1, 2]
+            ok = ~np.isnan(ns_)
+            if not ok.any():
+                g.check(f"{label_of(rec)} car {i}: the node reported its frame", False, "no decisions recorded"); continue
+            es, ed = np.abs(ns_[ok] - ts[ok]), np.abs(nd[ok] - td[ok])
+            lane_wrong = int(np.sum(nl[ok] != tl[ok])); n = int(ok.sum())
+            print(f"    {label_of(rec)} car {i}: |ds| mean {es.mean():.3f} m max {es.max():.3f} m; |dd| mean {ed.mean():.3f} m "
+                  f"max {ed.max():.3f} m; lane wrong at {lane_wrong} of {n} decisions")
+            g.check(f"{label_of(rec)} car {i}: lane mistaken at no more than 5% of decisions", lane_wrong <= 0.05 * n,
+                    f"{lane_wrong} of {n}")
+
+
 def check_gate_report(g: Gate, out_dir: str, gate_code: Optional[int]) -> None:
     """Check 7 from the gate node's report."""
     print("\nCheck 7: subscription hygiene (the gate node's report)")
@@ -942,12 +966,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("\nasync: checks 3, 4 and 6 compare a node's numbers with the bridge's state at the SAME tick; a "
                   "decision applied at a boundary may have been taken a tick earlier, so they belong to lockstep "
                   "(where they pass) and are skipped here; check 13 measures the timing instead")
+        elif a.sensing == "onboard":
+            print("\nonboard sensing: check 3 (exact frames) and check 4 (exact observations) do not apply, the car's "
+                  "numbers come from its own sensors; check 9 measures the localization error instead")
+            check_localization_error(g, records)
         else:
             check_frame_agreement(g, records)
         if radio_perfect:
             if a.v2v:
                 print("\n(check 4 below is check 12 too: the nodes built their observation from the digest alone)")
-            check_observation_agreement(g, records)
+            if a.sensing == "gt":
+                check_observation_agreement(g, records)
             check_decision_and_controller_agreement(g, records, a.policy)
         else:
             print("\nradio with loss/delay: checks 4, 6 and the equality half of 5b do not apply; outcomes are printed")
